@@ -1,7 +1,12 @@
 <resources>
     <string name="app_name">Music Source Separation</string>
     <string name="select_audio">Select audio</string>
+    <string name="export_wav">Export WAV</string>
     <string name="no_file_selected">No audio selected</string>
     <string name="selected_file">Selected file</string>
     <string name="ready_for_pipeline">Ready for audio pipeline integration</string>
+    <string name="reading_audio">Reading audio</string>
+    <string name="exporting_wav">Exporting WAV</string>
+    <string name="export_complete">Export complete</string>
+    <string name="export_failed">Export failed</string>
 </resources>

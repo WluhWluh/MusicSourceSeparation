@@ -2,21 +2,25 @@ package com.example.musicsourceseparation
 
 import android.app.Activity
 import android.content.Intent
-import android.database.Cursor
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
-import android.provider.OpenableColumns
 import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import com.example.musicsourceseparation.audio.AudioMetadata
+import com.example.musicsourceseparation.audio.AudioMetadataReader
+import com.example.musicsourceseparation.audio.AudioPassthroughExporter
 
 class MainActivity : Activity() {
     private lateinit var selectedFileText: TextView
     private lateinit var statusText: TextView
+    private lateinit var exportButton: Button
+    private var selectedAudioUri: Uri? = null
+    private var selectedAudioMetadata: AudioMetadata? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -29,14 +33,31 @@ class MainActivity : Activity() {
         if (requestCode != REQUEST_AUDIO || resultCode != RESULT_OK) return
 
         val uri = data?.data ?: return
-        val flags = data.flags and
-            (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-        if (flags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION != 0) {
-            runCatching { contentResolver.takePersistableUriPermission(uri, flags) }
+        val persistableGranted = data.flags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION != 0
+        val readFlags = data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION
+        if (persistableGranted && readFlags != 0) {
+            runCatching { contentResolver.takePersistableUriPermission(uri, readFlags) }
         }
 
-        selectedFileText.text = getString(R.string.selected_file) + ": " + displayNameFor(uri)
-        statusText.text = getString(R.string.ready_for_pipeline)
+        selectedAudioUri = uri
+        selectedFileText.text = getString(R.string.reading_audio)
+        statusText.text = ""
+        exportButton.isEnabled = false
+        Thread {
+            val result = runCatching { AudioMetadataReader(this).read(uri) }
+            runOnUiThread {
+                result.onSuccess { metadata ->
+                    selectedAudioMetadata = metadata
+                    selectedFileText.text = metadata.toDisplayText()
+                    statusText.text = getString(R.string.ready_for_pipeline)
+                    exportButton.isEnabled = true
+                }.onFailure { error ->
+                    selectedAudioMetadata = null
+                    selectedFileText.text = getString(R.string.no_file_selected)
+                    statusText.text = error.message ?: getString(R.string.export_failed)
+                }
+            }
+        }.start()
     }
 
     private fun createContentView(): ScrollView {
@@ -77,9 +98,16 @@ class MainActivity : Activity() {
             setOnClickListener { openAudioPicker() }
         }
 
+        exportButton = Button(this).apply {
+            text = getString(R.string.export_wav)
+            isEnabled = false
+            setOnClickListener { exportSelectedAudio() }
+        }
+
         container.addView(title, spacedLayoutParams(top = 16, density = density))
         container.addView(selectedFileText, spacedLayoutParams(top = 28, density = density))
         container.addView(selectButton, spacedLayoutParams(top = 20, density = density))
+        container.addView(exportButton, spacedLayoutParams(top = 12, density = density))
         container.addView(statusText, spacedLayoutParams(top = 20, density = density))
 
         return ScrollView(this).apply {
@@ -97,15 +125,29 @@ class MainActivity : Activity() {
         startActivityForResult(intent, REQUEST_AUDIO)
     }
 
-    private fun displayNameFor(uri: Uri): String {
-        val cursor: Cursor? = contentResolver.query(uri, null, null, null, null)
-        cursor?.use {
-            val nameIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            if (nameIndex >= 0 && it.moveToFirst()) {
-                return it.getString(nameIndex)
+    private fun exportSelectedAudio() {
+        val uri = selectedAudioUri ?: return
+        val metadata = selectedAudioMetadata ?: return
+        setExportEnabled(false)
+        statusText.text = getString(R.string.exporting_wav)
+
+        Thread {
+            val result = runCatching {
+                AudioPassthroughExporter(this).exportToWav(uri, metadata.displayName)
             }
-        }
-        return uri.lastPathSegment ?: uri.toString()
+            runOnUiThread {
+                result.onSuccess { export ->
+                    statusText.text = getString(R.string.export_complete) + ": " + export.outputFile.absolutePath
+                }.onFailure { error ->
+                    statusText.text = getString(R.string.export_failed) + ": " + (error.message ?: error::class.java.simpleName)
+                }
+                setExportEnabled(true)
+            }
+        }.start()
+    }
+
+    private fun setExportEnabled(enabled: Boolean) {
+        exportButton.isEnabled = enabled && selectedAudioUri != null && selectedAudioMetadata != null
     }
 
     private fun spacedLayoutParams(top: Int, density: Float): LinearLayout.LayoutParams {

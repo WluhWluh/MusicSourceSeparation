@@ -21,5 +21,8 @@ android {
 }
 
 dependencies {
+    implementation("com.github.wendykierp:JTransforms:3.1")
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.26.0")
+
+    testImplementation("junit:junit:4.13.2")
 }

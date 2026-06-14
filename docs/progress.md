@@ -287,6 +287,13 @@ Implementation notes:
   - Output shape: `[1, 4, 2048, 256]`
   - Output absolute mean: `1.8588207`
   - This matches the desktop Python zero-input smoke test closely enough for Phase 4.
+- Android DSP scaffold:
+  - `MdxDspConfig`
+  - `MdxSpectrogram`
+  - JVM test: `MdxSpectrogramTest`
+  - FFT dependency: `com.github.wendykierp:JTransforms:3.1`
+  - Validation: `testDebugUnitTest` and `assembleDebug` both passed
+  - The next step is to wire these DSP classes into the actual Android audio pipeline and then into ONNX inference for a real short excerpt.
 
 ### Phase 5: Chunked Full-Song Processing
 

@@ -25,10 +25,8 @@ class MdxRangeSeparator(
         endMs: Long?,
         onProgress: (MdxRangeProgress) -> Unit = {},
     ): MdxRangeSeparationResult {
-        val decoded = AudioPcmDecoder(context).decode(uri)
-        require(decoded.sampleRate == config.sampleRate) {
-            "Expected ${config.sampleRate} Hz audio, got ${decoded.sampleRate} Hz."
-        }
+        val source = AudioPcmDecoder(context).decode(uri)
+        val decoded = source.resampleTo(config.sampleRate)
 
         val startFrame = msToFrame(startMs).coerceIn(0, decoded.frameCount)
         val requestedEndFrame = endMs?.let { msToFrame(it) } ?: decoded.frameCount
@@ -97,6 +95,8 @@ class MdxRangeSeparator(
             frames = targetFrames,
             windowCount = windowCount,
             elapsedMs = elapsedMs,
+            sourceSampleRate = source.sampleRate,
+            outputSampleRate = decoded.sampleRate,
         )
     }
 
@@ -216,15 +216,20 @@ data class MdxRangeSeparationResult(
     val frames: Int,
     val windowCount: Int,
     val elapsedMs: Long,
+    val sourceSampleRate: Int,
+    val outputSampleRate: Int,
 ) {
     fun toDisplayText(): String {
-        val durationSeconds = frames / 44_100.0
+        val durationSeconds = frames.toDouble() / outputSampleRate
         return buildString {
             appendLine("Range separation complete")
             appendLine("Range: ${formatMs(startMs)} - ${formatMs(endMs)}")
             appendLine("Duration: %.2f seconds".format(durationSeconds))
             appendLine("Windows: $windowCount")
             appendLine("Elapsed: %.2f seconds".format(elapsedMs / 1000.0))
+            if (sourceSampleRate != outputSampleRate) {
+                appendLine("Resampled: $sourceSampleRate Hz -> $outputSampleRate Hz")
+            }
             appendLine("Vocals: ${vocalsFile.absolutePath}")
             append("Instrumental: ${instrumentalFile.absolutePath}")
         }

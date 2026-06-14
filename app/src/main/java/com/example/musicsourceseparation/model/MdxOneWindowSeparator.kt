@@ -17,10 +17,8 @@ class MdxOneWindowSeparator(
     private val config: MdxDspConfig = MdxDspConfig(),
 ) {
     fun separate(uri: Uri, displayName: String, startSeconds: Double = 0.0): MdxOneWindowSeparationResult {
-        val decoded = AudioPcmDecoder(context).decode(uri)
-        require(decoded.sampleRate == config.sampleRate) {
-            "Expected ${config.sampleRate} Hz audio, got ${decoded.sampleRate} Hz."
-        }
+        val source = AudioPcmDecoder(context).decode(uri)
+        val decoded = source.resampleTo(config.sampleRate)
 
         val startFrame = (startSeconds * config.sampleRate).toInt().coerceAtLeast(0)
         val requiredFrames = startFrame + config.chunkSize
@@ -57,6 +55,8 @@ class MdxOneWindowSeparator(
             frames = config.chunkSize,
             startSeconds = startSeconds,
             seconds = config.chunkSize.toDouble() / config.sampleRate,
+            sourceSampleRate = source.sampleRate,
+            outputSampleRate = decoded.sampleRate,
         )
     }
 
@@ -160,12 +160,17 @@ data class MdxOneWindowSeparationResult(
     val frames: Int,
     val startSeconds: Double,
     val seconds: Double,
+    val sourceSampleRate: Int,
+    val outputSampleRate: Int,
 ) {
     fun toDisplayText(): String {
         return buildString {
             appendLine("One-window separation complete")
             appendLine("Start: %.2f seconds".format(startSeconds))
             appendLine("Duration: %.2f seconds".format(seconds))
+            if (sourceSampleRate != outputSampleRate) {
+                appendLine("Resampled: $sourceSampleRate Hz -> $outputSampleRate Hz")
+            }
             appendLine("Vocals: ${vocalsFile.absolutePath}")
             append("Instrumental: ${instrumentalFile.absolutePath}")
         }

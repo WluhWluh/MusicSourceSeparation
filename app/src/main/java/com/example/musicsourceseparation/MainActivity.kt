@@ -15,11 +15,13 @@ import com.example.musicsourceseparation.audio.AudioMetadata
 import com.example.musicsourceseparation.audio.AudioMetadataReader
 import com.example.musicsourceseparation.audio.AudioPassthroughExporter
 import com.example.musicsourceseparation.model.MdxOnnxSmokeTester
+import com.example.musicsourceseparation.model.MdxOneWindowSeparator
 
 class MainActivity : Activity() {
     private lateinit var selectedFileText: TextView
     private lateinit var statusText: TextView
     private lateinit var exportButton: Button
+    private lateinit var separateOneWindowButton: Button
     private lateinit var onnxSmokeTestButton: Button
     private var selectedAudioUri: Uri? = null
     private var selectedAudioMetadata: AudioMetadata? = null
@@ -53,6 +55,7 @@ class MainActivity : Activity() {
                     selectedFileText.text = metadata.toDisplayText()
                     statusText.text = getString(R.string.ready_for_pipeline)
                     exportButton.isEnabled = true
+                    separateOneWindowButton.isEnabled = true
                 }.onFailure { error ->
                     selectedAudioMetadata = null
                     selectedFileText.text = getString(R.string.no_file_selected)
@@ -106,6 +109,12 @@ class MainActivity : Activity() {
             setOnClickListener { exportSelectedAudio() }
         }
 
+        separateOneWindowButton = Button(this).apply {
+            text = getString(R.string.separate_one_window)
+            isEnabled = false
+            setOnClickListener { separateOneWindow() }
+        }
+
         onnxSmokeTestButton = Button(this).apply {
             text = getString(R.string.run_onnx_smoke_test)
             setOnClickListener { runOnnxSmokeTest() }
@@ -115,6 +124,7 @@ class MainActivity : Activity() {
         container.addView(selectedFileText, spacedLayoutParams(top = 28, density = density))
         container.addView(selectButton, spacedLayoutParams(top = 20, density = density))
         container.addView(exportButton, spacedLayoutParams(top = 12, density = density))
+        container.addView(separateOneWindowButton, spacedLayoutParams(top = 12, density = density))
         container.addView(onnxSmokeTestButton, spacedLayoutParams(top = 12, density = density))
         container.addView(statusText, spacedLayoutParams(top = 20, density = density))
 
@@ -156,6 +166,29 @@ class MainActivity : Activity() {
 
     private fun setExportEnabled(enabled: Boolean) {
         exportButton.isEnabled = enabled && selectedAudioUri != null && selectedAudioMetadata != null
+    }
+
+    private fun separateOneWindow() {
+        val uri = selectedAudioUri ?: return
+        val metadata = selectedAudioMetadata ?: return
+        separateOneWindowButton.isEnabled = false
+        statusText.text = getString(R.string.one_window_separating)
+
+        Thread {
+            val result = runCatching {
+                MdxOneWindowSeparator(this).separate(uri, metadata.displayName)
+            }
+            runOnUiThread {
+                statusText.text = result.fold(
+                    onSuccess = { it.toDisplayText() },
+                    onFailure = {
+                        getString(R.string.one_window_failed) + ": " +
+                            (it.message ?: it::class.java.simpleName)
+                    },
+                )
+                separateOneWindowButton.isEnabled = selectedAudioUri != null && selectedAudioMetadata != null
+            }
+        }.start()
     }
 
     private fun runOnnxSmokeTest() {

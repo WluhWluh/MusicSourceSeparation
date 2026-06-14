@@ -13,7 +13,7 @@ The MVP must avoid server-side processing, account setup, manual model configura
 
 Date: 2026-06-14
 
-The workspace has been prepared as the project root. A minimal Kotlin Android shell now builds, installs, and launches on the local emulator. The app currently provides a file-selection entry point, audio metadata reading, and a first pass-through WAV export path. Model inference is not implemented yet.
+The workspace has been prepared as the project root. A minimal Kotlin Android shell now builds, installs, and launches on the local emulator. The app currently provides a file-selection entry point, audio metadata reading, and a verified pass-through WAV export path. Model inference is not implemented yet.
 
 ## Local Development Environment Check
 
@@ -171,15 +171,15 @@ Implementation notes:
 
 ### Phase 2: File Selection and Audio I/O
 
-Status: in progress
+Status: done
 
 Tasks:
 
 - Add Android Storage Access Framework file selection. Done.
-- Accept common local audio formats such as MP3, M4A, AAC, WAV, and FLAC where platform codecs support them. In progress.
-- Decode selected audio into PCM. First implementation added.
+- Accept common local audio formats such as MP3, M4A, AAC, WAV, and FLAC where platform codecs support them. Initial MP3 path verified.
+- Decode selected audio into PCM. Done for the verified MP3 path.
 - Implement a WAV writer. Done.
-- Create a pass-through test path that writes the decoded audio back to a WAV file. First implementation added.
+- Create a pass-through test path that writes the decoded audio back to a WAV file. Done.
 
 Done criteria:
 
@@ -195,12 +195,12 @@ Implementation notes:
 - Decoder APIs: Android `MediaExtractor` and `MediaCodec`
 - Output location: app-specific external music directory under `exports`
 - Debug APK SHA-256 after Phase 2 partial work: `9A6F1DD4C927EDC68246A882D54F8CAAAE93BED19B50B4BA4B5B839995729D97`
-- Verification so far: `assembleDebug` succeeded, APK installed successfully on `emulator-5554`, and the updated empty-state UI launched without visible layout issues.
-- Pending verification: select a real audio file through the system picker and confirm that the exported WAV is valid.
+- Verification: `assembleDebug` succeeded, APK installed successfully on `emulator-5554`, and the updated empty-state UI launched without visible layout issues.
+- User verification: an MP3 file from the emulator Downloads directory was selected in the app, exported to WAV, moved back to Downloads, played successfully, and had the expected duration.
 
 ### Phase 3: Desktop Reference Model Pipeline
 
-Status: pending
+Status: in progress
 
 Tasks:
 
@@ -306,11 +306,11 @@ Done criteria:
 
 ## Immediate Next Steps
 
-1. Push or provide a short local audio sample for emulator testing.
-2. Verify the system picker can select that audio sample.
-3. Run the pass-through WAV export path end to end.
-4. Pull the exported WAV and validate its header, duration, and playback.
-5. Harden error handling for unsupported codecs and large files.
+1. Select the first ONNX 2-stem model candidate for local experimentation.
+2. Add a desktop reference pipeline scaffold under `tools/`.
+3. Document model input/output tensor contracts.
+4. Run a short reference inference once the model file is available locally.
+5. Generate golden output files for later Android comparison.
 
 ## Open Technical Decisions
 

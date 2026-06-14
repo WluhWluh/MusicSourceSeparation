@@ -3,6 +3,17 @@
 build/
 **/build/
 
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Local model and audio artifacts
+models/
+data/
+outputs/
+.tmp/
+
 # Android local configuration
 local.properties
 

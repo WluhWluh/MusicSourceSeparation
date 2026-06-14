@@ -13,7 +13,7 @@ The MVP must avoid server-side processing, account setup, manual model configura
 
 Date: 2026-06-14
 
-The workspace has been prepared as the project root. A minimal Kotlin Android shell now builds, installs, and launches on the local emulator. The app currently provides a file-selection entry point, audio metadata reading, and a verified pass-through WAV export path. Model inference is not implemented yet.
+The workspace has been prepared as the project root. A minimal Kotlin Android shell now builds, installs, and launches on the local emulator. The app currently provides a file-selection entry point, audio metadata reading, and a verified pass-through WAV export path. A desktop MDX ONNX reference scaffold has been added for model contract inspection and short WAV separation tests. Android model inference is not implemented yet.
 
 ## Local Development Environment Check
 
@@ -204,16 +204,35 @@ Status: in progress
 
 Tasks:
 
-- Select 2 or 3 candidate ONNX 2-stem models.
-- Build a Python reference script for inference.
-- Fix the expected sample rate, channel layout, chunk size, overlap, normalization, and output gain.
-- Generate short golden test outputs for later Android comparison.
+- Select 2 or 3 candidate ONNX 2-stem models. First candidate selected.
+- Build a Python reference script for inference. Initial scaffold added.
+- Fix the expected sample rate, channel layout, chunk size, overlap, normalization, and output gain. Initial MDX contract documented.
+- Generate short golden test outputs for later Android comparison. Pending real music sample.
 
 Done criteria:
 
 - Reference inference works on a short audio sample.
 - Candidate model performance and quality are compared.
 - Input and output tensor contracts are documented.
+
+Implementation notes:
+
+- First candidate: `UVR-MDX-NET-Inst_Main.onnx`
+- Local model path: `models/uvr-mdx/UVR-MDX-NET-Inst_Main.onnx`
+- Model file size: `52786726` bytes
+- Model files are ignored by Git and must not be committed.
+- Python environment: project-local `.venv`
+- Dependency lock for this phase: `requirements-phase3.txt`
+- Reference script: `tools/mdx_reference.py`
+- Contract document: `docs/model_contracts.md`
+- Verified ONNX input: `float32 [batch_size, 4, 2048, 256]`
+- Verified ONNX output: `float32 [batch_size, 4, 2048, 256]`
+- Smoke tests completed:
+  - `python tools/mdx_reference.py self-test`
+  - `python tools/mdx_reference.py inspect --model models/uvr-mdx/UVR-MDX-NET-Inst_Main.onnx --smoke-run`
+  - `python tools/mdx_reference.py separate --model models/uvr-mdx/UVR-MDX-NET-Inst_Main.onnx --input data/smoke/synthetic_mix.wav --output-dir outputs/reference --limit-seconds 3 --no-denoise`
+- Synthetic smoke output verification: vocals and instrumental WAV files were both `44100 Hz`, stereo, `3.0` seconds, and non-empty.
+- Important finding: this MDX model consumes STFT tensors, not raw PCM waveform samples. Android Phase 4 will need matching STFT/ISTFT DSP or a model variant with preprocessing folded into ONNX.
 
 ### Phase 4: Android ONNX Runtime Integration
 
@@ -306,11 +325,11 @@ Done criteria:
 
 ## Immediate Next Steps
 
-1. Select the first ONNX 2-stem model candidate for local experimentation.
-2. Add a desktop reference pipeline scaffold under `tools/`.
-3. Document model input/output tensor contracts.
-4. Run a short reference inference once the model file is available locally.
-5. Generate golden output files for later Android comparison.
+1. Run the reference script on a real short music sample, preferably the same MP3-derived WAV path already tested through the Android app.
+2. Listen to the desktop reference `vocals` and `instrumental` outputs.
+3. Record runtime and output quality notes for `UVR-MDX-NET-Inst_Main.onnx`.
+4. Add one additional candidate model for comparison if licensing and download path are clear.
+5. Decide whether Android Phase 4 should implement MDX STFT/ISTFT in Kotlin first or introduce a native DSP layer.
 
 ## Open Technical Decisions
 

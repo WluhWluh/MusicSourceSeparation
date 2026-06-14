@@ -3,6 +3,7 @@
     <string name="select_audio">Select audio</string>
     <string name="export_wav">Export WAV</string>
     <string name="separate_one_window">Separate one window</string>
+    <string name="separate_37s_window">Separate 37s window</string>
     <string name="run_onnx_smoke_test">Run ONNX smoke test</string>
     <string name="no_file_selected">No audio selected</string>
     <string name="selected_file">Selected file</string>

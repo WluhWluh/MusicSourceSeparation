@@ -7,12 +7,15 @@ data class DecodedPcmAudio(
 ) {
     val frameCount: Int = pcm16.size / (channelCount * Short.SIZE_BYTES)
 
-    fun toStereoFloat(maxFrames: Int? = null): Array<FloatArray> {
-        val frames = minOf(frameCount, maxFrames ?: frameCount)
+    fun toStereoFloat(startFrame: Int = 0, maxFrames: Int? = null): Array<FloatArray> {
+        require(startFrame >= 0) { "Start frame must not be negative." }
+        require(startFrame <= frameCount) { "Start frame exceeds decoded audio length." }
+
+        val frames = minOf(frameCount - startFrame, maxFrames ?: (frameCount - startFrame))
         val left = FloatArray(frames)
         val right = FloatArray(frames)
 
-        var byteIndex = 0
+        var byteIndex = startFrame * channelCount * Short.SIZE_BYTES
         for (frame in 0 until frames) {
             val leftSample = readLittleEndianShort(byteIndex)
             left[frame] = leftSample / 32768f

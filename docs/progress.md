@@ -302,10 +302,13 @@ Implementation notes:
 - One-window separation prototype:
   - Added `MdxOneWindowSeparator`
   - Added a development UI button: `Separate one window`
+  - Added a development UI button: `Separate 37s window`
   - The prototype decodes selected audio, uses the first MDX-sized window, runs STFT, ONNX inference, ISTFT, then writes vocals and instrumental WAV files.
   - Current limitation: input must already be `44100 Hz`; resampling is not implemented yet.
   - Current limitation: this is one window only, not full-song chunking.
   - Validation so far: `testDebugUnitTest`, `assembleDebug`, APK install, and model-file presence check passed.
+  - Prepared a reusable vocal-entry test sample: `data/samples/coast_town_vocal_entry_37s_12s.wav`
+  - Pushed the same sample to emulator Downloads for manual validation.
 
 ### Phase 5: Chunked Full-Song Processing
 
@@ -380,8 +383,8 @@ Done criteria:
 
 ## Immediate Next Steps
 
-1. Select the known Coast Town sample in the app and run `Separate one window`.
-2. Pull the Android-generated one-window vocals and instrumental WAV files from app external files.
+1. Select `coast_town_vocal_entry_37s_12s.wav` in the app and run `Separate 37s window`.
+2. Pull the Android-generated vocals and instrumental WAV files from app external files.
 3. Compare Android output duration, naming, and basic playback against the Python reference.
 4. Add resampling or an explicit error path for non-`44100 Hz` inputs.
 5. Extend from one-window inference to chunked excerpt inference.

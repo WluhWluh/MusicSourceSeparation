@@ -16,13 +16,16 @@ class MdxOneWindowSeparator(
     private val context: Context,
     private val config: MdxDspConfig = MdxDspConfig(),
 ) {
-    fun separate(uri: Uri, displayName: String): MdxOneWindowSeparationResult {
+    fun separate(uri: Uri, displayName: String, startSeconds: Double = 0.0): MdxOneWindowSeparationResult {
         val decoded = AudioPcmDecoder(context).decode(uri)
         require(decoded.sampleRate == config.sampleRate) {
             "Expected ${config.sampleRate} Hz audio, got ${decoded.sampleRate} Hz."
         }
-        require(decoded.frameCount >= config.chunkSize) {
-            "Audio is too short. Need at least ${config.chunkSize} frames."
+
+        val startFrame = (startSeconds * config.sampleRate).toInt().coerceAtLeast(0)
+        val requiredFrames = startFrame + config.chunkSize
+        require(decoded.frameCount >= requiredFrames) {
+            "Audio is too short. Need at least $requiredFrames frames for this start offset."
         }
 
         val modelFile = File(context.filesDir, MODEL_FILE_NAME)
@@ -30,7 +33,7 @@ class MdxOneWindowSeparator(
             "Model file missing: ${modelFile.absolutePath}"
         }
 
-        val waveform = decoded.toStereoFloat(maxFrames = config.chunkSize)
+        val waveform = decoded.toStereoFloat(startFrame = startFrame, maxFrames = config.chunkSize)
         val spectrogram = MdxSpectrogram(config)
         val modelInput = spectrogram.waveformToTensor(waveform)
         val instrumental = runModel(modelFile, modelInput, spectrogram)
@@ -41,8 +44,9 @@ class MdxOneWindowSeparator(
             "separated",
         ).apply { mkdirs() }
         val baseName = safeBaseName(displayName)
-        val vocalsFile = uniqueOutputFile(outputDir, "${baseName}_one_window_vocals.wav")
-        val instrumentalFile = uniqueOutputFile(outputDir, "${baseName}_one_window_instrumental.wav")
+        val offsetTag = if (startFrame == 0) "one_window" else "one_window_${startSeconds.roundTag()}s"
+        val vocalsFile = uniqueOutputFile(outputDir, "${baseName}_${offsetTag}_vocals.wav")
+        val instrumentalFile = uniqueOutputFile(outputDir, "${baseName}_${offsetTag}_instrumental.wav")
 
         writeStereoWav(vocalsFile, vocals)
         writeStereoWav(instrumentalFile, instrumental)
@@ -51,6 +55,7 @@ class MdxOneWindowSeparator(
             vocalsFile = vocalsFile,
             instrumentalFile = instrumentalFile,
             frames = config.chunkSize,
+            startSeconds = startSeconds,
             seconds = config.chunkSize.toDouble() / config.sampleRate,
         )
     }
@@ -135,6 +140,15 @@ class MdxOneWindowSeparator(
         return candidate
     }
 
+    private fun Double.roundTag(): String {
+        val rounded = roundToInt()
+        return if (kotlin.math.abs(this - rounded) < 0.001) {
+            rounded.toString()
+        } else {
+            "%.2f".format(this).replace('.', '_')
+        }
+    }
+
     private companion object {
         const val MODEL_FILE_NAME = "UVR-MDX-NET-Inst_Main.onnx"
     }
@@ -144,11 +158,13 @@ data class MdxOneWindowSeparationResult(
     val vocalsFile: File,
     val instrumentalFile: File,
     val frames: Int,
+    val startSeconds: Double,
     val seconds: Double,
 ) {
     fun toDisplayText(): String {
         return buildString {
             appendLine("One-window separation complete")
+            appendLine("Start: %.2f seconds".format(startSeconds))
             appendLine("Duration: %.2f seconds".format(seconds))
             appendLine("Vocals: ${vocalsFile.absolutePath}")
             append("Instrumental: ${instrumentalFile.absolutePath}")

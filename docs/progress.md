@@ -309,6 +309,14 @@ Implementation notes:
   - Validation so far: `testDebugUnitTest`, `assembleDebug`, APK install, and model-file presence check passed.
   - Prepared a reusable vocal-entry test sample: `data/samples/coast_town_vocal_entry_37s_12s.wav`
   - Pushed the same sample to emulator Downloads for manual validation.
+- Range separation UI:
+  - Added editable start and end time inputs in minutes, seconds, and milliseconds.
+  - Default selection is the full audio duration after import.
+  - Added a development button: `Separate range`
+  - Added `MdxRangeSeparator` for sequential windowed range processing.
+  - Current implementation is a practical first pass: windows are processed sequentially and written in order; overlap-add smoothing is still pending.
+  - End time input now treats `0` as "to the end of the imported file" so the default full-range selection remains safe even when metadata duration is unavailable.
+  - Validation so far: `testDebugUnitTest`, `assembleDebug`, and emulator reinstall passed after the UI and range-separation additions.
 
 ### Phase 5: Chunked Full-Song Processing
 
@@ -383,11 +391,11 @@ Done criteria:
 
 ## Immediate Next Steps
 
-1. Select `coast_town_vocal_entry_37s_12s.wav` in the app and run `Separate 37s window`.
-2. Pull the Android-generated vocals and instrumental WAV files from app external files.
-3. Compare Android output duration, naming, and basic playback against the Python reference.
-4. Add resampling or an explicit error path for non-`44100 Hz` inputs.
-5. Extend from one-window inference to chunked excerpt inference.
+1. Select the full Coast Town track in the app and run `Separate range` with the default full-range inputs.
+2. Measure the runtime for the full-song Android pass on the emulator.
+3. Pull the Android-generated vocals and instrumental WAV files from app external files.
+4. Compare Android output duration, naming, and basic playback against the Python reference.
+5. Add overlap-add smoothing and resampling handling after the first full-song pass is verified.
 
 ## Open Technical Decisions
 

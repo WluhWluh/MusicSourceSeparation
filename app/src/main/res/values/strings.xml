@@ -2,6 +2,7 @@
     <string name="app_name">Music Source Separation</string>
     <string name="select_audio">Select audio</string>
     <string name="export_wav">Export WAV</string>
+    <string name="separate_range">Separate range</string>
     <string name="separate_one_window">Separate one window</string>
     <string name="separate_37s_window">Separate 37s window</string>
     <string name="run_onnx_smoke_test">Run ONNX smoke test</string>
@@ -14,6 +15,8 @@
     <string name="export_failed">Export failed</string>
     <string name="one_window_separating">Separating one window</string>
     <string name="one_window_failed">One-window separation failed</string>
+    <string name="range_separating">Separating selected range</string>
+    <string name="range_failed">Range separation failed</string>
     <string name="onnx_smoke_testing">Running ONNX smoke test</string>
     <string name="onnx_smoke_test_failed">ONNX smoke test failed</string>
 </resources>

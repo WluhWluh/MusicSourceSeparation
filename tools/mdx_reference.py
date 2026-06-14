@@ -252,19 +252,19 @@ def separate_wav(
     else:
         pred = session.run([output_name], {input_name: spec})[0]
 
-    target_windows = istft_centered(pred.astype(np.float32), params)
-    target = target_windows[:, :, params.trim : -params.trim]
-    target = target.transpose(1, 0, 2).reshape(2, -1)
+    instrumental_windows = istft_centered(pred.astype(np.float32), params)
+    instrumental = instrumental_windows[:, :, params.trim : -params.trim]
+    instrumental = instrumental.transpose(1, 0, 2).reshape(2, -1)
     if pad:
-        target = target[:, :-pad]
-    target = target[:, : mix.shape[1]]
-    instrumental = (mix[:, : target.shape[1]] - target).astype(np.float32)
+        instrumental = instrumental[:, :-pad]
+    instrumental = instrumental[:, : mix.shape[1]]
+    vocals = (mix[:, : instrumental.shape[1]] - instrumental).astype(np.float32)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = input_path.stem
     vocals_path = output_dir / f"{stem}_vocals.wav"
     instrumental_path = output_dir / f"{stem}_instrumental.wav"
-    wavfile.write(vocals_path, sample_rate, float_to_pcm16(target.T))
+    wavfile.write(vocals_path, sample_rate, float_to_pcm16(vocals.T))
     wavfile.write(instrumental_path, sample_rate, float_to_pcm16(instrumental.T))
 
     return {

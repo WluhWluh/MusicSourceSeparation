@@ -58,10 +58,11 @@ Tensor layout:
   - right imaginary
 - Frequency bins are truncated from `3073` to `2048` before inference.
 - Model output has the same layout and is reconstructed with inverse STFT.
+- For `Inst_Main`, the reconstructed model output should be treated as the instrumental stem.
+- The vocals stem should be computed as `mixture - instrumental`.
 
 Android implication:
 
 - Phase 4 cannot just pass PCM into ONNX Runtime.
 - Android needs a matching STFT/ISTFT implementation or a model variant with DSP folded into the graph.
 - For the first Android ONNX integration, using this exact model means implementing periodic Hann windows, reflect padding, chunking, frequency padding, and overlap-add behavior.
-

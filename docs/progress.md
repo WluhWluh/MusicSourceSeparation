@@ -249,6 +249,10 @@ Implementation notes:
     - `/sdcard/Download/coast_town_37s_20s_reference_vocals.wav`
     - `/sdcard/Download/coast_town_37s_20s_reference_instrumental.wav`
   - This is the more meaningful comparison region because the vocal entry begins around `37s`.
+- Output quality note:
+  - User confirmed the corrected vocal-entry segment separates vocals and instruments very cleanly.
+  - The first reference script version mislabeled the stems.
+  - For `UVR-MDX-NET-Inst_Main.onnx`, the ONNX output is instrumental, and vocals are `mixture - instrumental`.
 - Important finding: this MDX model consumes STFT tensors, not raw PCM waveform samples. Android Phase 4 will need matching STFT/ISTFT DSP or a model variant with preprocessing folded into ONNX.
 
 ### Phase 4: Android ONNX Runtime Integration

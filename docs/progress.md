@@ -257,13 +257,13 @@ Implementation notes:
 
 ### Phase 4: Android ONNX Runtime Integration
 
-Status: pending
+Status: in progress
 
 Tasks:
 
-- Add ONNX Runtime Android dependency.
-- Bundle one default model with the app or load it from app assets.
-- Implement inference on a short test tensor.
+- Add ONNX Runtime Android dependency. Done.
+- Bundle one default model with the app or load it from app assets. Initial local app-private loader done.
+- Implement inference on a short test tensor. Done.
 - Connect PCM chunks to model input.
 - Compare Android output against the desktop reference output.
 
@@ -272,6 +272,21 @@ Done criteria:
 - ONNX inference runs locally on Android.
 - Short sample separation completes successfully.
 - Output difference from reference pipeline is understood and acceptable.
+
+Implementation notes:
+
+- First Android dependency choice: `com.microsoft.onnxruntime:onnxruntime-android:1.26.0`
+- Goal for the first Android inference step: load the bundled model and run a zero-tensor smoke test before wiring the audio pipeline.
+- The current Android app already handles file selection, metadata reading, and WAV export; this phase will add model loading and inference on top of that baseline.
+- Local model load path for development: `/data/user/0/com.example.musicsourceseparation/files/UVR-MDX-NET-Inst_Main.onnx`
+- Current debug APK size after ONNX Runtime integration: about `115 MB`
+- Current debug APK SHA-256: `271B42D761C3B75E504F1B87A084810DC26DAB7858824D7A0E159DA79335EE64`
+- Android ONNX smoke test result on `emulator-5554`:
+  - Input name: `input`
+  - Output name: `output`
+  - Output shape: `[1, 4, 2048, 256]`
+  - Output absolute mean: `1.8588207`
+  - This matches the desktop Python zero-input smoke test closely enough for Phase 4.
 
 ### Phase 5: Chunked Full-Song Processing
 
@@ -346,11 +361,11 @@ Done criteria:
 
 ## Immediate Next Steps
 
-1. Listen to `/sdcard/Download/coast_town_37s_20s_reference_vocals.wav` and `/sdcard/Download/coast_town_37s_20s_reference_instrumental.wav`.
-2. Record subjective output quality notes for the corrected vocal-entry segment.
-3. Add one additional candidate model for comparison if licensing and download path are clear.
-4. Decide whether Android Phase 4 should implement MDX STFT/ISTFT in Kotlin first or introduce a native DSP layer.
-5. Start Android ONNX Runtime integration once the first model choice is acceptable.
+1. Implement Android-side MDX STFT tensor generation for one waveform window.
+2. Add a small JVM/Kotlin test for tensor shape and reconstruction assumptions where practical.
+3. Reuse the existing Android decoder output as the source waveform for one-window inference.
+4. Convert ONNX output back to waveform with matching ISTFT logic.
+5. Produce the first Android-generated instrumental/vocals WAV pair for a short excerpt.
 
 ## Open Technical Decisions
 

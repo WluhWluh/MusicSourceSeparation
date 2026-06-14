@@ -232,6 +232,14 @@ Implementation notes:
   - `python tools/mdx_reference.py inspect --model models/uvr-mdx/UVR-MDX-NET-Inst_Main.onnx --smoke-run`
   - `python tools/mdx_reference.py separate --model models/uvr-mdx/UVR-MDX-NET-Inst_Main.onnx --input data/smoke/synthetic_mix.wav --output-dir outputs/reference --limit-seconds 3 --no-denoise`
 - Synthetic smoke output verification: vocals and instrumental WAV files were both `44100 Hz`, stereo, `3.0` seconds, and non-empty.
+- Real audio reference test:
+  - Source: app-exported WAV pulled from emulator Downloads, stored locally as `data/samples/_-_Coast_Town__decoded.wav`
+  - Command: `python tools/mdx_reference.py separate --model models/uvr-mdx/UVR-MDX-NET-Inst_Main.onnx --input data/samples/_-_Coast_Town__decoded.wav --output-dir outputs/reference/coast_town_20s --limit-seconds 20 --no-denoise`
+  - Runtime on local desktop: about `7.05` seconds for a `20.0` second excerpt
+  - Outputs: vocals and instrumental WAV files were both `44100 Hz`, stereo, `20.0` seconds, and non-empty
+  - Emulator playback files pushed to Downloads:
+    - `/sdcard/Download/coast_town_20s_reference_vocals.wav`
+    - `/sdcard/Download/coast_town_20s_reference_instrumental.wav`
 - Important finding: this MDX model consumes STFT tensors, not raw PCM waveform samples. Android Phase 4 will need matching STFT/ISTFT DSP or a model variant with preprocessing folded into ONNX.
 
 ### Phase 4: Android ONNX Runtime Integration
@@ -325,11 +333,11 @@ Done criteria:
 
 ## Immediate Next Steps
 
-1. Run the reference script on a real short music sample, preferably the same MP3-derived WAV path already tested through the Android app.
-2. Listen to the desktop reference `vocals` and `instrumental` outputs.
-3. Record runtime and output quality notes for `UVR-MDX-NET-Inst_Main.onnx`.
-4. Add one additional candidate model for comparison if licensing and download path are clear.
-5. Decide whether Android Phase 4 should implement MDX STFT/ISTFT in Kotlin first or introduce a native DSP layer.
+1. Listen to `/sdcard/Download/coast_town_20s_reference_vocals.wav` and `/sdcard/Download/coast_town_20s_reference_instrumental.wav`.
+2. Record subjective output quality notes for `UVR-MDX-NET-Inst_Main.onnx`.
+3. Add one additional candidate model for comparison if licensing and download path are clear.
+4. Decide whether Android Phase 4 should implement MDX STFT/ISTFT in Kotlin first or introduce a native DSP layer.
+5. Start Android ONNX Runtime integration once the first model choice is acceptable.
 
 ## Open Technical Decisions
 

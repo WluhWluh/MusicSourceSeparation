@@ -228,9 +228,13 @@ def separate_wav(
     output_dir: Path,
     params: MdxParams,
     denoise: bool,
+    start_seconds: float,
     limit_seconds: float | None,
 ) -> dict:
     mix, sample_rate = load_wav_stereo(input_path, params.sample_rate)
+    if start_seconds > 0:
+        start_samples = int(start_seconds * params.sample_rate)
+        mix = mix[:, start_samples:]
     if limit_seconds is not None:
         limit_samples = int(limit_seconds * params.sample_rate)
         mix = mix[:, :limit_samples]
@@ -333,6 +337,7 @@ def build_parser() -> argparse.ArgumentParser:
     separate.add_argument("--input", type=existing_path, required=True)
     separate.add_argument("--output-dir", type=Path, default=Path("outputs/reference"))
     separate.add_argument("--no-denoise", dest="denoise", action="store_false", default=True)
+    separate.add_argument("--start-seconds", type=float, default=0.0)
     separate.add_argument("--limit-seconds", type=float, default=20.0)
 
     return parser
@@ -362,6 +367,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                 output_dir=args.output_dir,
                 params=params,
                 denoise=args.denoise,
+                start_seconds=args.start_seconds,
                 limit_seconds=args.limit_seconds,
             )
         )

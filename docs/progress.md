@@ -240,6 +240,15 @@ Implementation notes:
   - Emulator playback files pushed to Downloads:
     - `/sdcard/Download/coast_town_20s_reference_vocals.wav`
     - `/sdcard/Download/coast_town_20s_reference_instrumental.wav`
+- Real audio reference retest after offset correction:
+  - Added `--start-seconds` support to `tools/mdx_reference.py`
+  - Command: `python tools/mdx_reference.py separate --model models/uvr-mdx/UVR-MDX-NET-Inst_Main.onnx --input data/samples/_-_Coast_Town__decoded.wav --output-dir outputs/reference/coast_town_37s_20s --start-seconds 37 --limit-seconds 20 --no-denoise`
+  - Runtime on local desktop: about `7.18` seconds for a `20.0` second excerpt
+  - Outputs: vocals and instrumental WAV files were both `44100 Hz`, stereo, `20.0` seconds, and non-empty
+  - Emulator playback files pushed to Downloads:
+    - `/sdcard/Download/coast_town_37s_20s_reference_vocals.wav`
+    - `/sdcard/Download/coast_town_37s_20s_reference_instrumental.wav`
+  - This is the more meaningful comparison region because the vocal entry begins around `37s`.
 - Important finding: this MDX model consumes STFT tensors, not raw PCM waveform samples. Android Phase 4 will need matching STFT/ISTFT DSP or a model variant with preprocessing folded into ONNX.
 
 ### Phase 4: Android ONNX Runtime Integration
@@ -333,8 +342,8 @@ Done criteria:
 
 ## Immediate Next Steps
 
-1. Listen to `/sdcard/Download/coast_town_20s_reference_vocals.wav` and `/sdcard/Download/coast_town_20s_reference_instrumental.wav`.
-2. Record subjective output quality notes for `UVR-MDX-NET-Inst_Main.onnx`.
+1. Listen to `/sdcard/Download/coast_town_37s_20s_reference_vocals.wav` and `/sdcard/Download/coast_town_37s_20s_reference_instrumental.wav`.
+2. Record subjective output quality notes for the corrected vocal-entry segment.
 3. Add one additional candidate model for comparison if licensing and download path are clear.
 4. Decide whether Android Phase 4 should implement MDX STFT/ISTFT in Kotlin first or introduce a native DSP layer.
 5. Start Android ONNX Runtime integration once the first model choice is acceptable.

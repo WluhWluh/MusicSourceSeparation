@@ -294,6 +294,11 @@ Implementation notes:
   - FFT dependency: `com.github.wendykierp:JTransforms:3.1`
   - Validation: `testDebugUnitTest` and `assembleDebug` both passed
   - The next step is to wire these DSP classes into the actual Android audio pipeline and then into ONNX inference for a real short excerpt.
+- Audio pipeline preparation:
+  - Extracted `AudioPcmDecoder` from `AudioPassthroughExporter`
+  - Added `DecodedPcmAudio` as an in-memory PCM container
+  - WAV pass-through export now reuses the shared PCM decoder
+  - Validation: `testDebugUnitTest`, `assembleDebug`, APK install, and launch check passed
 
 ### Phase 5: Chunked Full-Song Processing
 
@@ -368,9 +373,9 @@ Done criteria:
 
 ## Immediate Next Steps
 
-1. Implement Android-side MDX STFT tensor generation for one waveform window.
-2. Add a small JVM/Kotlin test for tensor shape and reconstruction assumptions where practical.
-3. Reuse the existing Android decoder output as the source waveform for one-window inference.
+1. Use `AudioPcmDecoder` output as the source waveform for one-window inference.
+2. Feed a real decoded waveform window into `MdxSpectrogram`.
+3. Run ONNX inference on that real tensor.
 4. Convert ONNX output back to waveform with matching ISTFT logic.
 5. Produce the first Android-generated instrumental/vocals WAV pair for a short excerpt.
 

@@ -13,7 +13,7 @@ The MVP must avoid server-side processing, account setup, manual model configura
 
 Date: 2026-06-14
 
-The workspace has been prepared as the project root. No Android app source code has been created yet. The first planning artifact is this progress document.
+The workspace has been prepared as the project root. A minimal Kotlin Android shell now builds, installs, and launches on the local emulator. The app currently provides the first file-selection entry point only; audio decoding, model inference, and output writing are not implemented yet.
 
 ## Local Development Environment Check
 
@@ -140,12 +140,12 @@ Done criteria:
 
 ### Phase 1: Android Project Scaffold
 
-Status: pending
+Status: done
 
 Tasks:
 
 - Create a minimal Android project using Kotlin.
-- Prefer Jetpack Compose for a compact, modern UI.
+- Use dependency-light native Android Views for the first scaffold.
 - Add Gradle wrapper files.
 - Configure SDK path through `local.properties` or environment setup.
 - Add a basic app screen with file selection entry point.
@@ -154,8 +154,20 @@ Tasks:
 Done criteria:
 
 - `./gradlew assembleDebug` works.
-- App installs and opens.
+- App installs and opens on the local emulator.
 - Main screen renders correctly.
+
+Implementation notes:
+
+- Android Gradle Plugin: `9.2.1`
+- Gradle wrapper: `9.4.1`
+- Kotlin support: AGP 9 built-in Kotlin support
+- Compile SDK: `37`
+- Minimum SDK: `26`
+- UI approach: a single native Android `Activity` with a system audio picker entry point
+- Debug APK: `app/build/outputs/apk/debug/app-debug.apk`
+- Debug APK SHA-256: `F30EFD2B0835B9D95F82B08ED297C33FE708810E0313BEAB1B024381D9F274D0`
+- Verification: `assembleDebug` succeeded, APK installed successfully on `emulator-5554`, and the main screen launched without visible layout issues.
 
 ### Phase 2: File Selection and Audio I/O
 
@@ -283,18 +295,18 @@ Done criteria:
 
 ## Immediate Next Steps
 
-1. Decide whether to scaffold the Android project manually or through Android Studio.
-2. Configure Android SDK access for command-line builds.
-3. Add a Gradle wrapper to the repository.
-4. Create the minimal Kotlin Android app.
-5. Run the first debug build.
+1. Start Phase 2 by turning the file picker shell into a real audio input path.
+2. Add an audio metadata reader for selected files.
+3. Decode selected audio to PCM with Android media APIs.
+4. Add a simple WAV writer.
+5. Create a pass-through export path before model inference is introduced.
 
 ## Open Technical Decisions
 
 - Whether the first model should be bundled in the APK/AAB or downloaded once into app-private storage.
 - Whether the first implementation should use pure Kotlin plus ONNX Runtime Java APIs or introduce C++ early for audio DSP.
 - Whether the first WAV writer should be Kotlin-only or native.
-- Which Android API level should be the minimum supported version.
+- Whether the native Android Views scaffold should later move to Jetpack Compose.
 - Which real test device should be used for performance targets.
 
 ## Risk Register

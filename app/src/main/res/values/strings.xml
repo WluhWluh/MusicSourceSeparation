@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">Music Source Separation</string>
+    <string name="select_audio">Select audio</string>
+    <string name="no_file_selected">No audio selected</string>
+    <string name="selected_file">Selected file</string>
+    <string name="ready_for_pipeline">Ready for audio pipeline integration</string>
+</resources>

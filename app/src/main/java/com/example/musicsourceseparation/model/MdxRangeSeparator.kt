@@ -18,12 +18,14 @@ import kotlin.math.roundToInt
 class MdxRangeSeparator(
     private val context: Context,
     private val config: MdxDspConfig = MdxDspConfig(),
+    private val runtimeSettings: MdxRuntimeSettings = MdxRuntimeSettings(),
 ) {
     fun separate(
         uri: Uri,
         displayName: String,
         startMs: Long,
         endMs: Long?,
+        runtimeSettings: MdxRuntimeSettings = this.runtimeSettings,
         onProgress: (MdxRangeProgress) -> Unit = {},
     ): MdxRangeSeparationResult {
         val timing = MdxRangeTimingAccumulator()
@@ -65,7 +67,9 @@ class MdxRangeSeparator(
         WavFileWriter(vocalsFile, config.sampleRate, MdxDspConfig.STEREO_CHANNELS).use { vocalsWriter ->
             WavFileWriter(instrumentalFile, config.sampleRate, MdxDspConfig.STEREO_CHANNELS).use { instrumentalWriter ->
                 val session = measureElapsed(timing, "Session setup") {
-                    environment.createSession(modelFile.absolutePath, OrtSession.SessionOptions())
+                    runtimeSettings.createSessionOptions().use { options ->
+                        environment.createSession(modelFile.absolutePath, options)
+                    }
                 }
                 session.use {
                     val inputName = session.inputInfo.keys.first()
@@ -114,6 +118,7 @@ class MdxRangeSeparator(
             audioDurationSeconds = targetFrames.toDouble() / config.sampleRate,
             windowCount = windowCount,
             totalMs = elapsedMs,
+            runtimeSettings = runtimeSettings,
         )
         timingFile.writeText(
             timingReport.toFileText(

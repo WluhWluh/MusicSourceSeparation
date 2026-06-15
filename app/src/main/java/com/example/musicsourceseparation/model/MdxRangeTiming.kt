@@ -10,11 +10,17 @@ internal class MdxRangeTimingAccumulator {
         stageMs[stage] = (stageMs[stage] ?: 0L) + elapsedMs
     }
 
-    fun toReport(audioDurationSeconds: Double, windowCount: Int, totalMs: Long): MdxRangeTimingReport {
+    fun toReport(
+        audioDurationSeconds: Double,
+        windowCount: Int,
+        totalMs: Long,
+        runtimeSettings: MdxRuntimeSettings,
+    ): MdxRangeTimingReport {
         return MdxRangeTimingReport(
             audioDurationSeconds = audioDurationSeconds,
             windowCount = windowCount,
             totalMs = totalMs,
+            runtimeSettings = runtimeSettings,
             stageMs = LinkedHashMap(stageMs),
         )
     }
@@ -24,11 +30,13 @@ data class MdxRangeTimingReport(
     val audioDurationSeconds: Double,
     val windowCount: Int,
     val totalMs: Long,
+    val runtimeSettings: MdxRuntimeSettings,
     val stageMs: Map<String, Long>,
 ) {
     fun toDisplayText(): String {
         return buildString {
             appendLine("Timing:")
+            appendLine(runtimeSettings.toDisplayText())
             appendLine("Total: ${seconds(totalMs)} (${decimal(runtimeAudioFactor())}x audio duration)")
             appendLine("Average per window: ${seconds(perWindowMs(totalMs))}")
             for ((stage, ms) in stageMs) {
@@ -43,6 +51,7 @@ data class MdxRangeTimingReport(
             appendLine("Range separation timing report")
             appendLine("Audio duration: ${decimal(audioDurationSeconds)} seconds")
             appendLine("Windows: $windowCount")
+            appendLine(runtimeSettings.toDisplayText())
             appendLine("Vocals: ${vocalsFile.absolutePath}")
             appendLine("Instrumental: ${instrumentalFile.absolutePath}")
             appendLine()

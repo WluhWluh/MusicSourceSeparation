@@ -19,6 +19,7 @@ import com.example.musicsourceseparation.audio.AudioPassthroughExporter
 import com.example.musicsourceseparation.model.MdxOnnxSmokeTester
 import com.example.musicsourceseparation.model.MdxOneWindowSeparator
 import com.example.musicsourceseparation.model.MdxRangeSeparator
+import com.example.musicsourceseparation.model.MdxRuntimeSettings
 
 class MainActivity : Activity() {
     private lateinit var selectedFileText: TextView
@@ -34,6 +35,7 @@ class MainActivity : Activity() {
     private lateinit var endMinutesInput: EditText
     private lateinit var endSecondsInput: EditText
     private lateinit var endMillisInput: EditText
+    private lateinit var cpuThreadsInput: EditText
     private var selectedAudioUri: Uri? = null
     private var selectedAudioMetadata: AudioMetadata? = null
 
@@ -124,6 +126,7 @@ class MainActivity : Activity() {
         }
 
         val rangeInputs = createRangeInputs()
+        val runtimeInputs = createRuntimeInputs()
 
         separateRangeButton = Button(this).apply {
             text = getString(R.string.separate_range)
@@ -152,6 +155,7 @@ class MainActivity : Activity() {
         container.addView(selectedFileText, spacedLayoutParams(top = 28, density = density))
         container.addView(selectButton, spacedLayoutParams(top = 20, density = density))
         container.addView(rangeInputs, spacedLayoutParams(top = 20, density = density))
+        container.addView(runtimeInputs, spacedLayoutParams(top = 12, density = density))
         container.addView(separateRangeButton, spacedLayoutParams(top = 12, density = density))
         container.addView(exportButton, spacedLayoutParams(top = 12, density = density))
         container.addView(separateOneWindowButton, spacedLayoutParams(top = 12, density = density))
@@ -192,6 +196,20 @@ class MainActivity : Activity() {
             ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply { topMargin = (8 * resources.displayMetrics.density).toInt() })
         root.addView(horizontalInputs(endMinutesInput, endSecondsInput, endMillisInput))
+        return root
+    }
+
+    private fun createRuntimeInputs(): LinearLayout {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        val label = TextView(this).apply {
+            text = "ONNX CPU threads (0 = default)"
+            textSize = 14f
+        }
+        cpuThreadsInput = numberInput("threads", "0")
+        root.addView(label)
+        root.addView(horizontalInputs(cpuThreadsInput))
         return root
     }
 
@@ -260,8 +278,9 @@ class MainActivity : Activity() {
         val metadata = selectedAudioMetadata ?: return
         val startMs = readTimeMs(startMinutesInput, startSecondsInput, startMillisInput)
         val endMs = readTimeMs(endMinutesInput, endSecondsInput, endMillisInput).takeIf { it > 0L }
+        val runtimeSettings = MdxRuntimeSettings(cpuThreads = readCpuThreads())
         setSeparationButtonsEnabled(false)
-        statusText.text = getString(R.string.range_separating)
+        statusText.text = getString(R.string.range_separating) + "\n" + runtimeSettings.toDisplayText()
 
         Thread {
             val result = runCatching {
@@ -270,10 +289,12 @@ class MainActivity : Activity() {
                     displayName = metadata.displayName,
                     startMs = startMs,
                     endMs = endMs,
+                    runtimeSettings = runtimeSettings,
                 ) { progress ->
                     runOnUiThread {
                         statusText.text = getString(R.string.range_separating) +
-                            ": ${progress.completedWindows}/${progress.totalWindows} (${progress.percent}%)"
+                            ": ${progress.completedWindows}/${progress.totalWindows} (${progress.percent}%)\n" +
+                            runtimeSettings.toDisplayText()
                     }
                 }
             }
@@ -331,6 +352,10 @@ class MainActivity : Activity() {
         val secondValue = seconds.text.toString().toLongOrNull() ?: 0L
         val millisValue = millis.text.toString().toLongOrNull() ?: 0L
         return minuteValue * 60_000L + secondValue * 1000L + millisValue
+    }
+
+    private fun readCpuThreads(): Int {
+        return cpuThreadsInput.text.toString().toIntOrNull()?.coerceIn(0, 16) ?: 0
     }
 
     private fun writeTime(minutes: EditText, seconds: EditText, millis: EditText, totalMs: Long) {

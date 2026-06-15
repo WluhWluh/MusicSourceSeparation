@@ -4,16 +4,12 @@ import android.content.Context
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
-import java.io.File
 import java.nio.FloatBuffer
 import kotlin.math.abs
 
 class MdxOnnxSmokeTester(private val context: Context) {
     fun run(): MdxSmokeTestResult {
-        val modelFile = File(context.filesDir, MODEL_FILE_NAME)
-        require(modelFile.isFile) {
-            "Model file missing: ${modelFile.absolutePath}"
-        }
+        val modelFile = MdxModelFile.get(context)
 
         val environment = OrtEnvironment.getEnvironment()
         environment.createSession(modelFile.absolutePath, OrtSession.SessionOptions()).use { session ->
@@ -61,10 +57,6 @@ class MdxOnnxSmokeTester(private val context: Context) {
             }
         }
         return if (count == 0L) 0f else (sum / count).toFloat()
-    }
-
-    private companion object {
-        const val MODEL_FILE_NAME = "UVR-MDX-NET-Inst_Main.onnx"
     }
 }
 

@@ -13,7 +13,7 @@ The MVP must avoid server-side processing, account setup, manual model configura
 
 Date: 2026-06-14
 
-The workspace has been prepared as the project root. A minimal Kotlin Android shell now builds, installs, and launches on the local emulator. The app currently provides a file-selection entry point, audio metadata reading, and a verified pass-through WAV export path. A desktop MDX ONNX reference scaffold has been added for model contract inspection and short WAV separation tests. Android model inference is not implemented yet.
+The workspace has been prepared as the project root. The Android app now provides local audio selection, metadata reading, WAV export, Android ONNX Runtime inference, and 2-stem MDX separation for custom ranges or full tracks. User testing confirmed full-song separation quality on the Coast Town and Brave Heart tracks. The current stage focuses on robustness for personal device testing: automatic `44100 Hz` model-rate resampling, MDX-style context windows, and a debug APK that bundles the local ONNX model asset for direct installation.
 
 ## Local Development Environment Check
 
@@ -303,30 +303,40 @@ Implementation notes:
   - Added `MdxOneWindowSeparator`
   - Added a development UI button: `Separate one window`
   - Added a development UI button: `Separate 37s window`
-  - The prototype decodes selected audio, uses the first MDX-sized window, runs STFT, ONNX inference, ISTFT, then writes vocals and instrumental WAV files.
-  - Current limitation: input must already be `44100 Hz`; resampling is not implemented yet.
+  - The prototype decodes selected audio, resamples it to the MDX model rate when needed, uses one MDX-sized window, runs STFT, ONNX inference, ISTFT, then writes vocals and instrumental WAV files.
   - Current limitation: this is one window only, not full-song chunking.
   - Validation so far: `testDebugUnitTest`, `assembleDebug`, APK install, and model-file presence check passed.
   - Prepared a reusable vocal-entry test sample: `data/samples/coast_town_vocal_entry_37s_12s.wav`
   - Pushed the same sample to emulator Downloads for manual validation.
+  - User verification: `coast_town_vocal_entry_37s_12s.wav` produced clean vocals and instrumental output.
 - Range separation UI:
   - Added editable start and end time inputs in minutes, seconds, and milliseconds.
   - Default selection is the full audio duration after import.
   - Added a development button: `Separate range`
   - Added `MdxRangeSeparator` for sequential windowed range processing.
-  - Current implementation is a practical first pass: windows are processed sequentially and written in order; overlap-add smoothing is still pending.
+  - Range separation now decodes selected audio, resamples to `44100 Hz` for MDX when needed, processes each window with `trim` samples of context, advances by `generationSize`, and writes only the stable center region.
+  - Separated WAV outputs are written at `44100 Hz`.
   - End time input now treats `0` as "to the end of the imported file" so the default full-range selection remains safe even when metadata duration is unavailable.
   - Validation so far: `testDebugUnitTest`, `assembleDebug`, and emulator reinstall passed after the UI and range-separation additions.
+  - User verification: full-track range separation was tested on Coast Town and Brave Heart, and both outputs sounded correct.
+- Model packaging for personal device testing:
+  - Debug APK builds now include the local ignored model file from `models/uvr-mdx/UVR-MDX-NET-Inst_Main.onnx` as an Android asset when that file exists locally.
+  - At runtime, `MdxModelFile` copies the bundled asset into app-private storage before ONNX Runtime opens the model.
+  - This keeps the direct-install Samsung S25 test path simple while still keeping model weights out of Git.
+  - Verification: `testDebugUnitTest` and `assembleDebug` passed after the resampling, context-window, and model-asset updates.
+  - APK asset check: `app/build/outputs/apk/debug/app-debug.apk` contains `assets/UVR-MDX-NET-Inst_Main.onnx`.
+  - Current bundled debug APK size: `166725001` bytes.
+  - Current bundled debug APK SHA-256: `C4050084246D0189A5290012C3F8BC35916C838130DB56475E367BBDA3F241B7`.
 
 ### Phase 5: Chunked Full-Song Processing
 
-Status: pending
+Status: in progress
 
 Tasks:
 
-- Implement chunk scheduling for full songs.
-- Add overlap-add reconstruction.
-- Track progress by processed chunk count.
+- Implement chunk scheduling for full songs. Done for sequential MDX range windows.
+- Use MDX-style context windows and stable center writes. Done.
+- Track progress by processed chunk count. Done.
 - Add cancel behavior.
 - Avoid loading the whole song and all intermediate tensors into memory at once.
 
@@ -391,15 +401,15 @@ Done criteria:
 
 ## Immediate Next Steps
 
-1. Select the full Coast Town track in the app and run `Separate range` with the default full-range inputs.
-2. Measure the runtime for the full-song Android pass on the emulator.
-3. Pull the Android-generated vocals and instrumental WAV files from app external files.
-4. Compare Android output duration, naming, and basic playback against the Python reference.
-5. Add overlap-add smoothing and resampling handling after the first full-song pass is verified.
+1. Run `testDebugUnitTest` and `assembleDebug` after the context-window and model-asset updates.
+2. Commit the resampling, context-window, documentation, and personal-test packaging stage.
+3. Copy the debug APK to a stable `dist/` path for Samsung S25 installation.
+4. Install the APK on the Samsung S25 and test at least one non-`44100 Hz` source file.
+5. Record S25 runtime, memory behavior if observable, thermal behavior, and output quality.
 
 ## Open Technical Decisions
 
-- Whether the first model should be bundled in the APK/AAB or downloaded once into app-private storage.
+- Whether a future release-style build should bundle the model, download it once into app-private storage, or ask the user to import a model file.
 - Whether the first implementation should use pure Kotlin plus ONNX Runtime Java APIs or introduce C++ early for audio DSP.
 - Whether the first WAV writer should be Kotlin-only or native.
 - Whether the native Android Views scaffold should later move to Jetpack Compose.

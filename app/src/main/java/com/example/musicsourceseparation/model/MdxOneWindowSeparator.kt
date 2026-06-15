@@ -26,10 +26,7 @@ class MdxOneWindowSeparator(
             "Audio is too short. Need at least $requiredFrames frames for this start offset."
         }
 
-        val modelFile = File(context.filesDir, MODEL_FILE_NAME)
-        require(modelFile.isFile) {
-            "Model file missing: ${modelFile.absolutePath}"
-        }
+        val modelFile = MdxModelFile.get(context)
 
         val waveform = decoded.toStereoFloat(startFrame = startFrame, maxFrames = config.chunkSize)
         val spectrogram = MdxSpectrogram(config)
@@ -147,10 +144,6 @@ class MdxOneWindowSeparator(
         } else {
             "%.2f".format(this).replace('.', '_')
         }
-    }
-
-    private companion object {
-        const val MODEL_FILE_NAME = "UVR-MDX-NET-Inst_Main.onnx"
     }
 }
 

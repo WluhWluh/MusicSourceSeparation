@@ -34,10 +34,7 @@ class MdxRangeSeparator(
         val targetFrames = endFrame - startFrame
         require(targetFrames > 0) { "Selected range is empty." }
 
-        val modelFile = File(context.filesDir, MODEL_FILE_NAME)
-        require(modelFile.isFile) {
-            "Model file missing: ${modelFile.absolutePath}"
-        }
+        val modelFile = MdxModelFile.get(context)
 
         val outputDir = File(
             context.getExternalFilesDir(Environment.DIRECTORY_MUSIC) ?: context.filesDir,
@@ -49,7 +46,7 @@ class MdxRangeSeparator(
         val vocalsFile = uniqueOutputFile(outputDir, "${baseName}_${rangeTag}_vocals.wav")
         val instrumentalFile = uniqueOutputFile(outputDir, "${baseName}_${rangeTag}_instrumental.wav")
 
-        val windowCount = ceil(targetFrames.toDouble() / config.chunkSize.toDouble()).toInt()
+        val windowCount = ceil(targetFrames.toDouble() / config.generationSize.toDouble()).toInt()
         val environment = OrtEnvironment.getEnvironment()
         val spectrogram = MdxSpectrogram(config)
         val startedAt = System.currentTimeMillis()
@@ -60,13 +57,12 @@ class MdxRangeSeparator(
                     val inputName = session.inputInfo.keys.first()
                     val outputName = session.outputInfo.keys.first()
                     for (windowIndex in 0 until windowCount) {
-                        val windowStartFrame = startFrame + windowIndex * config.chunkSize
-                        val remainingFrames = endFrame - windowStartFrame
-                        val writeFrames = minOf(config.chunkSize, remainingFrames)
-                        val mixWindow = decoded.toStereoFloatPadded(
-                            startFrame = windowStartFrame,
-                            frames = writeFrames,
-                            paddedFrames = config.chunkSize,
+                        val generationStartFrame = startFrame + windowIndex * config.generationSize
+                        val remainingFrames = endFrame - generationStartFrame
+                        val writeFrames = minOf(config.generationSize, remainingFrames)
+                        val mixWindow = decoded.toStereoFloatContextWindow(
+                            windowStartFrame = generationStartFrame - config.trim,
+                            frames = config.chunkSize,
                         )
 
                         val instrumentalWindow = runWindow(
@@ -78,8 +74,12 @@ class MdxRangeSeparator(
                         )
                         val vocalsWindow = subtract(mixWindow, instrumentalWindow)
 
-                        vocalsWriter.writePcm16(stereoFloatToPcm16(vocalsWindow, writeFrames))
-                        instrumentalWriter.writePcm16(stereoFloatToPcm16(instrumentalWindow, writeFrames))
+                        vocalsWriter.writePcm16(
+                            stereoFloatToPcm16(vocalsWindow, startFrame = config.trim, frames = writeFrames),
+                        )
+                        instrumentalWriter.writePcm16(
+                            stereoFloatToPcm16(instrumentalWindow, startFrame = config.trim, frames = writeFrames),
+                        )
                         onProgress(MdxRangeProgress(windowIndex + 1, windowCount))
                     }
                 }
@@ -122,17 +122,43 @@ class MdxRangeSeparator(
         }
     }
 
-    private fun DecodedPcmAudio.toStereoFloatPadded(
-        startFrame: Int,
+    private fun DecodedPcmAudio.toStereoFloatContextWindow(
+        windowStartFrame: Int,
         frames: Int,
-        paddedFrames: Int,
     ): Array<FloatArray> {
-        val source = toStereoFloat(startFrame = startFrame, maxFrames = frames)
-        return Array(MdxDspConfig.STEREO_CHANNELS) { channel ->
-            FloatArray(paddedFrames).also { padded ->
-                source[channel].copyInto(padded)
+        val windowEndFrame = windowStartFrame + frames
+        val copyStartFrame = maxOf(0, windowStartFrame)
+        val copyEndFrame = minOf(frameCount, windowEndFrame)
+        val window = Array(MdxDspConfig.STEREO_CHANNELS) { FloatArray(frames) }
+        if (copyEndFrame <= copyStartFrame) return window
+
+        val source = toStereoFloat(
+            startFrame = copyStartFrame,
+            maxFrames = copyEndFrame - copyStartFrame,
+        )
+        val destinationOffset = copyStartFrame - windowStartFrame
+        for (channel in 0 until MdxDspConfig.STEREO_CHANNELS) {
+            source[channel].copyInto(
+                destination = window[channel],
+                destinationOffset = destinationOffset,
+            )
+        }
+        return window
+    }
+
+    private fun stereoFloatToPcm16(waveform: Array<FloatArray>, startFrame: Int, frames: Int): ByteArray {
+        val bytes = ByteArray(frames * MdxDspConfig.STEREO_CHANNELS * Short.SIZE_BYTES)
+        var offset = 0
+        val endFrame = startFrame + frames
+        for (frame in startFrame until endFrame) {
+            for (channel in 0 until MdxDspConfig.STEREO_CHANNELS) {
+                val value = (waveform[channel][frame].coerceIn(-1f, 1f) * Short.MAX_VALUE).roundToInt()
+                    .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+                bytes[offset++] = (value and 0xFF).toByte()
+                bytes[offset++] = ((value ushr 8) and 0xFF).toByte()
             }
         }
+        return bytes
     }
 
     private fun flattenOutput(output: Array<Array<Array<FloatArray>>>): FloatArray {
@@ -155,20 +181,6 @@ class MdxRangeSeparator(
                 mix[channel][index] - instrumental[channel][index]
             }
         }
-    }
-
-    private fun stereoFloatToPcm16(waveform: Array<FloatArray>, frames: Int): ByteArray {
-        val bytes = ByteArray(frames * MdxDspConfig.STEREO_CHANNELS * Short.SIZE_BYTES)
-        var offset = 0
-        for (frame in 0 until frames) {
-            for (channel in 0 until MdxDspConfig.STEREO_CHANNELS) {
-                val value = (waveform[channel][frame].coerceIn(-1f, 1f) * Short.MAX_VALUE).roundToInt()
-                    .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
-                bytes[offset++] = (value and 0xFF).toByte()
-                bytes[offset++] = ((value ushr 8) and 0xFF).toByte()
-            }
-        }
-        return bytes
     }
 
     private fun msToFrame(ms: Long): Int {
@@ -194,10 +206,6 @@ class MdxRangeSeparator(
             suffix += 1
         }
         return candidate
-    }
-
-    private companion object {
-        const val MODEL_FILE_NAME = "UVR-MDX-NET-Inst_Main.onnx"
     }
 }
 

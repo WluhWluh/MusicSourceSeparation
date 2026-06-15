@@ -66,3 +66,6 @@ Android implication:
 - Phase 4 cannot just pass PCM into ONNX Runtime.
 - Android needs a matching STFT/ISTFT implementation or a model variant with DSP folded into the graph.
 - For the first Android ONNX integration, using this exact model means implementing periodic Hann windows, reflect padding, chunking, frequency padding, and overlap-add behavior.
+- The current Android app resamples decoded input audio to `44100 Hz` before MDX inference when the source file uses another sample rate.
+- Current separated WAV outputs are written at `44100 Hz`.
+- Personal-test APK builds include this ONNX file from the local ignored `models/uvr-mdx` directory as an Android asset, then copy it into app-private storage before creating an ONNX Runtime session.

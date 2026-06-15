@@ -417,6 +417,28 @@ ONNX CPU settings experiment:
 - CPU thread-test APK SHA-256: `B7F34A09C45590C4B919A19E7BEC3FCFAFE5C253838F487A905C5761DAB0480F`.
 - CPU thread-test APK asset check: contains `assets/UVR-MDX-NET-Inst_Main.onnx`.
 - Emulator verification: installing `dist/MusicSourceSeparation-s25-cpu-threads-debug.apk` with `adb install -r` succeeded, and `MainActivity` launched and became the focused window on `emulator-5554`.
+- S25 CPU thread sweep results for Coast Town:
+  - `8` threads, cold phone: `165.31s` total, `142.88s` ONNX inference, `0.60x` audio duration.
+  - `8` threads, hot phone after consecutive runs: `239.69s` total, `208.01s` ONNX inference, `0.88x` audio duration.
+  - `6` threads, hot phone: `285.24s` total, `255.78s` ONNX inference, `1.04x` audio duration.
+  - `4` threads, hot phone: `347.12s` total, `322.81s` ONNX inference, `1.27x` audio duration.
+  - `2` threads, hot phone: `346.12s` total, `321.80s` ONNX inference, `1.26x` audio duration.
+  - `1` thread, hot phone: `407.08s` total, `389.65s` ONNX inference, `1.49x` audio duration.
+  - ORT default, hot phone: `341.83s` total, `316.14s` ONNX inference, `1.25x` audio duration.
+- CPU thread sweep conclusion: `8` threads is the fastest tested setting even after thermal throttling, but hot-phone performance drops substantially from the cold-phone result.
+- Next experiment: test XNNPACK with explicit thread counts, starting with `8` threads cold and hot, then compare against CPU-only `8` threads.
+
+XNNPACK experiment:
+
+- Added a `Use XNNPACK` checkbox to the main screen.
+- When XNNPACK is enabled, ORT intra-op threads are set to `1`, ORT spinning is disabled, and the CPU thread input is passed to XNNPACK as `intra_op_num_threads`.
+- Each timing report records whether the run used CPU-only or XNNPACK runtime settings.
+- Verification: `testDebugUnitTest` and `assembleDebug` passed after adding the XNNPACK toggle.
+- XNNPACK test APK: `dist/MusicSourceSeparation-s25-xnnpack-debug.apk`.
+- XNNPACK test APK size: `166725001` bytes.
+- XNNPACK test APK SHA-256: `47ABC320C28306B3D3CB50398BA89BB5F66E683E3190096B9FDF3B278DE39ABD`.
+- XNNPACK test APK asset check: contains `assets/UVR-MDX-NET-Inst_Main.onnx`.
+- Emulator verification: installing `dist/MusicSourceSeparation-s25-xnnpack-debug.apk` with `adb install -r` succeeded, and `MainActivity` launched and became the focused window on `emulator-5554`.
 
 Target MVP acceptance:
 
@@ -444,9 +466,9 @@ Done criteria:
 
 ## Immediate Next Steps
 
-1. Install the ONNX CPU thread-test APK on the Samsung S25.
-2. Run the same Coast Town full-track test with CPU threads set to `0`, `1`, `2`, `4`, `6`, and `8`.
-3. Compare total time and `ONNX inference` time from each generated `_timing.txt` report.
+1. Install the XNNPACK test APK on the Samsung S25.
+2. Run Coast Town with `Use XNNPACK` checked and CPU threads set to `8` on a cool phone if possible.
+3. Run the same XNNPACK `8`-thread test again while the phone is hot.
 4. Add cancellation and foreground-service handling if S25 full-song runs are long enough to need interruption or background continuity.
 5. Replace the development-only one-window buttons with a cleaner personal-use UI after performance experiments.
 

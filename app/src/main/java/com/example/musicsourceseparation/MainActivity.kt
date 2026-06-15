@@ -9,6 +9,7 @@ import android.text.InputType
 import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -36,6 +37,7 @@ class MainActivity : Activity() {
     private lateinit var endSecondsInput: EditText
     private lateinit var endMillisInput: EditText
     private lateinit var cpuThreadsInput: EditText
+    private lateinit var useXnnpackInput: CheckBox
     private var selectedAudioUri: Uri? = null
     private var selectedAudioMetadata: AudioMetadata? = null
 
@@ -208,8 +210,13 @@ class MainActivity : Activity() {
             textSize = 14f
         }
         cpuThreadsInput = numberInput("threads", "0")
+        useXnnpackInput = CheckBox(this).apply {
+            text = "Use XNNPACK"
+            textSize = 14f
+        }
         root.addView(label)
         root.addView(horizontalInputs(cpuThreadsInput))
+        root.addView(useXnnpackInput)
         return root
     }
 
@@ -278,7 +285,10 @@ class MainActivity : Activity() {
         val metadata = selectedAudioMetadata ?: return
         val startMs = readTimeMs(startMinutesInput, startSecondsInput, startMillisInput)
         val endMs = readTimeMs(endMinutesInput, endSecondsInput, endMillisInput).takeIf { it > 0L }
-        val runtimeSettings = MdxRuntimeSettings(cpuThreads = readCpuThreads())
+        val runtimeSettings = MdxRuntimeSettings(
+            cpuThreads = readCpuThreads(),
+            useXnnpack = useXnnpackInput.isChecked,
+        )
         setSeparationButtonsEnabled(false)
         statusText.text = getString(R.string.range_separating) + "\n" + runtimeSettings.toDisplayText()
 

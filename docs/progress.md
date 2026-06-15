@@ -368,14 +368,40 @@ Done criteria:
 
 ### Phase 7: Device Benchmarking
 
-Status: pending
+Status: in progress
 
 Tasks:
 
-- Test at least one real Android device.
-- Measure runtime factor, peak memory, output quality, thermal behavior, and battery impact.
+- Test at least one real Android device. Done on Samsung S25.
+- Measure runtime factor, peak memory, output quality, thermal behavior, and battery impact. In progress.
 - Test 30-second, 3-minute, and 10-minute inputs.
 - Record failures and unsupported codecs.
+
+Implementation notes:
+
+- Samsung S25 user verification: all current app functions work correctly, and separated output quality remains good across several songs.
+- Initial S25 performance observation: the Coast Town track that took about `150s` on the desktop Android emulator took about `268s` on the Samsung S25.
+- This confirms that device benchmarking must separate desktop-emulator CPU behavior from sustained real-phone CPU behavior.
+
+Short-term performance plan:
+
+1. Add range-separation timing instrumentation for decode, resample, model/session setup, STFT, ONNX inference, ISTFT, PCM conversion, and WAV writing. Done.
+2. Build an S25 APK with the timing report visible in-app and saved next to the separated stems. Done for the first timing-test APK.
+3. Use the S25 timing report to identify whether the first optimization target should be ONNX Runtime inference, Kotlin DSP, audio decode/resample, or output writing.
+4. Sweep ONNX Runtime CPU session settings such as graph optimization level and intra-op thread count after a timing baseline exists.
+5. Test ONNX Runtime XNNPACK as the first low-risk execution-provider experiment.
+6. Consider NNAPI, Qualcomm QNN, FP16 conversion, or quantization only after the baseline and CPU/XNNPACK results justify the extra complexity.
+
+Timing instrumentation notes:
+
+- `MdxRangeSeparator` now reports decode, resample, model-file preparation, output setup, ONNX session setup, window input, STFT, tensor creation, ONNX inference, output flattening, ISTFT, stem subtraction, PCM conversion, WAV writing, and control overhead.
+- The same timing report is shown in the app after range separation and written as a `_timing.txt` file next to the separated WAV files.
+- Verification: `testDebugUnitTest` and `assembleDebug` passed after timing instrumentation.
+- Timing-test APK: `dist/MusicSourceSeparation-s25-timing-debug.apk`.
+- Timing-test APK size: `166725001` bytes.
+- Timing-test APK SHA-256: `DE2F60ACC804B8C0EF1A6D93F7DB8C10E92427BE222ED4E8E39688989A86CEF4`.
+- Timing-test APK asset check: contains `assets/UVR-MDX-NET-Inst_Main.onnx`.
+- Emulator verification: installing `dist/MusicSourceSeparation-s25-timing-debug.apk` with `adb install -r` succeeded, and `MainActivity` launched and became the focused window on `emulator-5554`.
 
 Target MVP acceptance:
 
@@ -403,11 +429,11 @@ Done criteria:
 
 ## Immediate Next Steps
 
-1. Install `dist/MusicSourceSeparation-s25-debug.apk` on the Samsung S25.
-2. Test at least one `44100 Hz` song and one non-`44100 Hz` song with default full-range separation.
-3. Record S25 runtime, memory behavior if observable, thermal behavior, and output quality.
+1. Install `dist/MusicSourceSeparation-s25-timing-debug.apk` on the Samsung S25.
+2. Run the same Coast Town full-track test on the S25 and capture the on-screen timing report or the generated `_timing.txt` file.
+3. Use the report to choose the first real optimization target: ONNX Runtime settings, XNNPACK, or DSP implementation.
 4. Add cancellation and foreground-service handling if S25 full-song runs are long enough to need interruption or background continuity.
-5. Replace the development-only one-window buttons with a cleaner personal-use UI after device testing.
+5. Replace the development-only one-window buttons with a cleaner personal-use UI after performance experiments.
 
 ## Open Technical Decisions
 

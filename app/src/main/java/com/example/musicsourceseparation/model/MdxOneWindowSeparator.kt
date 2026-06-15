@@ -15,8 +15,14 @@ import kotlin.math.roundToInt
 class MdxOneWindowSeparator(
     private val context: Context,
     private val config: MdxDspConfig = MdxDspConfig(),
+    private val modelVariant: MdxModelVariant = MdxModelVariant.INST_MAIN,
 ) {
-    fun separate(uri: Uri, displayName: String, startSeconds: Double = 0.0): MdxOneWindowSeparationResult {
+    fun separate(
+        uri: Uri,
+        displayName: String,
+        startSeconds: Double = 0.0,
+        modelVariant: MdxModelVariant = this.modelVariant,
+    ): MdxOneWindowSeparationResult {
         val source = AudioPcmDecoder(context).decode(uri)
         val decoded = source.resampleTo(config.sampleRate)
 
@@ -26,7 +32,7 @@ class MdxOneWindowSeparator(
             "Audio is too short. Need at least $requiredFrames frames for this start offset."
         }
 
-        val modelFile = MdxModelFile.get(context)
+        val modelFile = MdxModelFile.get(context, modelVariant)
 
         val waveform = decoded.toStereoFloat(startFrame = startFrame, maxFrames = config.chunkSize)
         val spectrogram = MdxSpectrogram(config)
@@ -39,7 +45,11 @@ class MdxOneWindowSeparator(
             "separated",
         ).apply { mkdirs() }
         val baseName = safeBaseName(displayName)
-        val offsetTag = if (startFrame == 0) "one_window" else "one_window_${startSeconds.roundTag()}s"
+        val offsetTag = if (startFrame == 0) {
+            "${modelVariant.outputTag}_one_window"
+        } else {
+            "${modelVariant.outputTag}_one_window_${startSeconds.roundTag()}s"
+        }
         val vocalsFile = uniqueOutputFile(outputDir, "${baseName}_${offsetTag}_vocals.wav")
         val instrumentalFile = uniqueOutputFile(outputDir, "${baseName}_${offsetTag}_instrumental.wav")
 
@@ -54,6 +64,7 @@ class MdxOneWindowSeparator(
             seconds = config.chunkSize.toDouble() / config.sampleRate,
             sourceSampleRate = source.sampleRate,
             outputSampleRate = decoded.sampleRate,
+            modelVariant = modelVariant,
         )
     }
 
@@ -155,10 +166,12 @@ data class MdxOneWindowSeparationResult(
     val seconds: Double,
     val sourceSampleRate: Int,
     val outputSampleRate: Int,
+    val modelVariant: MdxModelVariant,
 ) {
     fun toDisplayText(): String {
         return buildString {
             appendLine("One-window separation complete")
+            appendLine("Model: ${modelVariant.displayName}")
             appendLine("Start: %.2f seconds".format(startSeconds))
             appendLine("Duration: %.2f seconds".format(seconds))
             if (sourceSampleRate != outputSampleRate) {

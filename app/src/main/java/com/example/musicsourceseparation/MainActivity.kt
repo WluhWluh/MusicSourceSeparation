@@ -8,16 +8,19 @@ import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
 import android.view.ViewGroup
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Spinner
 import android.widget.TextView
 import com.example.musicsourceseparation.audio.AudioMetadata
 import com.example.musicsourceseparation.audio.AudioMetadataReader
 import com.example.musicsourceseparation.audio.AudioPassthroughExporter
 import com.example.musicsourceseparation.model.MdxOnnxSmokeTester
+import com.example.musicsourceseparation.model.MdxModelVariant
 import com.example.musicsourceseparation.model.MdxOneWindowSeparator
 import com.example.musicsourceseparation.model.MdxRangeSeparator
 import com.example.musicsourceseparation.model.MdxRuntimeSettings
@@ -36,6 +39,7 @@ class MainActivity : Activity() {
     private lateinit var endMinutesInput: EditText
     private lateinit var endSecondsInput: EditText
     private lateinit var endMillisInput: EditText
+    private lateinit var modelSpinner: Spinner
     private lateinit var cpuThreadsInput: EditText
     private lateinit var useXnnpackInput: CheckBox
     private var selectedAudioUri: Uri? = null
@@ -128,6 +132,7 @@ class MainActivity : Activity() {
         }
 
         val rangeInputs = createRangeInputs()
+        val modelInputs = createModelInputs()
         val runtimeInputs = createRuntimeInputs()
 
         separateRangeButton = Button(this).apply {
@@ -157,6 +162,7 @@ class MainActivity : Activity() {
         container.addView(selectedFileText, spacedLayoutParams(top = 28, density = density))
         container.addView(selectButton, spacedLayoutParams(top = 20, density = density))
         container.addView(rangeInputs, spacedLayoutParams(top = 20, density = density))
+        container.addView(modelInputs, spacedLayoutParams(top = 12, density = density))
         container.addView(runtimeInputs, spacedLayoutParams(top = 12, density = density))
         container.addView(separateRangeButton, spacedLayoutParams(top = 12, density = density))
         container.addView(exportButton, spacedLayoutParams(top = 12, density = density))
@@ -217,6 +223,26 @@ class MainActivity : Activity() {
         root.addView(label)
         root.addView(horizontalInputs(cpuThreadsInput))
         root.addView(useXnnpackInput)
+        return root
+    }
+
+    private fun createModelInputs(): LinearLayout {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        val label = TextView(this).apply {
+            text = "Model"
+            textSize = 14f
+        }
+        modelSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(
+                this@MainActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                MdxModelVariant.entries.toList(),
+            )
+        }
+        root.addView(label)
+        root.addView(modelSpinner)
         return root
     }
 
@@ -285,12 +311,15 @@ class MainActivity : Activity() {
         val metadata = selectedAudioMetadata ?: return
         val startMs = readTimeMs(startMinutesInput, startSecondsInput, startMillisInput)
         val endMs = readTimeMs(endMinutesInput, endSecondsInput, endMillisInput).takeIf { it > 0L }
+        val modelVariant = selectedModelVariant()
         val runtimeSettings = MdxRuntimeSettings(
             cpuThreads = readCpuThreads(),
             useXnnpack = useXnnpackInput.isChecked,
         )
         setSeparationButtonsEnabled(false)
-        statusText.text = getString(R.string.range_separating) + "\n" + runtimeSettings.toDisplayText()
+        statusText.text = getString(R.string.range_separating) +
+            "\nModel: ${modelVariant.displayName}\n" +
+            runtimeSettings.toDisplayText()
 
         Thread {
             val result = runCatching {
@@ -300,10 +329,12 @@ class MainActivity : Activity() {
                     startMs = startMs,
                     endMs = endMs,
                     runtimeSettings = runtimeSettings,
+                    modelVariant = modelVariant,
                 ) { progress ->
                     runOnUiThread {
                         statusText.text = getString(R.string.range_separating) +
                             ": ${progress.completedWindows}/${progress.totalWindows} (${progress.percent}%)\n" +
+                            "Model: ${modelVariant.displayName}\n" +
                             runtimeSettings.toDisplayText()
                     }
                 }
@@ -324,13 +355,19 @@ class MainActivity : Activity() {
     private fun separateOneWindow(startSeconds: Double) {
         val uri = selectedAudioUri ?: return
         val metadata = selectedAudioMetadata ?: return
+        val modelVariant = selectedModelVariant()
         separateOneWindowButton.isEnabled = false
         separate37sWindowButton.isEnabled = false
-        statusText.text = getString(R.string.one_window_separating)
+        statusText.text = getString(R.string.one_window_separating) + "\nModel: ${modelVariant.displayName}"
 
         Thread {
             val result = runCatching {
-                MdxOneWindowSeparator(this).separate(uri, metadata.displayName, startSeconds)
+                MdxOneWindowSeparator(this).separate(
+                    uri = uri,
+                    displayName = metadata.displayName,
+                    startSeconds = startSeconds,
+                    modelVariant = modelVariant,
+                )
             }
             runOnUiThread {
                 statusText.text = result.fold(
@@ -368,6 +405,10 @@ class MainActivity : Activity() {
         return cpuThreadsInput.text.toString().toIntOrNull()?.coerceIn(0, 16) ?: 0
     }
 
+    private fun selectedModelVariant(): MdxModelVariant {
+        return modelSpinner.selectedItem as? MdxModelVariant ?: MdxModelVariant.INST_MAIN
+    }
+
     private fun writeTime(minutes: EditText, seconds: EditText, millis: EditText, totalMs: Long) {
         val safeMs = totalMs.coerceAtLeast(0L)
         minutes.setText((safeMs / 60_000L).toString())
@@ -376,11 +417,12 @@ class MainActivity : Activity() {
     }
 
     private fun runOnnxSmokeTest() {
+        val modelVariant = selectedModelVariant()
         onnxSmokeTestButton.isEnabled = false
-        statusText.text = getString(R.string.onnx_smoke_testing)
+        statusText.text = getString(R.string.onnx_smoke_testing) + "\nModel: ${modelVariant.displayName}"
 
         Thread {
-            val result = runCatching { MdxOnnxSmokeTester(this).run() }
+            val result = runCatching { MdxOnnxSmokeTester(this).run(modelVariant) }
             runOnUiThread {
                 statusText.text = result.fold(
                     onSuccess = { it.toDisplayText() },

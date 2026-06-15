@@ -19,6 +19,7 @@ class MdxRangeSeparator(
     private val context: Context,
     private val config: MdxDspConfig = MdxDspConfig(),
     private val runtimeSettings: MdxRuntimeSettings = MdxRuntimeSettings(),
+    private val modelVariant: MdxModelVariant = MdxModelVariant.INST_MAIN,
 ) {
     fun separate(
         uri: Uri,
@@ -26,6 +27,7 @@ class MdxRangeSeparator(
         startMs: Long,
         endMs: Long?,
         runtimeSettings: MdxRuntimeSettings = this.runtimeSettings,
+        modelVariant: MdxModelVariant = this.modelVariant,
         onProgress: (MdxRangeProgress) -> Unit = {},
     ): MdxRangeSeparationResult {
         val timing = MdxRangeTimingAccumulator()
@@ -44,7 +46,7 @@ class MdxRangeSeparator(
         require(targetFrames > 0) { "Selected range is empty." }
 
         val modelFile = measureElapsed(timing, "Model file") {
-            MdxModelFile.get(context)
+            MdxModelFile.get(context, modelVariant)
         }
 
         val outputSetupStartedAt = SystemClock.elapsedRealtime()
@@ -54,7 +56,7 @@ class MdxRangeSeparator(
         ).apply { mkdirs() }
 
         val baseName = safeBaseName(displayName)
-        val rangeTag = "${frameToMs(startFrame)}ms_${frameToMs(endFrame)}ms"
+        val rangeTag = "${modelVariant.outputTag}_${frameToMs(startFrame)}ms_${frameToMs(endFrame)}ms"
         val vocalsFile = uniqueOutputFile(outputDir, "${baseName}_${rangeTag}_vocals.wav")
         val instrumentalFile = uniqueOutputFile(outputDir, "${baseName}_${rangeTag}_instrumental.wav")
         val timingFile = uniqueOutputFile(outputDir, "${baseName}_${rangeTag}_timing.txt")
@@ -119,6 +121,7 @@ class MdxRangeSeparator(
             windowCount = windowCount,
             totalMs = elapsedMs,
             runtimeSettings = runtimeSettings,
+            modelVariant = modelVariant,
         )
         timingFile.writeText(
             timingReport.toFileText(
@@ -139,6 +142,7 @@ class MdxRangeSeparator(
             sourceSampleRate = source.sampleRate,
             outputSampleRate = decoded.sampleRate,
             timingReport = timingReport,
+            modelVariant = modelVariant,
         )
     }
 
@@ -293,12 +297,14 @@ data class MdxRangeSeparationResult(
     val sourceSampleRate: Int,
     val outputSampleRate: Int,
     val timingReport: MdxRangeTimingReport,
+    val modelVariant: MdxModelVariant,
 ) {
     fun toDisplayText(): String {
         val durationSeconds = frames.toDouble() / outputSampleRate
         return buildString {
             appendLine("Range separation complete")
             appendLine("Range: ${formatMs(startMs)} - ${formatMs(endMs)}")
+            appendLine("Model: ${modelVariant.displayName}")
             appendLine("Duration: %.2f seconds".format(durationSeconds))
             appendLine("Windows: $windowCount")
             appendLine("Elapsed: %.2f seconds".format(elapsedMs / 1000.0))

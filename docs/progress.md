@@ -452,6 +452,27 @@ XNNPACK experiment:
 - Default-8 APK asset check: contains `assets/UVR-MDX-NET-Inst_Main.onnx`.
 - Emulator verification: installing `dist/MusicSourceSeparation-s25-default8-debug.apk` with `adb install -r` succeeded, and `MainActivity` launched and became the focused window on `emulator-5554`.
 
+Small MDX model experiment:
+
+- Added `UVR_MDXNET_9482.onnx` as a second bundled model while keeping `UVR-MDX-NET-Inst_Main.onnx` unchanged.
+- Local ignored model path: `models/uvr-mdx/UVR_MDXNET_9482.onnx`.
+- Model source: `https://github.com/k2-fsa/sherpa-onnx/releases/download/source-separation-models/UVR_MDXNET_9482.onnx`.
+- Local model size: `29704738` bytes.
+- Local model SHA-256: `9D78F8566FA8198065214AB628BE1DE966A500C57786695AA4B13E2B27A7727D`.
+- Desktop contract inspection passed: input and output are both `float32 [batch_size, 4, 2048, 256]`, opset `13`, and the zero-tensor smoke run returned `float32 [1, 4, 2048, 256]`.
+- Android now exposes a model dropdown with `UVR-MDX-NET Inst Main` and `UVR MDXNET 9482`.
+- Range separation, one-window separation, and ONNX smoke test all use the selected model.
+- Output file names include the selected model tag to avoid mixing results from different models.
+- Verification: `testDebugUnitTest` and `assembleDebug` passed after adding model selection.
+- APK asset check: `app/build/outputs/apk/debug/app-debug.apk` contains both `assets/UVR-MDX-NET-Inst_Main.onnx` and `assets/UVR_MDXNET_9482.onnx`.
+- Current two-model debug APK size: `194397049` bytes.
+- Current two-model debug APK SHA-256: `65DEAABDC5175D407410D7D12DEE1982DBA58156A10E705D17672889BDC094BF`.
+- Two-model test APK: `dist/MusicSourceSeparation-s25-two-mdx-models-debug.apk`.
+- Two-model test APK size: `194397049` bytes.
+- Two-model test APK SHA-256: `65DEAABDC5175D407410D7D12DEE1982DBA58156A10E705D17672889BDC094BF`.
+- Two-model test APK asset check: contains both `assets/UVR-MDX-NET-Inst_Main.onnx` and `assets/UVR_MDXNET_9482.onnx`.
+- Emulator verification: installing `dist/MusicSourceSeparation-s25-two-mdx-models-debug.apk` with `adb install -r` succeeded, and `MainActivity` launched and became the focused window on `emulator-5554`.
+
 Target MVP acceptance:
 
 - A 3-minute song completes on a mid-range phone in a tolerable time.
@@ -478,11 +499,11 @@ Done criteria:
 
 ## Immediate Next Steps
 
-1. Install `dist/MusicSourceSeparation-s25-default8-debug.apk` for the current best daily-use build.
-2. Keep XNNPACK available as an experimental toggle for future device comparisons.
-3. Add cancellation and foreground-service handling because full-song runs remain long enough to need interruption or background continuity.
-4. Replace the development-only one-window buttons with a cleaner personal-use UI after performance experiments.
-5. Consider adding a simple performance mode selector: `Fast` = CPU-only `8`, `Cool` = lower thread count, `Experimental` = XNNPACK.
+1. Install the two-model test APK on the Samsung S25.
+2. Run Coast Town once with `UVR-MDX-NET Inst Main` and once with `UVR MDXNET 9482`, keeping CPU threads at `8` and XNNPACK unchecked.
+3. Compare total time, ONNX inference time, and listening quality between the two model variants.
+4. Add cancellation and foreground-service handling because full-song runs remain long enough to need interruption or background continuity.
+5. Replace the development-only one-window buttons with a cleaner personal-use UI after performance experiments.
 
 ## Open Technical Decisions
 

@@ -15,12 +15,14 @@ internal class MdxRangeTimingAccumulator {
         windowCount: Int,
         totalMs: Long,
         runtimeSettings: MdxRuntimeSettings,
+        modelVariant: MdxModelVariant,
     ): MdxRangeTimingReport {
         return MdxRangeTimingReport(
             audioDurationSeconds = audioDurationSeconds,
             windowCount = windowCount,
             totalMs = totalMs,
             runtimeSettings = runtimeSettings,
+            modelVariant = modelVariant,
             stageMs = LinkedHashMap(stageMs),
         )
     }
@@ -31,11 +33,13 @@ data class MdxRangeTimingReport(
     val windowCount: Int,
     val totalMs: Long,
     val runtimeSettings: MdxRuntimeSettings,
+    val modelVariant: MdxModelVariant,
     val stageMs: Map<String, Long>,
 ) {
     fun toDisplayText(): String {
         return buildString {
             appendLine("Timing:")
+            appendLine("Model: ${modelVariant.displayName}")
             appendLine(runtimeSettings.toDisplayText())
             appendLine("Total: ${seconds(totalMs)} (${decimal(runtimeAudioFactor())}x audio duration)")
             appendLine("Average per window: ${seconds(perWindowMs(totalMs))}")
@@ -51,6 +55,7 @@ data class MdxRangeTimingReport(
             appendLine("Range separation timing report")
             appendLine("Audio duration: ${decimal(audioDurationSeconds)} seconds")
             appendLine("Windows: $windowCount")
+            appendLine("Model: ${modelVariant.displayName}")
             appendLine(runtimeSettings.toDisplayText())
             appendLine("Vocals: ${vocalsFile.absolutePath}")
             appendLine("Instrumental: ${instrumentalFile.absolutePath}")

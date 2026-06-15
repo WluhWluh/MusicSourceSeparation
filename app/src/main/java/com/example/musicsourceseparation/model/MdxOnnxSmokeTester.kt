@@ -7,9 +7,12 @@ import ai.onnxruntime.OrtSession
 import java.nio.FloatBuffer
 import kotlin.math.abs
 
-class MdxOnnxSmokeTester(private val context: Context) {
-    fun run(): MdxSmokeTestResult {
-        val modelFile = MdxModelFile.get(context)
+class MdxOnnxSmokeTester(
+    private val context: Context,
+    private val modelVariant: MdxModelVariant = MdxModelVariant.INST_MAIN,
+) {
+    fun run(modelVariant: MdxModelVariant = this.modelVariant): MdxSmokeTestResult {
+        val modelFile = MdxModelFile.get(context, modelVariant)
 
         val environment = OrtEnvironment.getEnvironment()
         environment.createSession(modelFile.absolutePath, OrtSession.SessionOptions()).use { session ->
@@ -28,6 +31,7 @@ class MdxOnnxSmokeTester(private val context: Context) {
                     val outputArray = output as Array<Array<Array<FloatArray>>>
                     return MdxSmokeTestResult(
                         modelPath = modelFile.absolutePath,
+                        modelVariant = modelVariant,
                         inputName = inputInfo,
                         outputName = outputInfo,
                         outputShape = listOf(
@@ -62,6 +66,7 @@ class MdxOnnxSmokeTester(private val context: Context) {
 
 data class MdxSmokeTestResult(
     val modelPath: String,
+    val modelVariant: MdxModelVariant,
     val inputName: String,
     val outputName: String,
     val outputShape: List<Int>,
@@ -70,6 +75,7 @@ data class MdxSmokeTestResult(
     fun toDisplayText(): String {
         return buildString {
             appendLine("ONNX smoke test complete")
+            appendLine("Model: ${modelVariant.displayName}")
             appendLine("Model: $modelPath")
             appendLine("Input: $inputName")
             appendLine("Output: $outputName")

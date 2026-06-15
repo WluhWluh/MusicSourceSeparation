@@ -5,23 +5,21 @@ import java.io.File
 import java.io.IOException
 
 object MdxModelFile {
-    const val FILE_NAME = "UVR-MDX-NET-Inst_Main.onnx"
-
-    fun get(context: Context): File {
-        val target = File(context.filesDir, FILE_NAME)
+    fun get(context: Context, variant: MdxModelVariant): File {
+        val target = File(context.filesDir, variant.fileName)
         if (target.isFile && target.length() > 0L) return target
 
-        copyBundledAsset(context, target)
+        copyBundledAsset(context, variant, target)
         require(target.isFile && target.length() > 0L) {
             "Model file missing: ${target.absolutePath}"
         }
         return target
     }
 
-    private fun copyBundledAsset(context: Context, target: File) {
-        val temp = File(context.filesDir, "$FILE_NAME.tmp")
+    private fun copyBundledAsset(context: Context, variant: MdxModelVariant, target: File) {
+        val temp = File(context.filesDir, "${variant.fileName}.tmp")
         try {
-            context.assets.open(FILE_NAME).use { input ->
+            context.assets.open(variant.fileName).use { input ->
                 temp.outputStream().use { output ->
                     input.copyTo(output)
                 }
@@ -29,7 +27,7 @@ object MdxModelFile {
         } catch (error: IOException) {
             temp.delete()
             throw IllegalStateException(
-                "Bundled model asset missing. Build the APK with models/uvr-mdx/$FILE_NAME available.",
+                "Bundled model asset missing. Build the APK with models/uvr-mdx/${variant.fileName} available.",
                 error,
             )
         }

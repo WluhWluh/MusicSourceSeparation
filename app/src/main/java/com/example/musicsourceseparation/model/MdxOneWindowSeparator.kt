@@ -37,8 +37,16 @@ class MdxOneWindowSeparator(
         val waveform = decoded.toStereoFloat(startFrame = startFrame, maxFrames = config.chunkSize)
         val spectrogram = MdxSpectrogram(config)
         val modelInput = spectrogram.waveformToTensor(waveform)
-        val instrumental = runModel(modelFile, modelInput, spectrogram)
-        val vocals = subtract(waveform, instrumental)
+        val modelOutput = runModel(modelFile, modelInput, spectrogram)
+        val residual = subtract(waveform, modelOutput)
+        val vocals = when (modelVariant.modelOutputStem) {
+            MdxStem.VOCALS -> modelOutput
+            MdxStem.INSTRUMENTAL -> residual
+        }
+        val instrumental = when (modelVariant.modelOutputStem) {
+            MdxStem.VOCALS -> residual
+            MdxStem.INSTRUMENTAL -> modelOutput
+        }
 
         val outputDir = File(
             context.getExternalFilesDir(Environment.DIRECTORY_MUSIC) ?: context.filesDir,

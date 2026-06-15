@@ -463,6 +463,9 @@ Small MDX model experiment:
 - Android now exposes a model dropdown with `UVR-MDX-NET Inst Main` and `UVR MDXNET 9482`.
 - Range separation, one-window separation, and ONNX smoke test all use the selected model.
 - Output file names include the selected model tag to avoid mixing results from different models.
+- Per-model output stem semantics are now encoded in `MdxModelVariant`:
+  - `UVR-MDX-NET Inst Main` model output is treated as instrumental, and vocals are computed as `mixture - instrumental`.
+  - `UVR MDXNET 9482` model output is treated as vocals, and instrumental is computed as `mixture - vocals`.
 - Verification: `testDebugUnitTest` and `assembleDebug` passed after adding model selection.
 - APK asset check: `app/build/outputs/apk/debug/app-debug.apk` contains both `assets/UVR-MDX-NET-Inst_Main.onnx` and `assets/UVR_MDXNET_9482.onnx`.
 - Current two-model debug APK size: `194397049` bytes.
@@ -472,6 +475,14 @@ Small MDX model experiment:
 - Two-model test APK SHA-256: `65DEAABDC5175D407410D7D12DEE1982DBA58156A10E705D17672889BDC094BF`.
 - Two-model test APK asset check: contains both `assets/UVR-MDX-NET-Inst_Main.onnx` and `assets/UVR_MDXNET_9482.onnx`.
 - Emulator verification: installing `dist/MusicSourceSeparation-s25-two-mdx-models-debug.apk` with `adb install -r` succeeded, and `MainActivity` launched and became the focused window on `emulator-5554`.
+- S25 test result: `UVR MDXNET 9482` reduced total processing time to about `25%` of source duration, more than twice as fast as the previous model, while still sounding good enough to keep.
+- S25 timing shift: `ONNX inference` share dropped from about `90%` with `UVR-MDX-NET Inst Main` to about `75%` with `UVR MDXNET 9482`.
+- S25 labeling finding: `UVR MDXNET 9482` has opposite output stem semantics from `Inst Main`; initial files were mislabeled until the per-model stem mapping was added.
+- Stem-labeling fix APK: `dist/MusicSourceSeparation-s25-stemfix-debug.apk`.
+- Stem-labeling fix APK size: `194397049` bytes.
+- Stem-labeling fix APK SHA-256: `313CB11906AB363F9ECA2C0D11102D0CBD7E584B35E631B8244989679A74DFAF`.
+- Stem-labeling fix APK asset check: contains both `assets/UVR-MDX-NET-Inst_Main.onnx` and `assets/UVR_MDXNET_9482.onnx`.
+- Emulator verification: installing `dist/MusicSourceSeparation-s25-stemfix-debug.apk` with `adb install -r` succeeded, and `MainActivity` launched and became the focused window on `emulator-5554`.
 
 Target MVP acceptance:
 
@@ -499,9 +510,9 @@ Done criteria:
 
 ## Immediate Next Steps
 
-1. Install the two-model test APK on the Samsung S25.
-2. Run Coast Town once with `UVR-MDX-NET Inst Main` and once with `UVR MDXNET 9482`, keeping CPU threads at `8` and XNNPACK unchecked.
-3. Compare total time, ONNX inference time, and listening quality between the two model variants.
+1. Install the stem-labeling fix APK on the Samsung S25.
+2. Run `UVR MDXNET 9482` again on Coast Town and verify the vocals and instrumental file names are now correct.
+3. Keep `UVR MDXNET 9482` as the likely daily-use default candidate if additional songs confirm quality.
 4. Add cancellation and foreground-service handling because full-song runs remain long enough to need interruption or background continuity.
 5. Replace the development-only one-window buttons with a cleaner personal-use UI after performance experiments.
 

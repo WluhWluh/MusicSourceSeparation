@@ -87,7 +87,7 @@ class MdxRangeSeparator(
                             )
                         }
 
-                        val instrumentalWindow = runWindow(
+                        val modelOutputWindow = runWindow(
                             session = session,
                             inputName = inputName,
                             outputName = outputName,
@@ -95,8 +95,16 @@ class MdxRangeSeparator(
                             mixWindow = mixWindow,
                             timing = timing,
                         )
-                        val vocalsWindow = measureElapsed(timing, "Stem subtract") {
-                            subtract(mixWindow, instrumentalWindow)
+                        val residualWindow = measureElapsed(timing, "Stem subtract") {
+                            subtract(mixWindow, modelOutputWindow)
+                        }
+                        val vocalsWindow = when (modelVariant.modelOutputStem) {
+                            MdxStem.VOCALS -> modelOutputWindow
+                            MdxStem.INSTRUMENTAL -> residualWindow
+                        }
+                        val instrumentalWindow = when (modelVariant.modelOutputStem) {
+                            MdxStem.VOCALS -> residualWindow
+                            MdxStem.INSTRUMENTAL -> modelOutputWindow
                         }
 
                         val vocalsPcm = measureElapsed(timing, "PCM convert") {

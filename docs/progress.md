@@ -439,6 +439,18 @@ XNNPACK experiment:
 - XNNPACK test APK SHA-256: `47ABC320C28306B3D3CB50398BA89BB5F66E683E3190096B9FDF3B278DE39ABD`.
 - XNNPACK test APK asset check: contains `assets/UVR-MDX-NET-Inst_Main.onnx`.
 - Emulator verification: installing `dist/MusicSourceSeparation-s25-xnnpack-debug.apk` with `adb install -r` succeeded, and `MainActivity` launched and became the focused window on `emulator-5554`.
+- S25 sequential XNNPACK comparison from a cool phone:
+  - Round 1, XNNPACK `8` threads: `148.36s` total, `131.29s` ONNX inference, `0.54x` audio duration.
+  - Round 2, CPU-only `8` threads: `145.71s` total, `125.79s` ONNX inference, `0.53x` audio duration.
+  - Round 3, XNNPACK `8` threads on warmer phone: `176.82s` total, `157.00s` ONNX inference, `0.65x` audio duration.
+  - Round 4, CPU-only `8` threads on hot phone: `235.79s` total, `202.63s` ONNX inference, `0.86x` audio duration.
+- XNNPACK conclusion: XNNPACK works, but CPU-only `8` threads remains the best tested path for this MDX model on the S25. XNNPACK may retain better hot-phone behavior than CPU-only in some run orders, but the best practical default is CPU-only `8` threads until more devices or repeated alternating runs justify changing it.
+- Default runtime update: the main-screen CPU thread input now defaults to `8`, with `Use XNNPACK` unchecked by default.
+- Default-8 APK: `dist/MusicSourceSeparation-s25-default8-debug.apk`.
+- Default-8 APK size: `166725001` bytes.
+- Default-8 APK SHA-256: `EF24A29024A6BA78463823EC1CF5576942B2C1698A34AE1377392EE96D8615EC`.
+- Default-8 APK asset check: contains `assets/UVR-MDX-NET-Inst_Main.onnx`.
+- Emulator verification: installing `dist/MusicSourceSeparation-s25-default8-debug.apk` with `adb install -r` succeeded, and `MainActivity` launched and became the focused window on `emulator-5554`.
 
 Target MVP acceptance:
 
@@ -466,11 +478,11 @@ Done criteria:
 
 ## Immediate Next Steps
 
-1. Install the XNNPACK test APK on the Samsung S25.
-2. Run Coast Town with `Use XNNPACK` checked and CPU threads set to `8` on a cool phone if possible.
-3. Run the same XNNPACK `8`-thread test again while the phone is hot.
-4. Add cancellation and foreground-service handling if S25 full-song runs are long enough to need interruption or background continuity.
-5. Replace the development-only one-window buttons with a cleaner personal-use UI after performance experiments.
+1. Install `dist/MusicSourceSeparation-s25-default8-debug.apk` for the current best daily-use build.
+2. Keep XNNPACK available as an experimental toggle for future device comparisons.
+3. Add cancellation and foreground-service handling because full-song runs remain long enough to need interruption or background continuity.
+4. Replace the development-only one-window buttons with a cleaner personal-use UI after performance experiments.
+5. Consider adding a simple performance mode selector: `Fast` = CPU-only `8`, `Cool` = lower thread count, `Experimental` = XNNPACK.
 
 ## Open Technical Decisions
 

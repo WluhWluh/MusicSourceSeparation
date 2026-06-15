@@ -209,7 +209,7 @@ class MainActivity : Activity() {
             text = "ONNX CPU threads (0 = default)"
             textSize = 14f
         }
-        cpuThreadsInput = numberInput("threads", "0")
+        cpuThreadsInput = numberInput("threads", "8")
         useXnnpackInput = CheckBox(this).apply {
             text = "Use XNNPACK"
             textSize = 14f

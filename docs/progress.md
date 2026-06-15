@@ -508,6 +508,38 @@ Done criteria:
 - The app is usable without developer intervention.
 - The main workflow is simple enough for daily personal use.
 
+### Later Package Size Reduction
+
+Status: deferred
+
+Current package size snapshot:
+
+- Analyzed APK: `dist/MusicSourceSeparation-s25-stemfix-debug.apk`.
+- APK size: `194397049` bytes, or about `185.39 MiB`.
+- ONNX Runtime native libraries: `108.32 MiB` compressed, about `58.43%` of the APK.
+- Bundled ONNX models: `73.33 MiB` compressed, about `39.56%` of the APK.
+- Dex code: `2.49 MiB` compressed, about `1.34%` of the APK.
+- Remaining assets, resources, manifest, and metadata are negligible.
+
+Native library ABI breakdown:
+
+- `x86_64`: `31.76 MiB`.
+- `x86`: `31.63 MiB`.
+- `arm64-v8a`: `26.25 MiB`.
+- `armeabi-v7a`: `18.68 MiB`.
+
+Bundled model breakdown:
+
+- `UVR-MDX-NET-Inst_Main.onnx`: `46.94 MiB` compressed, `50.34 MiB` uncompressed.
+- `UVR_MDXNET_9482.onnx`: `26.39 MiB` compressed, `28.33 MiB` uncompressed.
+
+Decision:
+
+- Do not reduce package size yet. Keep the current multi-ABI, two-model debug package while model quality, performance, and workflow polish are still being tested.
+- The first future size reduction should be an `arm64-v8a`-only S25 build. This should avoid changing runtime behavior and could remove roughly `82 MiB` of x86, x86_64, and 32-bit ARM libraries.
+- If `UVR MDXNET 9482` remains the daily-use default, a later lightweight build can omit `UVR-MDX-NET-Inst_Main.onnx`.
+- Deeper runtime slimming through `onnxruntime-mobile`, ORT format models, or a custom reduced-operator ONNX Runtime build should stay lower priority because it adds more conversion, compatibility, and regression-test risk.
+
 ## Immediate Next Steps
 
 1. Install the stem-labeling fix APK on the Samsung S25.

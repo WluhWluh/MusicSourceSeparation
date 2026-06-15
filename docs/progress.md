@@ -327,6 +327,8 @@ Implementation notes:
   - APK asset check: `app/build/outputs/apk/debug/app-debug.apk` contains `assets/UVR-MDX-NET-Inst_Main.onnx`.
   - Current bundled debug APK size: `166725001` bytes.
   - Current bundled debug APK SHA-256: `C4050084246D0189A5290012C3F8BC35916C838130DB56475E367BBDA3F241B7`.
+  - Personal-test copy: `dist/MusicSourceSeparation-s25-debug.apk`.
+  - Emulator verification: installing `dist/MusicSourceSeparation-s25-debug.apk` with `adb install -r` succeeded, and `MainActivity` launched and became the focused window on `emulator-5554`.
 
 ### Phase 5: Chunked Full-Song Processing
 
@@ -401,11 +403,11 @@ Done criteria:
 
 ## Immediate Next Steps
 
-1. Run `testDebugUnitTest` and `assembleDebug` after the context-window and model-asset updates.
-2. Commit the resampling, context-window, documentation, and personal-test packaging stage.
-3. Copy the debug APK to a stable `dist/` path for Samsung S25 installation.
-4. Install the APK on the Samsung S25 and test at least one non-`44100 Hz` source file.
-5. Record S25 runtime, memory behavior if observable, thermal behavior, and output quality.
+1. Install `dist/MusicSourceSeparation-s25-debug.apk` on the Samsung S25.
+2. Test at least one `44100 Hz` song and one non-`44100 Hz` song with default full-range separation.
+3. Record S25 runtime, memory behavior if observable, thermal behavior, and output quality.
+4. Add cancellation and foreground-service handling if S25 full-song runs are long enough to need interruption or background continuity.
+5. Replace the development-only one-window buttons with a cleaner personal-use UI after device testing.
 
 ## Open Technical Decisions
 

@@ -1,5 +1,11 @@
 # Music Source Separation Android MVP Progress
 
+> This is the chronological log for the original ONNX Android prototype. The
+> later runtime comparison results are summarized in
+> `android-litert-benchmark-2026-07-19.md` and
+> `android-litert-x86-build-2026-07-20.md`; use the repository `README.md` as
+> the current entry point.
+
 ## Project Goal
 
 Build a simple Android app for personal daily use that performs fully on-device 2-stem music source separation. The user should install the app, choose a local audio file, wait for processing, and receive two local output files:

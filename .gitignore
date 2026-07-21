@@ -1,5 +1,6 @@
 # Gradle
 .gradle/
+.kotlin/
 build/
 **/build/
 
@@ -26,6 +27,7 @@ local.properties
 externalNativeBuild/
 
 # Generated binaries and packages
+dist/
 *.apk
 *.aab
 *.ap_

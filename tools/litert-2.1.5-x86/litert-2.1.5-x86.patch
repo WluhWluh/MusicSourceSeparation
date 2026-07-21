@@ -1,0 +1,58 @@
+diff --git a/WORKSPACE b/WORKSPACE
+--- a/WORKSPACE
++++ b/WORKSPACE
+@@ -6,6 +6,22 @@ workspace(name = "litert")
+ 
+ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+ 
++http_archive(
++    name = "rules_android_ndk",
++    sha256 = "89bf5012567a5bade4c78eac5ac56c336695c3bfd281a9b0894ff6605328d2d5",
++    strip_prefix = "rules_android_ndk-0.1.3",
++    url = "https://github.com/bazelbuild/rules_android_ndk/releases/download/v0.1.3/rules_android_ndk-v0.1.3.tar.gz",
++)
++
++load("@rules_android_ndk//:rules.bzl", "android_ndk_repository")
++
++android_ndk_repository(
++    name = "androidndk",
++    api_level = 23,
++)
++
++register_toolchains("@androidndk//:all")
++
+ # Darts Clone. Declare this before TensorFlow's workspace macros so they do not
+ # install their own incompatible BUILD overlay.
+ http_archive(
+diff --git a/litert/runtime/BUILD b/litert/runtime/BUILD
+--- a/litert/runtime/BUILD
++++ b/litert/runtime/BUILD
+@@ -48,6 +48,7 @@ cc_library(
+     copts = litert_metal_opts(),
+     linkopts = litert_metal_linkopts(),
+     deps = [
++        ":gpu_environment_header",
+         "//litert/c:litert_common",
+         "//litert/c:litert_event_type",
+         "//litert/c:litert_gl_types",
+diff --git a/litert/core/BUILD b/litert/core/BUILD
+--- a/litert/core/BUILD
++++ b/litert/core/BUILD
+@@ -141,15 +141,11 @@ cc_library(
+         "//litert/cc:litert_expected",
+         "//litert/cc:litert_macros",
+         "//litert/runtime:accelerator_registry",
++        "//litert/runtime:gpu_environment",
+         "//litert/runtime:tensor_buffer_registry_header",
+         "//tflite/core/api:error_reporter",
+         "@com_google_absl//absl/types:span",
+-    ] + select({
+-        "//litert/build_common:build_include_gpu_enabled": [
+-            "//litert/runtime:gpu_environment",
+-        ],
+-        "//conditions:default": [],
+-    }),
++    ],
+ )
+ 
+ cc_library(

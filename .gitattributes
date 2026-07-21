@@ -1,9 +1,12 @@
 * text=auto eol=lf
 
 *.bat text eol=crlf
+*.patch text eol=lf whitespace=-blank-at-eol,-blank-at-eof
 *.jar binary
+*.aar binary
 *.apk binary
 *.aab binary
+*.so binary
 *.png binary
 *.jpg binary
 *.jpeg binary

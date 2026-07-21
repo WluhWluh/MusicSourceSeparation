@@ -184,9 +184,19 @@ captures.
 
 ## Licensing and provenance
 
-This repository does not currently declare a repository-wide source license.
-Third-party dependencies retain their own licenses. The supplemental LiteRT
-AAR contains the upstream LiteRT license, and the canonical runtime releases
-publish complete notices separately. No model license is implied by model
-compatibility or by the conversion and benchmark instructions in this
+Unless otherwise noted, source code and documentation authored for this
+repository are licensed under the
+[Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for project attribution and
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for dependency and provenance
+details.
+
+This license does not apply to model weights, converted model artifacts,
+audio files, generated stems, benchmark input tensors, or third-party
+binaries. Those materials remain subject to their respective source terms.
+In particular, the historical supplemental LiteRT x86 AAR is an upstream
+derivative retained for benchmark reproducibility and is not relicensed as
+original MusicSourceSeparation code.
+
+No model license or redistribution permission is implied by model
+compatibility, conversion instructions, hashes, or benchmark results in this
 repository.

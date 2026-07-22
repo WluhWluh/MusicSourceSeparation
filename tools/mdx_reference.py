@@ -230,6 +230,8 @@ def separate_wav(
     denoise: bool,
     start_seconds: float,
     limit_seconds: float | None,
+    model_output_scale: float,
+    model_output_stem: str,
 ) -> dict:
     mix, sample_rate = load_wav_stereo(input_path, params.sample_rate)
     if start_seconds > 0:
@@ -252,13 +254,22 @@ def separate_wav(
     else:
         pred = session.run([output_name], {input_name: spec})[0]
 
-    instrumental_windows = istft_centered(pred.astype(np.float32), params)
-    instrumental = instrumental_windows[:, :, params.trim : -params.trim]
-    instrumental = instrumental.transpose(1, 0, 2).reshape(2, -1)
+    model_output_windows = istft_centered(pred.astype(np.float32), params)
+    model_output = model_output_windows[:, :, params.trim : -params.trim]
+    model_output = model_output.transpose(1, 0, 2).reshape(2, -1)
     if pad:
-        instrumental = instrumental[:, :-pad]
-    instrumental = instrumental[:, : mix.shape[1]]
-    vocals = (mix[:, : instrumental.shape[1]] - instrumental).astype(np.float32)
+        model_output = model_output[:, :-pad]
+    model_output = model_output[:, : mix.shape[1]] * model_output_scale
+    if model_output_stem == "vocals":
+        vocals = model_output
+        instrumental = mix[:, : vocals.shape[1]] - vocals
+    elif model_output_stem == "instrumental":
+        instrumental = model_output
+        vocals = mix[:, : instrumental.shape[1]] - instrumental
+    else:
+        raise ValueError(f"Unsupported model output stem: {model_output_stem}")
+    vocals = vocals.astype(np.float32)
+    instrumental = instrumental.astype(np.float32)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = input_path.stem
@@ -273,6 +284,8 @@ def separate_wav(
         "input_samples": int(mix.shape[1]),
         "windows": int(windows.shape[0]),
         "model_input_shape": list(spec.shape),
+        "model_output_scale": model_output_scale,
+        "model_output_stem": model_output_stem,
         "vocals_path": str(vocals_path),
         "instrumental_path": str(instrumental_path),
     }
@@ -339,6 +352,12 @@ def build_parser() -> argparse.ArgumentParser:
     separate.add_argument("--no-denoise", dest="denoise", action="store_false", default=True)
     separate.add_argument("--start-seconds", type=float, default=0.0)
     separate.add_argument("--limit-seconds", type=float, default=20.0)
+    separate.add_argument("--model-output-scale", type=float, default=1.0)
+    separate.add_argument(
+        "--model-output-stem",
+        choices=("vocals", "instrumental"),
+        default="instrumental",
+    )
 
     return parser
 
@@ -369,6 +388,8 @@ def main(argv: Iterable[str] | None = None) -> int:
                 denoise=args.denoise,
                 start_seconds=args.start_seconds,
                 limit_seconds=args.limit_seconds,
+                model_output_scale=args.model_output_scale,
+                model_output_stem=args.model_output_stem,
             )
         )
         return 0

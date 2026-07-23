@@ -109,6 +109,23 @@ Run `python tools/mdx_reference.py --help` for separation commands and
 `python tools/generate_ort_tensor_reference.py --help` for raw tensor reference
 generation.
 
+Compare a Phase 7 Android export with its desktop ORT reference (the Android
+runner writes `cache-manifest.json` beside the exported stems):
+
+```powershell
+.\.venv\Scripts\python.exe tools/compare_phase7_audio.py `
+  --actual-dir <BoomingSS-build>\<device>\<run>-artifacts `
+  --reference-dir outputs/phase7/9662-full-wav `
+  --source data/samples/_-_Coast_Town__decoded.wav `
+  --cache-manifest <BoomingSS-build>\<device>\<run>-artifacts\cache-manifest.json `
+  --fixture-id coast_town_full_wav `
+  --output <comparison-report>.json
+```
+
+The report distinguishes one-LSB PCM quantization from larger numerical
+differences and evaluates every exported segment boundary. It is a local
+validation artifact; full audio and generated reports remain outside Git.
+
 ## Android inference benchmark
 
 The benchmark service compares these backends:

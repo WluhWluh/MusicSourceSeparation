@@ -128,6 +128,29 @@ actual-versus-reference reconstruction error delta required by the current
 Phase 7 threshold revision. It is a local validation artifact; full audio and
 generated reports remain outside Git.
 
+### Phase 7 source-format corpus
+
+Generate the deterministic 15-second format matrix used to validate Booming
+SS window decoding and full-song fallback routes:
+
+```powershell
+python tools/generate_phase7_format_corpus.py
+```
+
+The generator requires the pinned Gyan FFmpeg 8.1.1 full build. It creates a
+44.1 kHz stereo PCM source with signal markers at MDX generation boundaries,
+then writes WAV, FLAC, Vorbis, gapless and no-Xing MP3, AAC, 48 kHz fallback,
+and wrong-extension fixtures under `data/phase7/source-formats-v1/`. Ogg stream
+serials are normalized and page checksums are rebuilt so repeated runs produce
+identical hashes. `manifest.generated.json` records each command, format,
+duration, byte size, and SHA-256.
+
+The generated audio and manifest remain ignored. The frozen hashes and
+expected Android decode routes live with the app-side validation contract in
+the Booming SS repository. Regenerate the complete corpus after changing the
+signal, FFmpeg build, codec settings, or normalization logic; do not replace an
+individual fixture under an existing corpus schema version.
+
 ## Android inference benchmark
 
 The benchmark service compares these backends:

@@ -83,6 +83,7 @@ def reconstruction_metrics(
         + expected_instrumental[:frame_count].astype(np.float64) / 32768.0
         - source[:frame_count].astype(np.float64) / 32768.0
     )
+    delta_error = actual_error - expected_error
     return {
         "frames": frame_count,
         "actualMaxAbsError": float(np.max(np.abs(actual_error))),
@@ -92,6 +93,11 @@ def reconstruction_metrics(
         "referenceMeanAbsError": float(np.mean(np.abs(expected_error))),
         "referenceRmsError": float(
             np.sqrt(np.mean(expected_error * expected_error))
+        ),
+        "actualMinusReferenceMaxAbsError": float(np.max(np.abs(delta_error))),
+        "actualMinusReferenceMeanAbsError": float(np.mean(np.abs(delta_error))),
+        "actualMinusReferenceRmsError": float(
+            np.sqrt(np.mean(delta_error * delta_error))
         ),
     }
 
@@ -195,7 +201,7 @@ def main() -> None:
         for semantic in ("vocals", "instrumental")
     }
     result = {
-        "schemaVersion": "phase7-audio-compare-v1",
+        "schemaVersion": "phase7-audio-compare-v2",
         "fixtureId": args.fixture_id,
         "actual": {"directory": str(actual_dir), "sampleRate": actual["vocals"][0]},
         "reference": {"directory": str(reference_dir), "sampleRate": expected["vocals"][0]},

@@ -123,8 +123,10 @@ runner writes `cache-manifest.json` beside the exported stems):
 ```
 
 The report distinguishes one-LSB PCM quantization from larger numerical
-differences and evaluates every exported segment boundary. It is a local
-validation artifact; full audio and generated reports remain outside Git.
+differences, evaluates every exported segment boundary, and reports the
+actual-versus-reference reconstruction error delta required by the current
+Phase 7 threshold revision. It is a local validation artifact; full audio and
+generated reports remain outside Git.
 
 ## Android inference benchmark
 

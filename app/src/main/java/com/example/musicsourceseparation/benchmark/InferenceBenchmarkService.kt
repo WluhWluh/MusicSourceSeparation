@@ -75,6 +75,10 @@ class InferenceBenchmarkService : Service() {
             return
         }
         val backend = BenchmarkBackend.from(intent.getStringExtra(EXTRA_BACKEND))
+        if (backend == BenchmarkBackend.LITERT_QNN_AUDIO) {
+            runQnnAudioBenchmark(intent, backend)
+            return
+        }
         val iterations = intent.getIntExtra(EXTRA_ITERATIONS, DEFAULT_ITERATIONS)
             .coerceIn(1, MAX_ITERATIONS)
         val warmups = intent.getIntExtra(EXTRA_WARMUPS, DEFAULT_WARMUPS).coerceIn(0, 20)
@@ -100,7 +104,8 @@ class InferenceBenchmarkService : Service() {
                 BenchmarkBackend.LITERT_GPU,
                 BenchmarkBackend.LITERT_GPU_FP32,
                 BenchmarkBackend.LITERT_GPU_BOUNDED,
-                BenchmarkBackend.LITERT_QNN -> intent.getStringExtra(EXTRA_LITERT_MODEL)
+                BenchmarkBackend.LITERT_QNN,
+                BenchmarkBackend.LITERT_QNN_AUDIO -> intent.getStringExtra(EXTRA_LITERT_MODEL)
                     ?: DEFAULT_LITERT_MODEL
             },
         )
@@ -216,6 +221,7 @@ class InferenceBenchmarkService : Service() {
                 height = height,
                 width = width,
             )
+            BenchmarkBackend.LITERT_QNN_AUDIO -> error("QNN audio is handled before tensor benchmarks.")
         }
         val processEnd = processSnapshot()
         val deviceEnd = deviceSnapshot()
@@ -290,6 +296,76 @@ class InferenceBenchmarkService : Service() {
         updateNotification("Completed ${backend.id}")
     }
 
+    private fun runQnnAudioBenchmark(intent: Intent, backend: BenchmarkBackend) {
+        val tag = intent.getStringExtra(EXTRA_TAG)?.sanitizeTag()
+            ?.takeIf { it.isNotBlank() }
+            ?: "${backend.id}-${System.currentTimeMillis()}"
+        val modelId = intent.getStringExtra(EXTRA_MODEL_ID)?.sanitizeTag()
+            ?.takeIf { it.isNotBlank() }
+            ?: "uvr_mdxnet_3_9662"
+        val modelName = intent.getStringExtra(EXTRA_LITERT_MODEL)?.validatedFileName()
+            ?.takeIf { it.isNotBlank() }
+            ?: DEFAULT_LITERT_MODEL
+        val audioName = intent.getStringExtra(EXTRA_AUDIO_FILE)?.validatedFileName()
+            ?.takeIf { it.isNotBlank() }
+            ?: error("QNN audio benchmark requires an audio file name.")
+        val modelOutputScale = intent.getFloatExtra(EXTRA_MODEL_OUTPUT_SCALE, DEFAULT_MODEL_OUTPUT_SCALE)
+        val modelFile = File(File(benchmarkDir(), "models"), modelName)
+        val audioFile = File(audioInputsDir(), audioName)
+        val outputDir = File(audioOutputsDir(), tag).apply {
+            deleteRecursively()
+            mkdirs()
+        }
+        val evidenceDir = File(qnnEvidenceRoot(), tag).apply {
+            deleteRecursively()
+            mkdirs()
+        }
+        val reportFile = File(reportsDir(), "$tag.json")
+        val reportBase = JSONObject()
+            .put("schemaVersion", 1)
+            .put("tag", tag)
+            .put("backend", backend.id)
+            .put("modelId", modelId)
+            .put("modelPath", modelFile.absolutePath)
+            .put("modelBytes", modelFile.length())
+            .put("audioPath", audioFile.absolutePath)
+            .put("audioBytes", audioFile.length())
+            .put("device", JSONObject()
+                .put("manufacturer", Build.MANUFACTURER)
+                .put("model", Build.MODEL)
+                .put("device", Build.DEVICE)
+                .put("sdk", Build.VERSION.SDK_INT)
+                .put("abis", JSONArray(Build.SUPPORTED_ABIS.toList())))
+            .put("reportPath", reportFile.absolutePath)
+        File(reportsDir(), LATEST_REPORT).writeText(
+            JSONObject(reportBase.toString()).put("status", "running").toString(2),
+        )
+
+        val processStart = processSnapshot()
+        val deviceStart = deviceSnapshot()
+        val result = QnnMdxAudioBenchmark(this).run(
+            modelFile = modelFile,
+            audioFile = audioFile,
+            outputDir = outputDir,
+            evidenceDir = evidenceDir,
+            modelOutputScale = modelOutputScale,
+            onPhase = ::updateNotification,
+            onProgress = { completed, total ->
+                updateNotification("Separating audio $completed/$total")
+            },
+        )
+        val report = JSONObject(reportBase.toString())
+            .put("status", "complete")
+            .put("audio", result)
+            .put("processStart", processStart)
+            .put("processEnd", processSnapshot())
+            .put("deviceStart", deviceStart)
+            .put("deviceEnd", deviceSnapshot())
+        reportFile.writeText(report.toString(2))
+        File(reportsDir(), LATEST_REPORT).writeText(report.toString(2))
+        updateNotification("Completed ${backend.id}")
+    }
+
     private fun initializeBenchmarkDirectories(intent: Intent) {
         val tag = intent.getStringExtra(EXTRA_TAG)?.sanitizeTag()
             ?.takeIf { it.isNotBlank() }
@@ -299,6 +375,8 @@ class InferenceBenchmarkService : Service() {
         val reports = reportsDir()
         val reference = referenceDir()
         val tensorOutput = tensorOutputDir()
+        val audioInput = audioInputsDir()
+        val audioOutput = audioOutputsDir()
         inputsDir().mkdirs()
         val report = JSONObject()
             .put("schemaVersion", 1)
@@ -310,6 +388,8 @@ class InferenceBenchmarkService : Service() {
             .put("reportsPath", reports.absolutePath)
             .put("referencePath", reference.absolutePath)
             .put("tensorOutputPath", tensorOutput.absolutePath)
+            .put("audioInputPath", audioInput.absolutePath)
+            .put("audioOutputPath", audioOutput.absolutePath)
             .put("inputsPath", inputsDir().absolutePath)
         File(reports, "$tag.json").writeText(report.toString(2))
         File(reports, LATEST_REPORT).writeText(report.toString(2))
@@ -840,6 +920,10 @@ class InferenceBenchmarkService : Service() {
 
     private fun tensorOutputDir(): File = File(benchmarkDir(), "tensor-output").apply { mkdirs() }
 
+    private fun audioInputsDir(): File = File(benchmarkDir(), "audio-input").apply { mkdirs() }
+
+    private fun audioOutputsDir(): File = File(benchmarkDir(), "audio-output").apply { mkdirs() }
+
     private fun inputsDir(): File = File(benchmarkDir(), "inputs").apply { mkdirs() }
 
     private fun qnnEvidenceRoot(): File = File(benchmarkDir(), "qnn").apply { mkdirs() }
@@ -984,6 +1068,12 @@ class InferenceBenchmarkService : Service() {
         .replace(Regex("[^a-z0-9._-]+"), "-")
         .trim('-')
 
+    private fun String.validatedFileName(): String = also { value ->
+        require(value != "." && value != ".." && value.matches(Regex("[A-Za-z0-9._-]+"))) {
+            "Benchmark file names may contain only ASCII letters, digits, dot, underscore, or hyphen: $value"
+        }
+    }
+
     private data class TimedStart(val elapsedNanos: Long, val cpuMs: Long) {
         fun elapsed(): Timing = Timing(
             wallMs = (SystemClock.elapsedRealtimeNanos() - elapsedNanos) / 1_000_000.0,
@@ -1017,7 +1107,8 @@ class InferenceBenchmarkService : Service() {
         LITERT_GPU("litert_gpu"),
         LITERT_GPU_FP32("litert_gpu_fp32"),
         LITERT_GPU_BOUNDED("litert_gpu_bounded"),
-        LITERT_QNN("litert_qnn");
+        LITERT_QNN("litert_qnn"),
+        LITERT_QNN_AUDIO("litert_qnn_audio");
 
         companion object {
             fun from(value: String?): BenchmarkBackend = entries.firstOrNull { it.id == value }
@@ -1042,6 +1133,8 @@ class InferenceBenchmarkService : Service() {
         const val EXTRA_LITERT_MODEL = "litertModel"
         const val EXTRA_QNN_PROFILING = "qnnProfiling"
         const val EXTRA_EXPORT_OUTPUT_TENSOR = "exportOutputTensor"
+        const val EXTRA_AUDIO_FILE = "audioFile"
+        const val EXTRA_MODEL_OUTPUT_SCALE = "modelOutputScale"
 
         const val DEFAULT_ONNX_MODEL = "UVR_MDXNET_9482.onnx"
         const val DEFAULT_LITERT_MODEL = "UVR_MDXNET_9482_float32.tflite"
@@ -1053,6 +1146,7 @@ class InferenceBenchmarkService : Service() {
         private const val DEFAULT_WARMUPS = 1
         private const val DEFAULT_THREADS = 8
         private const val DEFAULT_SEED = 9482L
+        private const val DEFAULT_MODEL_OUTPUT_SCALE = 1.035f
         private const val LATEST_REPORT = "latest.json"
         private const val NOTIFICATION_CHANNEL_ID = "inference_benchmark"
         private const val NOTIFICATION_ID = 9482

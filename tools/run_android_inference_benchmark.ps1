@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Serial,
 
-    [ValidateSet("ort", "litert_cpu", "litert_gpu", "litert_gpu_fp32", "litert_qnn")]
+    [ValidateSet("ort", "litert_cpu", "litert_gpu", "litert_gpu_fp32", "litert_gpu_bounded", "litert_qnn")]
     [string]$Backend = "ort",
 
     [int]$Iterations = 5,
@@ -15,6 +15,11 @@ param(
     [int]$Height = 2048,
     [int]$Width = 256,
     [switch]$QnnProfiling,
+    [switch]$KeepActivityForeground,
+    [ValidateRange(0, 100)]
+    [int]$SwipeCount = 0,
+    [ValidateRange(0, 120)]
+    [double]$UiStartDelaySeconds = 10,
     [switch]$UploadModels,
     [string]$InputFile = "",
     [string]$OnnxModel = "models/uvr-mdx/UVR_MDXNET_9482.onnx",
@@ -58,8 +63,10 @@ function Reset-BenchmarkHost {
     # clears that state while still giving every benchmark a fresh app process.
     Invoke-Adb shell am start -W -n "$package/.MainActivity"
     Start-Sleep -Milliseconds 500
-    Invoke-Adb shell input keyevent KEYCODE_HOME
-    Start-Sleep -Milliseconds 500
+    if (-not $KeepActivityForeground) {
+        Invoke-Adb shell input keyevent KEYCODE_HOME
+        Start-Sleep -Milliseconds 500
+    }
 }
 
 if ([string]::IsNullOrWhiteSpace($Tag)) {
@@ -145,15 +152,62 @@ if ($inputName) {
 }
 Invoke-Adb shell am start-foreground-service @serviceArgs
 
+if ($SwipeCount -gt 0) {
+    if (-not $KeepActivityForeground) {
+        throw "-SwipeCount requires -KeepActivityForeground."
+    }
+    Start-Sleep -Milliseconds ([int]($UiStartDelaySeconds * 1000))
+    $sizeLine = (Invoke-Adb shell wm size | Select-String -Pattern "Physical size:" | Select-Object -First 1).Line
+    if ($sizeLine -notmatch '(\d+)x(\d+)') {
+        throw "Unable to parse display size: $sizeLine"
+    }
+    $displayWidth = [int]$Matches[1]
+    $displayHeight = [int]$Matches[2]
+    $x = [int]($displayWidth * 0.5)
+    $top = [int]($displayHeight * 0.25)
+    $bottom = [int]($displayHeight * 0.8)
+
+    for ($index = 0; $index -lt 4; $index++) {
+        if (($index % 2) -eq 0) {
+            Invoke-Adb shell input swipe $x $bottom $x $top 500
+        } else {
+            Invoke-Adb shell input swipe $x $top $x $bottom 500
+        }
+    }
+    Invoke-Adb shell dumpsys gfxinfo $package reset | Out-Null
+    $uiStartedMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    for ($index = 0; $index -lt $SwipeCount; $index++) {
+        if (($index % 2) -eq 0) {
+            Invoke-Adb shell input swipe $x $bottom $x $top 500
+        } else {
+            Invoke-Adb shell input swipe $x $top $x $bottom 500
+        }
+    }
+    $uiEndedMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    & $adb -s $Serial shell dumpsys gfxinfo $package framestats |
+        Set-Content -LiteralPath (Join-Path $sampleDir "gfxinfo-framestats.txt") -Encoding utf8
+    [ordered]@{
+        startedMs = $uiStartedMs
+        endedMs = $uiEndedMs
+        durationMs = $uiEndedMs - $uiStartedMs
+        swipeCount = $SwipeCount
+        swipeDurationMs = 500
+        displayWidth = $displayWidth
+        displayHeight = $displayHeight
+    } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $sampleDir "ui-sweep.json") -Encoding utf8
+}
+
 $deadline = (Get-Date).AddMinutes(30)
 do {
     $timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     $thermal = (Invoke-Adb shell dumpsys thermalservice | Select-String -Pattern "Thermal Status|mValue=.*mName=(AP|BAT|SKIN)" | ForEach-Object { $_.Line.Trim() }) -join " | "
     $battery = (Invoke-Adb shell dumpsys battery | Select-Object -First 30 | Select-String -Pattern "level:|temperature:|status:|voltage:|current now:|charge counter:|AC powered:|USB powered:|Wireless powered:" | ForEach-Object { $_.Line.Trim() }) -join " | "
+    $memory = (Invoke-Adb shell dumpsys meminfo $package | Select-String -Pattern "TOTAL PSS:|Graphics:" | ForEach-Object { $_.Line.Trim() }) -join " | "
     [ordered]@{
         timestampMs = $timestamp
         thermal = $thermal
         battery = $battery
+        memory = $memory
     } | ConvertTo-Json -Compress | Add-Content -LiteralPath $samples -Encoding utf8
 
     $report = & $adb -s $Serial shell cat $remoteReport 2>$null

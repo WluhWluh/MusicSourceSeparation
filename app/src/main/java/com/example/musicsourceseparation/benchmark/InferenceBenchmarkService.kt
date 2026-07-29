@@ -74,7 +74,8 @@ class InferenceBenchmarkService : Service() {
             return
         }
         val backend = BenchmarkBackend.from(intent.getStringExtra(EXTRA_BACKEND))
-        val iterations = intent.getIntExtra(EXTRA_ITERATIONS, DEFAULT_ITERATIONS).coerceIn(1, 100)
+        val iterations = intent.getIntExtra(EXTRA_ITERATIONS, DEFAULT_ITERATIONS)
+            .coerceIn(1, MAX_ITERATIONS)
         val warmups = intent.getIntExtra(EXTRA_WARMUPS, DEFAULT_WARMUPS).coerceIn(0, 20)
         val threads = intent.getIntExtra(EXTRA_THREADS, DEFAULT_THREADS).coerceIn(1, 16)
         val seed = intent.getLongExtra(EXTRA_SEED, DEFAULT_SEED)
@@ -96,6 +97,7 @@ class InferenceBenchmarkService : Service() {
                 BenchmarkBackend.LITERT_CPU,
                 BenchmarkBackend.LITERT_GPU,
                 BenchmarkBackend.LITERT_GPU_FP32,
+                BenchmarkBackend.LITERT_GPU_BOUNDED,
                 BenchmarkBackend.LITERT_QNN -> intent.getStringExtra(EXTRA_LITERT_MODEL)
                     ?: DEFAULT_LITERT_MODEL
             },
@@ -158,6 +160,7 @@ class InferenceBenchmarkService : Service() {
                 threads = threads,
                 gpuPrecision = null,
                 useQnn = false,
+                boundedGpu = false,
                 height = height,
                 width = width,
             )
@@ -169,6 +172,7 @@ class InferenceBenchmarkService : Service() {
                 threads = threads,
                 gpuPrecision = CompiledModel.GpuOptions.Precision.FP16,
                 useQnn = false,
+                boundedGpu = false,
                 height = height,
                 width = width,
             )
@@ -180,6 +184,19 @@ class InferenceBenchmarkService : Service() {
                 threads = threads,
                 gpuPrecision = CompiledModel.GpuOptions.Precision.FP32,
                 useQnn = false,
+                boundedGpu = false,
+                height = height,
+                width = width,
+            )
+            BenchmarkBackend.LITERT_GPU_BOUNDED -> runLiteRt(
+                modelFile = modelFile,
+                inputNchw = inputNchw,
+                iterations = iterations,
+                warmups = warmups,
+                threads = threads,
+                gpuPrecision = CompiledModel.GpuOptions.Precision.FP32,
+                useQnn = false,
+                boundedGpu = true,
                 height = height,
                 width = width,
             )
@@ -191,6 +208,7 @@ class InferenceBenchmarkService : Service() {
                 threads = threads,
                 gpuPrecision = null,
                 useQnn = true,
+                boundedGpu = false,
                 qnnProfiling = qnnProfiling,
                 qnnEvidenceDir = File(qnnEvidenceRoot(), tag).apply { mkdirs() },
                 height = height,
@@ -380,6 +398,7 @@ class InferenceBenchmarkService : Service() {
         threads: Int,
         gpuPrecision: CompiledModel.GpuOptions.Precision?,
         useQnn: Boolean,
+        boundedGpu: Boolean,
         qnnProfiling: Boolean = false,
         qnnEvidenceDir: File? = null,
         height: Int,
@@ -387,6 +406,10 @@ class InferenceBenchmarkService : Service() {
     ): BackendResult {
         val setupStarted = timedStart()
         require(!useQnn || gpuPrecision == null) { "QNN and GPU modes are mutually exclusive." }
+        require(!boundedGpu || gpuPrecision == CompiledModel.GpuOptions.Precision.FP32) {
+            "The bounded GPU profile requires FP32."
+        }
+        val boundedGpuRuntime = if (boundedGpu) BoundedGpuRuntime.loadAndValidate() else null
         val npuProvider = if (useQnn) {
             require(Build.VERSION.SDK_INT >= 31) { "QNN v79 requires Android API 31 or newer." }
             require(Build.SUPPORTED_ABIS.firstOrNull() == "arm64-v8a") {
@@ -435,7 +458,12 @@ class InferenceBenchmarkService : Service() {
             CompiledModel.Options(Accelerator.GPU).apply {
                 gpuOptions = CompiledModel.GpuOptions(
                     precision = gpuPrecision,
-                    backend = CompiledModel.GpuOptions.Backend.AUTOMATIC,
+                    backend = if (boundedGpu) {
+                        CompiledModel.GpuOptions.Backend.OPENCL
+                    } else {
+                        CompiledModel.GpuOptions.Backend.AUTOMATIC
+                    },
+                    numStepsOfCommandBufferPreparations = if (boundedGpu) 1 else null,
                 )
             }
         } else {
@@ -475,11 +503,12 @@ class InferenceBenchmarkService : Service() {
         var outputNhwc: FloatArray? = null
         var readWallMs = 0.0
         var readCpuMs = 0L
+        boundedGpuRuntime?.resetInferenceCounters()
 
         try {
             repeat(warmups) {
                 val totalStarted = timedStart()
-                model.run(inputBuffers, outputBuffers)
+                runLiteRtModel(model, inputBuffers, outputBuffers, boundedGpuRuntime)
                 outputNhwc = outputBuffers.single().readFloat()
                 totalStarted.elapsed().also {
                     warmupWall += it.wallMs
@@ -489,7 +518,7 @@ class InferenceBenchmarkService : Service() {
             repeat(iterations) {
                 val totalStarted = timedStart()
                 val dispatchStarted = timedStart()
-                model.run(inputBuffers, outputBuffers)
+                runLiteRtModel(model, inputBuffers, outputBuffers, boundedGpuRuntime)
                 dispatchStarted.elapsed().also {
                     dispatchWall += it.wallMs
                     dispatchCpu += it.cpuMs
@@ -526,14 +555,14 @@ class InferenceBenchmarkService : Service() {
             dispatchCpuMs = dispatchCpu,
             outputReadWallMs = readWallMs,
             outputReadCpuMs = readCpuMs,
-            backendEvidence = if (useQnn) {
-                qnnEvidence(
+            backendEvidence = when {
+                useQnn -> qnnEvidence(
                     requireNotNull(npuProvider),
                     requireNotNull(qnnEvidenceDir),
                     qnnProfiling,
                 )
-            } else {
-                null
+                boundedGpu -> requireNotNull(boundedGpuRuntime).evidence()
+                else -> null
             },
             output = nhwcToNchw(
                 requireNotNull(outputNhwc) { "LiteRT produced no output." },
@@ -807,6 +836,74 @@ class InferenceBenchmarkService : Service() {
                 .toList(),
         ))
 
+    private fun runLiteRtModel(
+        model: CompiledModel,
+        inputBuffers: List<TensorBuffer>,
+        outputBuffers: List<TensorBuffer>,
+        boundedGpuRuntime: BoundedGpuRuntime?,
+    ) {
+        boundedGpuRuntime?.beginInference()
+        try {
+            model.run(inputBuffers, outputBuffers)
+        } finally {
+            boundedGpuRuntime?.endInference()
+        }
+    }
+
+    private class BoundedGpuRuntime private constructor(
+        private val runtimeClass: Class<*>,
+        private val capability: Any,
+    ) {
+        fun resetInferenceCounters() = invokeStatic("resetInferenceCounters")
+
+        fun beginInference() = invokeStatic("beginInference")
+
+        fun endInference() = invokeStatic("endInference")
+
+        fun evidence(): JSONObject = JSONObject()
+            .put("artifactVersion", capabilityValue<String>("getArtifactVersion"))
+            .put("profileId", capabilityValue<String>("getProfileId"))
+            .put("schemaVersion", capabilityValue<Int>("getSchemaVersion"))
+            .put("kernelBatchSize", capabilityValue<Int>("getKernelBatchSize"))
+            .put("commandQueueWindowSize", capabilityValue<Int>("getCommandQueueWindowSize"))
+            .put("dispatchCount", invokeStatic("getDispatchCount") as Long)
+            .put("eventWaitCount", invokeStatic("getEventWaitCount") as Long)
+
+        private fun invokeStatic(name: String): Any? = runtimeClass.getMethod(name).invoke(null)
+
+        @Suppress("UNCHECKED_CAST")
+        private fun <T> capabilityValue(name: String): T =
+            capability.javaClass.getMethod(name).invoke(capability) as T
+
+        companion object {
+            private const val RUNTIME_CLASS = "io.github.wluhwluh.bss.litert.BssLiteRtRuntime"
+
+            fun loadAndValidate(): BoundedGpuRuntime {
+                val runtimeClass = runCatching { Class.forName(RUNTIME_CLASS) }.getOrElse { error ->
+                    throw IllegalStateException(
+                        "The bounded GPU backend requires the 2.1.5-bss.2 runtime AAR.",
+                        error,
+                    )
+                }
+                val capability = requireNotNull(
+                    runtimeClass.getMethod("queryCapability").invoke(null),
+                ) { "The bounded GPU runtime returned no capability." }
+                fun value(name: String): Any? = capability.javaClass.getMethod(name).invoke(capability)
+                require(value("isAvailable") == true) { "The bounded GPU native runtime is unavailable." }
+                require(value("getArtifactVersion") == "2.1.5-bss.2") {
+                    "Unexpected bounded runtime artifact: ${value("getArtifactVersion")}"
+                }
+                require(value("getProfileId") == "gpu-opencl-bounded-fp32-v1") {
+                    "Unexpected bounded GPU profile: ${value("getProfileId")}"
+                }
+                require(value("getKernelBatchSize") == 1 && value("getCommandQueueWindowSize") == 1) {
+                    "The bounded GPU runtime does not expose the required N=1 contract."
+                }
+                return BoundedGpuRuntime(runtimeClass, capability)
+            }
+        }
+    }
+
     private fun createNotificationChannel() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(
@@ -884,6 +981,7 @@ class InferenceBenchmarkService : Service() {
         LITERT_CPU("litert_cpu"),
         LITERT_GPU("litert_gpu"),
         LITERT_GPU_FP32("litert_gpu_fp32"),
+        LITERT_GPU_BOUNDED("litert_gpu_bounded"),
         LITERT_QNN("litert_qnn");
 
         companion object {
@@ -915,6 +1013,7 @@ class InferenceBenchmarkService : Service() {
         private const val BACKEND_INIT = "init"
 
         private const val DEFAULT_ITERATIONS = 5
+        private const val MAX_ITERATIONS = 1_000
         private const val DEFAULT_WARMUPS = 1
         private const val DEFAULT_THREADS = 8
         private const val DEFAULT_SEED = 9482L

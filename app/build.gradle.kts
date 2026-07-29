@@ -2,6 +2,8 @@ plugins {
     id("com.android.application")
 }
 
+val liteRtAar = providers.gradleProperty("liteRtAar").orNull
+
 android {
     namespace = "com.example.musicsourceseparation"
     compileSdk = 37
@@ -58,7 +60,11 @@ android {
 dependencies {
     // 2.1.6 currently publishes litert and litert-api with the same AAR namespace,
     // which AGP 9.2 rejects. 2.1.5 contains the same CompiledModel GPU API in one AAR.
-    implementation("com.google.ai.edge.litert:litert:2.1.5")
+    if (liteRtAar != null) {
+        implementation(files(liteRtAar))
+    } else {
+        implementation("com.google.ai.edge.litert:litert:2.1.5")
+    }
     // Historical x86 benchmark artifact. Canonical builds are published by
     // https://github.com/WluhWluh/bss-litert-android.
     implementation(files("libs/litert-2.1.5-x86.aar"))

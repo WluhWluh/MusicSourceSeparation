@@ -29,6 +29,8 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.Locale
 import java.util.Random
@@ -124,7 +126,8 @@ class InferenceBenchmarkService : Service() {
         }
 
         val reportFile = File(reportsDir(), "$tag.json")
-        File(reportsDir(), LATEST_REPORT).writeText(
+        publishReport(
+            File(reportsDir(), LATEST_REPORT),
             baseReport(
                 tag = tag,
                 backend = backend,
@@ -139,8 +142,7 @@ class InferenceBenchmarkService : Service() {
                 width = width,
             )
                 .put("status", "running")
-                .put("reportPath", reportFile.absolutePath)
-                .toString(2),
+                .put("reportPath", reportFile.absolutePath),
         )
         updateNotification("Running ${backend.id}")
 
@@ -291,8 +293,8 @@ class InferenceBenchmarkService : Service() {
             .put("deviceStart", deviceStart)
             .put("deviceEnd", deviceEnd)
 
-        reportFile.writeText(report.toString(2))
-        File(reportsDir(), LATEST_REPORT).writeText(report.toString(2))
+        publishReport(File(reportsDir(), LATEST_REPORT), report)
+        publishReport(reportFile, report)
         updateNotification("Completed ${backend.id}")
     }
 
@@ -303,6 +305,9 @@ class InferenceBenchmarkService : Service() {
         val modelId = intent.getStringExtra(EXTRA_MODEL_ID)?.sanitizeTag()
             ?.takeIf { it.isNotBlank() }
             ?: "uvr_mdxnet_3_9662"
+        require(modelId == QNN_AUDIO_MODEL_ID) {
+            "QNN audio benchmark is frozen to $QNN_AUDIO_MODEL_ID, got $modelId."
+        }
         val modelName = intent.getStringExtra(EXTRA_LITERT_MODEL)?.validatedFileName()
             ?.takeIf { it.isNotBlank() }
             ?: DEFAULT_LITERT_MODEL
@@ -310,12 +315,12 @@ class InferenceBenchmarkService : Service() {
             ?.takeIf { it.isNotBlank() }
             ?: error("QNN audio benchmark requires an audio file name.")
         val modelOutputScale = intent.getFloatExtra(EXTRA_MODEL_OUTPUT_SCALE, DEFAULT_MODEL_OUTPUT_SCALE)
+        require(modelOutputScale == DEFAULT_MODEL_OUTPUT_SCALE) {
+            "QNN audio benchmark is frozen to model output scale $DEFAULT_MODEL_OUTPUT_SCALE."
+        }
         val modelFile = File(File(benchmarkDir(), "models"), modelName)
         val audioFile = File(audioInputsDir(), audioName)
-        val outputDir = File(audioOutputsDir(), tag).apply {
-            deleteRecursively()
-            mkdirs()
-        }
+        val outputDir = File(audioOutputsDir(), tag)
         val evidenceDir = File(qnnEvidenceRoot(), tag).apply {
             deleteRecursively()
             mkdirs()
@@ -337,8 +342,9 @@ class InferenceBenchmarkService : Service() {
                 .put("sdk", Build.VERSION.SDK_INT)
                 .put("abis", JSONArray(Build.SUPPORTED_ABIS.toList())))
             .put("reportPath", reportFile.absolutePath)
-        File(reportsDir(), LATEST_REPORT).writeText(
-            JSONObject(reportBase.toString()).put("status", "running").toString(2),
+        publishReport(
+            File(reportsDir(), LATEST_REPORT),
+            JSONObject(reportBase.toString()).put("status", "running"),
         )
 
         val processStart = processSnapshot()
@@ -361,8 +367,8 @@ class InferenceBenchmarkService : Service() {
             .put("processEnd", processSnapshot())
             .put("deviceStart", deviceStart)
             .put("deviceEnd", deviceSnapshot())
-        reportFile.writeText(report.toString(2))
-        File(reportsDir(), LATEST_REPORT).writeText(report.toString(2))
+        publishReport(File(reportsDir(), LATEST_REPORT), report)
+        publishReport(reportFile, report)
         updateNotification("Completed ${backend.id}")
     }
 
@@ -391,8 +397,8 @@ class InferenceBenchmarkService : Service() {
             .put("audioInputPath", audioInput.absolutePath)
             .put("audioOutputPath", audioOutput.absolutePath)
             .put("inputsPath", inputsDir().absolutePath)
-        File(reports, "$tag.json").writeText(report.toString(2))
-        File(reports, LATEST_REPORT).writeText(report.toString(2))
+        publishReport(File(reports, LATEST_REPORT), report)
+        publishReport(File(reports, "$tag.json"), report)
         updateNotification("Benchmark directories ready")
     }
 
@@ -907,8 +913,19 @@ class InferenceBenchmarkService : Service() {
             .put("message", message)
             .put("device", JSONObject().put("model", Build.MODEL).put("sdk", Build.VERSION.SDK_INT))
         val reportFile = File(reportsDir(), "$tag.json")
-        reportFile.writeText(report.toString(2))
-        File(reportsDir(), LATEST_REPORT).writeText(report.toString(2))
+        publishReport(File(reportsDir(), LATEST_REPORT), report)
+        publishReport(reportFile, report)
+    }
+
+    private fun publishReport(file: File, report: JSONObject) {
+        val partial = File(requireNotNull(file.parentFile), "${file.name}.partial")
+        partial.writeText(report.toString(2))
+        Files.move(
+            partial.toPath(),
+            file.toPath(),
+            StandardCopyOption.ATOMIC_MOVE,
+            StandardCopyOption.REPLACE_EXISTING,
+        )
     }
 
     private fun benchmarkDir(): File = File(getExternalFilesDir(null) ?: filesDir, "benchmark")
@@ -1147,6 +1164,7 @@ class InferenceBenchmarkService : Service() {
         private const val DEFAULT_THREADS = 8
         private const val DEFAULT_SEED = 9482L
         private const val DEFAULT_MODEL_OUTPUT_SCALE = 1.035f
+        private const val QNN_AUDIO_MODEL_ID = "uvr_mdxnet_3_9662"
         private const val LATEST_REPORT = "latest.json"
         private const val NOTIFICATION_CHANNEL_ID = "inference_benchmark"
         private const val NOTIFICATION_ID = 9482

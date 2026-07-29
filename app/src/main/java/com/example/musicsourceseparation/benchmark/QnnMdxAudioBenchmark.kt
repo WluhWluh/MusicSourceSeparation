@@ -19,8 +19,14 @@ import com.google.ai.edge.litert.TensorBuffer
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
+import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 internal class QnnMdxAudioBenchmark(
@@ -46,11 +52,21 @@ internal class QnnMdxAudioBenchmark(
         require(audioFile.isFile && audioFile.length() > 0L) {
             "Audio file is missing: ${audioFile.absolutePath}"
         }
-        require(modelOutputScale.isFinite() && modelOutputScale > 0f) {
-            "Model output scale must be finite and positive."
+        require(modelOutputScale == MODEL_OUTPUT_SCALE) {
+            "9662 model output scale must be $MODEL_OUTPUT_SCALE."
         }
+        val inputWav = validateCanonicalPcm16Wav(audioFile)
 
-        outputDir.mkdirs()
+        val outputParent = requireNotNull(outputDir.parentFile) {
+            "QNN audio output directory has no parent: ${outputDir.absolutePath}"
+        }
+        val stagingDir = File(outputParent, "${outputDir.name}.partial")
+        require(outputDir.deleteRecursively()) {
+            "Could not remove stale QNN output directory: ${outputDir.absolutePath}"
+        }
+        require(stagingDir.deleteRecursively() && stagingDir.mkdirs()) {
+            "Could not prepare QNN staging directory: ${stagingDir.absolutePath}"
+        }
         evidenceDir.mkdirs()
         val totalStarted = SystemClock.elapsedRealtimeNanos()
         val stageNanos = linkedMapOf<String, Long>()
@@ -64,18 +80,38 @@ internal class QnnMdxAudioBenchmark(
             }
         }
 
+        val modelSha256 = measured("modelHash") { sha256(modelFile) }
+        require(modelSha256 == MODEL_SHA256) {
+            "QNN audio benchmark requires the frozen 9662 artifact, got $modelSha256."
+        }
+        val sourceSha256 = measured("sourceHash") { sha256(audioFile) }
+
         onPhase("Decoding source audio")
         val source = measured("decode") {
             AudioPcmDecoder(context).decode(Uri.fromFile(audioFile))
         }
-        val decoded = measured("resample") { source.resampleTo(config.sampleRate) }
+        require(source.sampleRate == config.sampleRate) {
+            "QNN audio benchmark requires ${config.sampleRate} Hz PCM, got ${source.sampleRate} Hz."
+        }
+        require(source.channelCount == MdxDspConfig.STEREO_CHANNELS) {
+            "QNN audio benchmark requires stereo PCM, got ${source.channelCount} channels."
+        }
+        require(source.frameCount.toLong() == inputWav.frameCount) {
+            "Decoded frame count ${source.frameCount} did not match WAV header ${inputWav.frameCount}."
+        }
+        val decoded = source
         require(decoded.frameCount > 0) { "Decoded audio is empty." }
         val windowCount = ceil(decoded.frameCount.toDouble() / config.generationSize).toInt()
         val vocalsFile = File(outputDir, "vocals.wav")
         val instrumentalFile = File(outputDir, "instrumental.wav")
+        val vocalsPartialFile = File(stagingDir, "vocals.wav.partial")
+        val instrumentalPartialFile = File(stagingDir, "instrumental.wav.partial")
         val spectrogram = MdxSpectrogram(config)
         val inferenceWallMs = mutableListOf<Double>()
         val inferenceCpuMs = mutableListOf<Long>()
+        val vocalsPcmStats = PcmStats()
+        val instrumentalPcmStats = PcmStats()
+        var completedWindows = 0
 
         onPhase("Preparing Qualcomm HTP graph")
         val provider = BuiltinNpuAcceleratorProvider(context, NpuCompatibilityChecker.Qualcomm)
@@ -95,6 +131,7 @@ internal class QnnMdxAudioBenchmark(
         var setupWallMs = 0.0
         var setupCpuMs = 0L
         val availableAccelerators: List<String>
+        var primaryFailure: Throwable? = null
         try {
             availableAccelerators = environment.getAvailableAccelerators().map { it.name }.sorted()
             require(Accelerator.NPU.name in availableAccelerators) {
@@ -136,9 +173,13 @@ internal class QnnMdxAudioBenchmark(
             setupCpuMs = android.os.Process.getElapsedCpuTime() - setupStartedCpuMs
 
             onPhase("Separating audio")
-            WavFileWriter(vocalsFile, config.sampleRate, MdxDspConfig.STEREO_CHANNELS).use { vocalsWriter ->
+            WavFileWriter(
+                vocalsPartialFile,
+                config.sampleRate,
+                MdxDspConfig.STEREO_CHANNELS,
+            ).use { vocalsWriter ->
                 WavFileWriter(
-                    instrumentalFile,
+                    instrumentalPartialFile,
                     config.sampleRate,
                     MdxDspConfig.STEREO_CHANNELS,
                 ).use { instrumentalWriter ->
@@ -188,40 +229,93 @@ internal class QnnMdxAudioBenchmark(
                             subtract(mixWindow, vocalsWindow)
                         }
                         val vocalsPcm = measured("pcmConvert") {
-                            stereoFloatToPcm16(vocalsWindow, config.trim, writeFrames)
+                            stereoFloatToPcm16(
+                                vocalsWindow,
+                                config.trim,
+                                writeFrames,
+                                vocalsPcmStats,
+                            )
                         }
                         val instrumentalPcm = measured("pcmConvert") {
-                            stereoFloatToPcm16(instrumentalWindow, config.trim, writeFrames)
+                            stereoFloatToPcm16(
+                                instrumentalWindow,
+                                config.trim,
+                                writeFrames,
+                                instrumentalPcmStats,
+                            )
                         }
                         measured("wavWrite") {
                             vocalsWriter.writePcm16(vocalsPcm)
                             instrumentalWriter.writePcm16(instrumentalPcm)
                         }
+                        completedWindows = windowIndex + 1
                         onProgress(windowIndex + 1, windowCount)
                     }
                 }
             }
+        } catch (error: Throwable) {
+            primaryFailure = error
+            throw error
         } finally {
-            inputBuffers.closeAll()
-            outputBuffers.closeAll()
-            modelToClose?.close()
-            environment.close()
+            closeLiteRtResources(
+                primaryFailure = primaryFailure,
+                inputBuffers = inputBuffers,
+                outputBuffers = outputBuffers,
+                model = modelToClose,
+                environment = environment,
+            )
+        }
+        measured("outputCommit") {
+            commitOutput(vocalsPartialFile, File(stagingDir, vocalsFile.name))
+            commitOutput(instrumentalPartialFile, File(stagingDir, instrumentalFile.name))
+            commitOutput(stagingDir, outputDir)
         }
 
-        val totalWallMs = nanosToMs(SystemClock.elapsedRealtimeNanos() - totalStarted)
+        val processingWallMs = nanosToMs(SystemClock.elapsedRealtimeNanos() - totalStarted)
         val audioDurationSeconds = decoded.frameCount.toDouble() / decoded.sampleRate
+        val vocalsEvidence = measured("outputHash") { fileEvidence(vocalsFile, vocalsPcmStats) }
+        val instrumentalEvidence = measured("outputHash") {
+            fileEvidence(instrumentalFile, instrumentalPcmStats)
+        }
+        val endToEndWallMs = nanosToMs(SystemClock.elapsedRealtimeNanos() - totalStarted)
         return JSONObject()
+            .put("contract", JSONObject()
+                .put("contractId", CONTRACT_ID)
+                .put("modelOutputStem", "vocals")
+                .put("modelOutputScale", modelOutputScale.toDouble())
+                .put("logicalShapeNchw", JSONArray(listOf(
+                    1,
+                    MdxDspConfig.STEM_COMPLEX_CHANNELS,
+                    config.dimF,
+                    config.dimT,
+                )))
+                .put("runtimeShapeNhwc", JSONArray(listOf(
+                    1,
+                    config.dimF,
+                    config.dimT,
+                    MdxDspConfig.STEM_COMPLEX_CHANNELS,
+                ))))
+            .put("model", JSONObject()
+                .put("path", modelFile.absolutePath)
+                .put("bytes", modelFile.length())
+                .put("sha256", modelSha256))
             .put("source", JSONObject()
                 .put("path", audioFile.absolutePath)
                 .put("bytes", audioFile.length())
-                .put("sha256", sha256(audioFile))
+                .put("sha256", sourceSha256)
                 .put("sampleRate", source.sampleRate)
                 .put("channelCount", source.channelCount)
-                .put("decodedFrames", source.frameCount))
+                .put("decodedFrames", source.frameCount)
+                .put("resampled", false)
+                .put("container", "canonical-riff-wave")
+                .put("encoding", "signed-pcm16-le")
+                .put("pcmDataBytes", inputWav.dataBytes))
             .put("outputSampleRate", decoded.sampleRate)
             .put("outputFrames", decoded.frameCount)
             .put("audioDurationSeconds", audioDurationSeconds)
             .put("windowCount", windowCount)
+            .put("completedWindows", completedWindows)
+            .put("lastWindowFrames", decoded.frameCount - (windowCount - 1) * config.generationSize)
             .put("dsp", JSONObject()
                 .put("nFft", config.nFft)
                 .put("hopLength", config.hopLength)
@@ -232,17 +326,21 @@ internal class QnnMdxAudioBenchmark(
                 .put("modelOutputStem", "vocals")
                 .put("modelOutputScale", modelOutputScale.toDouble()))
             .put("availableAccelerators", JSONArray(availableAccelerators))
-            .put("setupWallMs", setupWallMs)
-            .put("setupCpuMs", setupCpuMs)
+            .put("session", JSONObject()
+                .put("count", 1)
+                .put("cleanupComplete", true)
+                .put("setupWallMs", setupWallMs)
+                .put("setupCpuMs", setupCpuMs))
             .put("inferenceWallMs", JSONArray(inferenceWallMs))
             .put("inferenceCpuMs", JSONArray(inferenceCpuMs))
             .put("inferenceSummary", timingSummary(inferenceWallMs, inferenceCpuMs))
             .put("stageWallMs", JSONObject(stageNanos.mapValues { nanosToMs(it.value) }))
-            .put("totalWallMs", totalWallMs)
-            .put("realtimeFactor", totalWallMs / 1000.0 / audioDurationSeconds)
+            .put("processingWallMs", processingWallMs)
+            .put("endToEndWallMs", endToEndWallMs)
+            .put("realtimeFactor", endToEndWallMs / 1000.0 / audioDurationSeconds)
             .put("outputs", JSONObject()
-                .put("vocals", fileEvidence(vocalsFile))
-                .put("instrumental", fileEvidence(instrumentalFile)))
+                .put("vocals", vocalsEvidence)
+                .put("instrumental", instrumentalEvidence))
             .put("backendEvidence", JSONObject()
                 .put("provider", "BuiltinNpuAcceleratorProvider")
                 .put("compatibilityChecker", "Qualcomm")
@@ -317,27 +415,146 @@ internal class QnnMdxAudioBenchmark(
         waveform: Array<FloatArray>,
         startFrame: Int,
         frames: Int,
+        stats: PcmStats,
     ): ByteArray {
         val bytes = ByteArray(frames * MdxDspConfig.STEREO_CHANNELS * Short.SIZE_BYTES)
-        var offset = 0
-        for (frame in startFrame until startFrame + frames) {
-            for (channel in 0 until MdxDspConfig.STEREO_CHANNELS) {
-                val value = (waveform[channel][frame].coerceIn(-1f, 1f) * Short.MAX_VALUE)
+        var peak = stats.peak
+        var positiveSaturatedSamples = 0L
+        var negativeSaturatedSamples = 0L
+        val endFrame = startFrame + frames
+        for (channel in 0 until MdxDspConfig.STEREO_CHANNELS) {
+            val samples = waveform[channel]
+            var frame = startFrame
+            var offset = channel * Short.SIZE_BYTES
+            while (frame < endFrame) {
+                val sample = samples[frame]
+                require(sample.isFinite()) { "Non-finite audio sample before PCM conversion." }
+                peak = max(peak, abs(sample))
+                if (sample >= 1f) positiveSaturatedSamples += 1
+                if (sample <= -1f) negativeSaturatedSamples += 1
+                val value = (sample.coerceIn(-1f, 1f) * Short.MAX_VALUE)
                     .roundToInt()
                     .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
-                bytes[offset++] = (value and 0xFF).toByte()
-                bytes[offset++] = ((value ushr 8) and 0xFF).toByte()
+                bytes[offset] = (value and 0xFF).toByte()
+                bytes[offset + 1] = ((value ushr 8) and 0xFF).toByte()
+                frame += 1
+                offset += MdxDspConfig.STEREO_CHANNELS * Short.SIZE_BYTES
             }
         }
+        stats.sampleCount += frames.toLong() * MdxDspConfig.STEREO_CHANNELS
+        stats.peak = peak
+        stats.positiveSaturatedSamples += positiveSaturatedSamples
+        stats.negativeSaturatedSamples += negativeSaturatedSamples
         return bytes
     }
 
-    private fun List<TensorBuffer>.closeAll() = forEach { it.close() }
+    private fun commitOutput(partial: File, destination: File) {
+        Files.move(
+            partial.toPath(),
+            destination.toPath(),
+            StandardCopyOption.ATOMIC_MOVE,
+            StandardCopyOption.REPLACE_EXISTING,
+        )
+    }
 
-    private fun fileEvidence(file: File): JSONObject = JSONObject()
+    private fun validateCanonicalPcm16Wav(file: File): WavInputContract {
+        require(file.length() >= WAV_HEADER_BYTES) { "WAV input is shorter than its header." }
+        val header = ByteArray(WAV_HEADER_BYTES.toInt())
+        file.inputStream().buffered().use { input ->
+            var offset = 0
+            while (offset < header.size) {
+                val count = input.read(header, offset, header.size - offset)
+                require(count > 0) { "Could not read the complete WAV header." }
+                offset += count
+            }
+        }
+        fun requireMarker(offset: Int, value: String) {
+            val actual = header.copyOfRange(offset, offset + value.length)
+                .toString(Charsets.US_ASCII)
+            require(actual == value) { "Expected WAV marker $value at byte $offset, got $actual." }
+        }
+        requireMarker(0, "RIFF")
+        requireMarker(8, "WAVE")
+        requireMarker(12, "fmt ")
+        requireMarker(36, "data")
+        val values = ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN)
+        val riffBytes = Integer.toUnsignedLong(values.getInt(4)) + 8L
+        val formatBytes = Integer.toUnsignedLong(values.getInt(16))
+        val format = values.getShort(20).toInt() and 0xFFFF
+        val channels = values.getShort(22).toInt() and 0xFFFF
+        val sampleRate = values.getInt(24)
+        val byteRate = values.getInt(28)
+        val blockAlign = values.getShort(32).toInt() and 0xFFFF
+        val bitsPerSample = values.getShort(34).toInt() and 0xFFFF
+        val dataBytes = Integer.toUnsignedLong(values.getInt(40))
+        require(riffBytes == file.length() && dataBytes + WAV_HEADER_BYTES == file.length()) {
+            "QNN audio benchmark requires a canonical 44-byte WAV header."
+        }
+        require(formatBytes == 16L && format == WAV_FORMAT_PCM) {
+            "QNN audio benchmark requires uncompressed PCM WAV input."
+        }
+        require(
+            channels == MdxDspConfig.STEREO_CHANNELS &&
+                sampleRate == config.sampleRate &&
+                bitsPerSample == PCM_BITS_PER_SAMPLE &&
+                blockAlign == PCM_BLOCK_ALIGN &&
+                byteRate == config.sampleRate * PCM_BLOCK_ALIGN,
+        ) {
+            "QNN audio benchmark requires 44.1 kHz stereo PCM16 WAV input."
+        }
+        require(dataBytes in 1..MAX_DECODED_PCM_BYTES && dataBytes % PCM_BLOCK_ALIGN == 0L) {
+            "WAV PCM data must be aligned and no larger than " +
+                "${MAX_DECODED_PCM_BYTES / (1024 * 1024)} MiB."
+        }
+        return WavInputContract(dataBytes, dataBytes / PCM_BLOCK_ALIGN)
+    }
+
+    private fun closeLiteRtResources(
+        primaryFailure: Throwable?,
+        inputBuffers: List<TensorBuffer>,
+        outputBuffers: List<TensorBuffer>,
+        model: CompiledModel?,
+        environment: Environment,
+    ) {
+        var closeFailure: Throwable? = null
+        fun close(action: () -> Unit) {
+            try {
+                action()
+            } catch (error: Throwable) {
+                if (closeFailure == null) {
+                    closeFailure = error
+                } else {
+                    closeFailure?.addSuppressed(error)
+                }
+            }
+        }
+        outputBuffers.asReversed().forEach { buffer -> close(buffer::close) }
+        inputBuffers.asReversed().forEach { buffer -> close(buffer::close) }
+        model?.let { close(it::close) }
+        close(environment::close)
+        closeFailure?.let { failure ->
+            if (primaryFailure != null) {
+                primaryFailure.addSuppressed(failure)
+            } else {
+                throw failure
+            }
+        }
+    }
+
+    private fun fileEvidence(file: File, stats: PcmStats): JSONObject = JSONObject()
         .put("path", file.absolutePath)
         .put("bytes", file.length())
         .put("sha256", sha256(file))
+        .put("sampleRate", config.sampleRate)
+        .put("channelCount", MdxDspConfig.STEREO_CHANNELS)
+        .put("frames", (file.length() - WAV_HEADER_BYTES) /
+            (MdxDspConfig.STEREO_CHANNELS * Short.SIZE_BYTES))
+        .put("floatPeak", stats.peak.toDouble())
+        .put("sampleCount", stats.sampleCount)
+        .put("positiveSaturatedSamples", stats.positiveSaturatedSamples)
+        .put("negativeSaturatedSamples", stats.negativeSaturatedSamples)
+        .put("nonFiniteSamples", 0)
+        .put("quantization", "round-to-nearest-pcm16")
 
     private fun sha256(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")
@@ -372,9 +589,29 @@ internal class QnnMdxAudioBenchmark(
 
     private fun nanosToMs(nanos: Long): Double = nanos / 1_000_000.0
 
+    private data class PcmStats(
+        var sampleCount: Long = 0,
+        var peak: Float = 0f,
+        var positiveSaturatedSamples: Long = 0,
+        var negativeSaturatedSamples: Long = 0,
+    )
+
+    private data class WavInputContract(
+        val dataBytes: Long,
+        val frameCount: Long,
+    )
+
     private companion object {
         const val INPUT_NAME = "input"
         const val OUTPUT_NAME = "output"
         const val LOG_TAG = "MSS-QNN"
+        const val CONTRACT_ID = "uvr_mdxnet_3_9662@2"
+        const val MODEL_OUTPUT_SCALE = 1.035f
+        const val MODEL_SHA256 = "f74eee1ac06845a7cf277416138b19a6203f34316a3a74b2bde19acbfb2f8378"
+        const val MAX_DECODED_PCM_BYTES = 128L * 1024 * 1024
+        const val WAV_HEADER_BYTES = 44L
+        const val WAV_FORMAT_PCM = 1
+        const val PCM_BITS_PER_SAMPLE = 16
+        const val PCM_BLOCK_ALIGN = MdxDspConfig.STEREO_CHANNELS * Short.SIZE_BYTES
     }
 }

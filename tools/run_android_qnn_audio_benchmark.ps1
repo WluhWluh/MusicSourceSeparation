@@ -9,8 +9,6 @@ param(
     [string]$LiteRtModel,
 
     [string]$Tag = "",
-    [string]$ModelId = "uvr_mdxnet_3_9662",
-    [float]$ModelOutputScale = 1.035,
     [double]$SampleIntervalSeconds = 2,
     [switch]$ReuseDeviceFiles
 )
@@ -40,10 +38,6 @@ if ([string]::IsNullOrWhiteSpace($Tag)) {
 if ($Tag -notmatch '^[A-Za-z0-9._-]+$') {
     throw "Tag must contain only ASCII letters, digits, dot, underscore, or hyphen: $Tag"
 }
-if (-not [float]::IsFinite($ModelOutputScale) -or $ModelOutputScale -le 0) {
-    throw "ModelOutputScale must be finite and positive."
-}
-
 $modelName = Split-Path -Leaf $LiteRtModel
 $audioName = Split-Path -Leaf $SourceAudio
 foreach ($name in @($modelName, $audioName)) {
@@ -59,6 +53,14 @@ function Invoke-Adb {
     }
 }
 
+function Get-DeviceSha256([string]$Path) {
+    $line = (Invoke-Adb shell sha256sum $Path | Select-Object -First 1)
+    if ($line -notmatch '^([0-9a-fA-F]{64})\s') {
+        throw "Could not parse device SHA-256 for ${Path}: $line"
+    }
+    return $Matches[1].ToLowerInvariant()
+}
+
 function Start-HostActivity {
     Invoke-Adb shell am start -W -n "$package/.MainActivity" | Out-Null
     Start-Sleep -Milliseconds 500
@@ -68,6 +70,7 @@ function Start-HostActivity {
 
 function Initialize-DeviceDirectories {
     $initReport = "$reportRoot/init.json"
+    Invoke-Adb shell rm -f $initReport "$initReport.partial"
     Invoke-Adb shell am start-foreground-service `
         -a "$package.RUN_INFERENCE_BENCHMARK" `
         -n $component `
@@ -85,8 +88,11 @@ function Initialize-DeviceDirectories {
 
 $deviceDirectory = $Serial.Replace(':', '_')
 $sampleDir = Join-Path $PSScriptRoot "../outputs/android-benchmark/$deviceDirectory/$Tag"
-New-Item -ItemType Directory -Force -Path $sampleDir | Out-Null
-$samples = Join-Path $sampleDir "device-samples.jsonl"
+if (Test-Path -LiteralPath $sampleDir) {
+    throw "Host output directory already exists; choose a unique Tag: $sampleDir"
+}
+$localModelHash = (Get-FileHash -LiteralPath $LiteRtModel -Algorithm SHA256).Hash.ToLowerInvariant()
+$localAudioHash = (Get-FileHash -LiteralPath $SourceAudio -Algorithm SHA256).Hash.ToLowerInvariant()
 
 Invoke-Adb shell am force-stop $package
 Start-HostActivity
@@ -94,15 +100,25 @@ Initialize-DeviceDirectories
 if ($ReuseDeviceFiles) {
     Invoke-Adb shell test -s "$modelRoot/$modelName"
     Invoke-Adb shell test -s "$audioInputRoot/$audioName"
+    $deviceModelHash = Get-DeviceSha256 "$modelRoot/$modelName"
+    $deviceAudioHash = Get-DeviceSha256 "$audioInputRoot/$audioName"
+    if ($deviceModelHash -ne $localModelHash) {
+        throw "Reused device model does not match the local model. Rerun without -ReuseDeviceFiles."
+    }
+    if ($deviceAudioHash -ne $localAudioHash) {
+        throw "Reused device audio does not match the local source. Rerun without -ReuseDeviceFiles."
+    }
 } else {
     Invoke-Adb push $LiteRtModel "$modelRoot/$modelName"
     Invoke-Adb push $SourceAudio "$audioInputRoot/$audioName"
 }
+New-Item -ItemType Directory -Force -Path $sampleDir | Out-Null
+$samples = Join-Path $sampleDir "device-samples.jsonl"
 
 Invoke-Adb shell am force-stop $package
 Start-HostActivity
-Invoke-Adb shell rm -f "$reportRoot/$Tag.json"
-Invoke-Adb shell rm -rf "$audioOutputRoot/$Tag" "$externalRoot/qnn/$Tag"
+Invoke-Adb shell rm -f "$reportRoot/$Tag.json" "$reportRoot/$Tag.json.partial"
+Invoke-Adb shell rm -rf "$audioOutputRoot/$Tag" "$audioOutputRoot/$Tag.partial" "$externalRoot/qnn/$Tag"
 Invoke-Adb logcat -c
 
 Invoke-Adb shell am start-foreground-service `
@@ -110,10 +126,10 @@ Invoke-Adb shell am start-foreground-service `
     -n $component `
     --es backend litert_qnn_audio `
     --es tag $Tag `
-    --es modelId $ModelId `
+    --es modelId uvr_mdxnet_3_9662 `
     --es litertModel $modelName `
     --es audioFile $audioName `
-    --ef modelOutputScale $ModelOutputScale | Out-Null
+    --ef modelOutputScale 1.035 | Out-Null
 
 $remoteReport = "$reportRoot/$Tag.json"
 $deadline = (Get-Date).AddMinutes(15)

@@ -445,82 +445,87 @@ class InferenceBenchmarkService : Service() {
             null
         }
         val environment = npuProvider?.let { Environment.create(it) } ?: Environment.create()
-        val availableAccelerators = environment.getAvailableAccelerators().map { it.name }.sorted()
-        if (useQnn) {
-            require(Accelerator.NPU.name in availableAccelerators) {
-                "NPU was not registered; available accelerators=$availableAccelerators"
+        var modelToClose: CompiledModel? = null
+        var inputBuffers: List<TensorBuffer> = emptyList()
+        var outputBuffers: List<TensorBuffer> = emptyList()
+        return try {
+            val availableAccelerators = environment.getAvailableAccelerators().map { it.name }.sorted()
+            if (useQnn) {
+                require(Accelerator.NPU.name in availableAccelerators) {
+                    "NPU was not registered; available accelerators=$availableAccelerators"
+                }
             }
-        }
-        val options = if (useQnn) {
-            val evidenceDir = requireNotNull(qnnEvidenceDir) { "QNN evidence directory is required." }
-            CompiledModel.Options(Accelerator.NPU).apply {
-                qualcommOptions = CompiledModel.QualcommOptions(
-                    logLevel = CompiledModel.QualcommOptions.LogLevel.INFO,
-                    useHtpPreference = true,
-                    htpPerformanceMode = CompiledModel.QualcommOptions.HtpPerformanceMode
-                        .SUSTAINED_HIGH_PERFORMANCE,
-                    profiling = if (qnnProfiling) {
-                        CompiledModel.QualcommOptions.Profiling.DETAILED
-                    } else {
-                        CompiledModel.QualcommOptions.Profiling.OFF
-                    },
-                    irJsonDir = evidenceDir.absolutePath,
-                    optimizationLevel = CompiledModel.QualcommOptions.OptimizationLevel
-                        .HTP_OPTIMIZE_FOR_INFERENCE,
-                )
+            val options = if (useQnn) {
+                val evidenceDir = requireNotNull(qnnEvidenceDir) { "QNN evidence directory is required." }
+                CompiledModel.Options(Accelerator.NPU).apply {
+                    qualcommOptions = CompiledModel.QualcommOptions(
+                        logLevel = CompiledModel.QualcommOptions.LogLevel.INFO,
+                        useHtpPreference = true,
+                        htpPerformanceMode = CompiledModel.QualcommOptions.HtpPerformanceMode
+                            .SUSTAINED_HIGH_PERFORMANCE,
+                        profiling = if (qnnProfiling) {
+                            CompiledModel.QualcommOptions.Profiling.DETAILED
+                        } else {
+                            CompiledModel.QualcommOptions.Profiling.OFF
+                        },
+                        irJsonDir = evidenceDir.absolutePath,
+                        optimizationLevel = CompiledModel.QualcommOptions.OptimizationLevel
+                            .HTP_OPTIMIZE_FOR_INFERENCE,
+                    )
+                }
+            } else if (gpuPrecision != null) {
+                CompiledModel.Options(Accelerator.GPU).apply {
+                    gpuOptions = CompiledModel.GpuOptions(
+                        precision = gpuPrecision,
+                        backend = if (boundedGpu) {
+                            CompiledModel.GpuOptions.Backend.OPENCL
+                        } else {
+                            CompiledModel.GpuOptions.Backend.AUTOMATIC
+                        },
+                        numStepsOfCommandBufferPreparations = if (boundedGpu) 1 else null,
+                    )
+                }
+            } else {
+                CompiledModel.Options(Accelerator.CPU).apply {
+                    cpuOptions = CompiledModel.CpuOptions(
+                        numThreads = threads,
+                        xnnPackFlags = null,
+                        xnnPackWeightCachePath = null,
+                    )
+                }
             }
-        } else if (gpuPrecision != null) {
-            CompiledModel.Options(Accelerator.GPU).apply {
-                gpuOptions = CompiledModel.GpuOptions(
-                    precision = gpuPrecision,
-                    backend = if (boundedGpu) {
-                        CompiledModel.GpuOptions.Backend.OPENCL
-                    } else {
-                        CompiledModel.GpuOptions.Backend.AUTOMATIC
-                    },
-                    numStepsOfCommandBufferPreparations = if (boundedGpu) 1 else null,
-                )
+            val model = CompiledModel.create(modelFile.absolutePath, options, environment).also {
+                modelToClose = it
             }
-        } else {
-            CompiledModel.Options(Accelerator.CPU).apply {
-                cpuOptions = CompiledModel.CpuOptions(
-                    numThreads = threads,
-                    xnnPackFlags = null,
-                    xnnPackWeightCachePath = null,
-                )
+            inputBuffers = model.createInputBuffers()
+            outputBuffers = model.createOutputBuffers()
+            require(inputBuffers.size == 1 && outputBuffers.size == 1) {
+                "Expected one input and one output, got ${inputBuffers.size}/${outputBuffers.size}."
             }
-        }
-        val model = CompiledModel.create(modelFile.absolutePath, options, environment)
-        val inputBuffers = model.createInputBuffers()
-        val outputBuffers = model.createOutputBuffers()
-        require(inputBuffers.size == 1 && outputBuffers.size == 1) {
-            "Expected one input and one output, got ${inputBuffers.size}/${outputBuffers.size}."
-        }
-        val inputShape = requireNotNull(model.getInputTensorType("input").layout) {
-            "LiteRT input tensor has no layout."
-        }.dimensions
-        val outputShape = requireNotNull(model.getOutputTensorType("output").layout) {
-            "LiteRT output tensor has no layout."
-        }.dimensions
-        val expectedShape = listOf(BATCH, height, width, CHANNELS)
-        require(inputShape == expectedShape && outputShape == expectedShape) {
-            "Unexpected LiteRT shapes: input=$inputShape output=$outputShape expected=$expectedShape"
-        }
-        val inputNhwc = nchwToNhwc(inputNchw, height, width)
-        inputBuffers.single().writeFloat(inputNhwc)
-        val setup = setupStarted.elapsed()
-        val warmupWall = mutableListOf<Double>()
-        val warmupCpu = mutableListOf<Long>()
-        val inferenceWall = mutableListOf<Double>()
-        val inferenceCpu = mutableListOf<Long>()
-        val dispatchWall = mutableListOf<Double>()
-        val dispatchCpu = mutableListOf<Long>()
-        var outputNhwc: FloatArray? = null
-        var readWallMs = 0.0
-        var readCpuMs = 0L
-        boundedGpuRuntime?.resetInferenceCounters()
+            val inputShape = requireNotNull(model.getInputTensorType("input").layout) {
+                "LiteRT input tensor has no layout."
+            }.dimensions
+            val outputShape = requireNotNull(model.getOutputTensorType("output").layout) {
+                "LiteRT output tensor has no layout."
+            }.dimensions
+            val expectedShape = listOf(BATCH, height, width, CHANNELS)
+            require(inputShape == expectedShape && outputShape == expectedShape) {
+                "Unexpected LiteRT shapes: input=$inputShape output=$outputShape expected=$expectedShape"
+            }
+            val inputNhwc = nchwToNhwc(inputNchw, height, width)
+            inputBuffers.single().writeFloat(inputNhwc)
+            val setup = setupStarted.elapsed()
+            val warmupWall = mutableListOf<Double>()
+            val warmupCpu = mutableListOf<Long>()
+            val inferenceWall = mutableListOf<Double>()
+            val inferenceCpu = mutableListOf<Long>()
+            val dispatchWall = mutableListOf<Double>()
+            val dispatchCpu = mutableListOf<Long>()
+            var outputNhwc: FloatArray? = null
+            var readWallMs = 0.0
+            var readCpuMs = 0L
+            boundedGpuRuntime?.resetInferenceCounters()
 
-        try {
             repeat(warmups) {
                 val totalStarted = timedStart()
                 runLiteRtModel(model, inputBuffers, outputBuffers, boundedGpuRuntime)
@@ -549,42 +554,42 @@ class InferenceBenchmarkService : Service() {
                     inferenceCpu += it.cpuMs
                 }
             }
+
+            BackendResult(
+                setupWallMs = setup.wallMs,
+                setupCpuMs = setup.cpuMs,
+                availableAccelerators = availableAccelerators,
+                runtimeInputShape = inputShape,
+                runtimeOutputShape = outputShape,
+                warmupWallMs = warmupWall,
+                warmupCpuMs = warmupCpu,
+                inferenceWallMs = inferenceWall,
+                inferenceCpuMs = inferenceCpu,
+                dispatchWallMs = dispatchWall,
+                dispatchCpuMs = dispatchCpu,
+                outputReadWallMs = readWallMs,
+                outputReadCpuMs = readCpuMs,
+                backendEvidence = when {
+                    useQnn -> qnnEvidence(
+                        requireNotNull(npuProvider),
+                        requireNotNull(qnnEvidenceDir),
+                        qnnProfiling,
+                    )
+                    boundedGpu -> requireNotNull(boundedGpuRuntime).evidence()
+                    else -> null
+                },
+                output = nhwcToNchw(
+                    requireNotNull(outputNhwc) { "LiteRT produced no output." },
+                    height,
+                    width,
+                ),
+            )
         } finally {
             inputBuffers.closeAll()
             outputBuffers.closeAll()
-            model.close()
+            modelToClose?.close()
             environment.close()
         }
-
-        return BackendResult(
-            setupWallMs = setup.wallMs,
-            setupCpuMs = setup.cpuMs,
-            availableAccelerators = availableAccelerators,
-            runtimeInputShape = inputShape,
-            runtimeOutputShape = outputShape,
-            warmupWallMs = warmupWall,
-            warmupCpuMs = warmupCpu,
-            inferenceWallMs = inferenceWall,
-            inferenceCpuMs = inferenceCpu,
-            dispatchWallMs = dispatchWall,
-            dispatchCpuMs = dispatchCpu,
-            outputReadWallMs = readWallMs,
-            outputReadCpuMs = readCpuMs,
-            backendEvidence = when {
-                useQnn -> qnnEvidence(
-                    requireNotNull(npuProvider),
-                    requireNotNull(qnnEvidenceDir),
-                    qnnProfiling,
-                )
-                boundedGpu -> requireNotNull(boundedGpuRuntime).evidence()
-                else -> null
-            },
-            output = nhwcToNchw(
-                requireNotNull(outputNhwc) { "LiteRT produced no output." },
-                height,
-                width,
-            ),
-        )
     }
 
     private fun baseReport(

@@ -7,10 +7,49 @@ import argparse
 import csv
 import json
 import math
+import re
 from pathlib import Path
 
 
 PROFILE_MARKER = "---PROFILEDATA---"
+
+
+def read_android_aggregate(lines: list[str]) -> dict[str, object] | None:
+    patterns = {
+        "totalFrames": re.compile(r"^Total frames rendered:\s*(\d+)$"),
+        "modernJankyFrames": re.compile(r"^Janky frames:\s*(\d+)\s*\(([\d.]+)%\)$"),
+        "p50Ms": re.compile(r"^50th percentile:\s*(\d+)ms$"),
+        "p90Ms": re.compile(r"^90th percentile:\s*(\d+)ms$"),
+        "p95Ms": re.compile(r"^95th percentile:\s*(\d+)ms$"),
+        "p99Ms": re.compile(r"^99th percentile:\s*(\d+)ms$"),
+        "missedVsync": re.compile(r"^Number Missed Vsync:\s*(\d+)$"),
+        "highInputLatency": re.compile(r"^Number High input latency:\s*(\d+)$"),
+        "slowUiThread": re.compile(r"^Number Slow UI thread:\s*(\d+)$"),
+        "slowIssueDrawCommands": re.compile(r"^Number Slow issue draw commands:\s*(\d+)$"),
+    }
+    required = set(patterns) | {"modernJankPercent"}
+    for start, line in enumerate(lines):
+        if not patterns["totalFrames"].match(line.strip()):
+            continue
+        values: dict[str, object] = {}
+        for candidate in lines[start:]:
+            stripped = candidate.strip()
+            if stripped.startswith("HISTOGRAM:"):
+                break
+            for key, pattern in patterns.items():
+                if key in values:
+                    continue
+                match = pattern.match(stripped)
+                if not match:
+                    continue
+                if key == "modernJankyFrames":
+                    values[key] = int(match.group(1))
+                    values["modernJankPercent"] = float(match.group(2))
+                else:
+                    values[key] = int(match.group(1))
+        if required.issubset(values):
+            return values
+    return None
 
 
 def percentile(values: list[float], fraction: float) -> float:
@@ -91,7 +130,24 @@ def main() -> int:
     parser.add_argument("framestats", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    report = summarize(read_frames(args.framestats))
+    lines = args.framestats.read_text(
+        encoding="utf-8-sig", errors="replace"
+    ).splitlines()
+    android_aggregate = read_android_aggregate(lines)
+    report = {
+        "androidAggregate": android_aggregate,
+        "framestatsTail": summarize(read_frames(args.framestats)),
+        "note": (
+            "Android aggregate metrics come from the first complete contiguous "
+            "gfxinfo aggregate block and cover its full Stats-since interval. "
+            "The framestats tail may be truncated by Android's ring buffer and "
+            "must not be treated as full-sweep FPS."
+            if android_aggregate is not None
+            else "No complete Android aggregate block was found. The framestats "
+            "tail may be truncated by Android's ring buffer and must not be "
+            "treated as full-sweep FPS."
+        ),
+    }
     text = json.dumps(report, indent=2) + "\n"
     if args.output:
         args.output.write_text(text, encoding="utf-8")

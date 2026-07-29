@@ -16,9 +16,12 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.os.Process
 import android.os.SystemClock
+import android.util.Log
 import com.google.ai.edge.litert.Accelerator
+import com.google.ai.edge.litert.BuiltinNpuAcceleratorProvider
 import com.google.ai.edge.litert.CompiledModel
 import com.google.ai.edge.litert.Environment
+import com.google.ai.edge.litert.NpuCompatibilityChecker
 import com.google.ai.edge.litert.TensorBuffer
 import org.json.JSONArray
 import org.json.JSONObject
@@ -75,6 +78,7 @@ class InferenceBenchmarkService : Service() {
         val warmups = intent.getIntExtra(EXTRA_WARMUPS, DEFAULT_WARMUPS).coerceIn(0, 20)
         val threads = intent.getIntExtra(EXTRA_THREADS, DEFAULT_THREADS).coerceIn(1, 16)
         val seed = intent.getLongExtra(EXTRA_SEED, DEFAULT_SEED)
+        val qnnProfiling = intent.getBooleanExtra(EXTRA_QNN_PROFILING, false)
         val height = intent.getIntExtra(EXTRA_HEIGHT, DEFAULT_HEIGHT)
         val width = intent.getIntExtra(EXTRA_WIDTH, DEFAULT_WIDTH)
         require(height in 1..4096 && width in 1..4096) {
@@ -91,7 +95,8 @@ class InferenceBenchmarkService : Service() {
                     ?: DEFAULT_ONNX_MODEL
                 BenchmarkBackend.LITERT_CPU,
                 BenchmarkBackend.LITERT_GPU,
-                BenchmarkBackend.LITERT_GPU_FP32 -> intent.getStringExtra(EXTRA_LITERT_MODEL)
+                BenchmarkBackend.LITERT_GPU_FP32,
+                BenchmarkBackend.LITERT_QNN -> intent.getStringExtra(EXTRA_LITERT_MODEL)
                     ?: DEFAULT_LITERT_MODEL
             },
         )
@@ -152,6 +157,7 @@ class InferenceBenchmarkService : Service() {
                 warmups = warmups,
                 threads = threads,
                 gpuPrecision = null,
+                useQnn = false,
                 height = height,
                 width = width,
             )
@@ -162,6 +168,7 @@ class InferenceBenchmarkService : Service() {
                 warmups = warmups,
                 threads = threads,
                 gpuPrecision = CompiledModel.GpuOptions.Precision.FP16,
+                useQnn = false,
                 height = height,
                 width = width,
             )
@@ -172,6 +179,20 @@ class InferenceBenchmarkService : Service() {
                 warmups = warmups,
                 threads = threads,
                 gpuPrecision = CompiledModel.GpuOptions.Precision.FP32,
+                useQnn = false,
+                height = height,
+                width = width,
+            )
+            BenchmarkBackend.LITERT_QNN -> runLiteRt(
+                modelFile = modelFile,
+                inputNchw = inputNchw,
+                iterations = iterations,
+                warmups = warmups,
+                threads = threads,
+                gpuPrecision = null,
+                useQnn = true,
+                qnnProfiling = qnnProfiling,
+                qnnEvidenceDir = File(qnnEvidenceRoot(), tag).apply { mkdirs() },
                 height = height,
                 width = width,
             )
@@ -227,6 +248,7 @@ class InferenceBenchmarkService : Service() {
             .put("inferenceSummary", timingSummary(result.inferenceWallMs, result.inferenceCpuMs))
             .put("output", outputStats)
             .put("comparisonToOrt", comparison ?: JSONObject.NULL)
+            .put("backendEvidence", result.backendEvidence ?: JSONObject.NULL)
             .put("processStart", processStart)
             .put("processEnd", processEnd)
             .put("deviceStart", deviceStart)
@@ -357,13 +379,59 @@ class InferenceBenchmarkService : Service() {
         warmups: Int,
         threads: Int,
         gpuPrecision: CompiledModel.GpuOptions.Precision?,
+        useQnn: Boolean,
+        qnnProfiling: Boolean = false,
+        qnnEvidenceDir: File? = null,
         height: Int,
         width: Int,
     ): BackendResult {
         val setupStarted = timedStart()
-        val environment = Environment.create()
+        require(!useQnn || gpuPrecision == null) { "QNN and GPU modes are mutually exclusive." }
+        val npuProvider = if (useQnn) {
+            require(Build.VERSION.SDK_INT >= 31) { "QNN v79 requires Android API 31 or newer." }
+            require(Build.SUPPORTED_ABIS.firstOrNull() == "arm64-v8a") {
+                "QNN v79 requires an arm64-v8a process; ABIs=${Build.SUPPORTED_ABIS.toList()}"
+            }
+            BuiltinNpuAcceleratorProvider(this, NpuCompatibilityChecker.Qualcomm).also { provider ->
+                require(provider.isDeviceSupported()) {
+                    "LiteRT does not recognize ${Build.SOC_MANUFACTURER}/${Build.SOC_MODEL} as a supported Qualcomm NPU."
+                }
+                require(provider.isLibraryReady()) { "The bundled Qualcomm NPU runtime is not ready." }
+                Log.i(
+                    QNN_LOG_TAG,
+                    "QNN preflight soc=${Build.SOC_MANUFACTURER}/${Build.SOC_MODEL} " +
+                        "libraryDir=${provider.getLibraryDir()}",
+                )
+            }
+        } else {
+            null
+        }
+        val environment = npuProvider?.let { Environment.create(it) } ?: Environment.create()
         val availableAccelerators = environment.getAvailableAccelerators().map { it.name }.sorted()
-        val options = if (gpuPrecision != null) {
+        if (useQnn) {
+            require(Accelerator.NPU.name in availableAccelerators) {
+                "NPU was not registered; available accelerators=$availableAccelerators"
+            }
+        }
+        val options = if (useQnn) {
+            val evidenceDir = requireNotNull(qnnEvidenceDir) { "QNN evidence directory is required." }
+            CompiledModel.Options(Accelerator.NPU).apply {
+                qualcommOptions = CompiledModel.QualcommOptions(
+                    logLevel = CompiledModel.QualcommOptions.LogLevel.INFO,
+                    useHtpPreference = true,
+                    htpPerformanceMode = CompiledModel.QualcommOptions.HtpPerformanceMode
+                        .SUSTAINED_HIGH_PERFORMANCE,
+                    profiling = if (qnnProfiling) {
+                        CompiledModel.QualcommOptions.Profiling.DETAILED
+                    } else {
+                        CompiledModel.QualcommOptions.Profiling.OFF
+                    },
+                    irJsonDir = evidenceDir.absolutePath,
+                    optimizationLevel = CompiledModel.QualcommOptions.OptimizationLevel
+                        .HTP_OPTIMIZE_FOR_INFERENCE,
+                )
+            }
+        } else if (gpuPrecision != null) {
             CompiledModel.Options(Accelerator.GPU).apply {
                 gpuOptions = CompiledModel.GpuOptions(
                     precision = gpuPrecision,
@@ -458,6 +526,15 @@ class InferenceBenchmarkService : Service() {
             dispatchCpuMs = dispatchCpu,
             outputReadWallMs = readWallMs,
             outputReadCpuMs = readCpuMs,
+            backendEvidence = if (useQnn) {
+                qnnEvidence(
+                    requireNotNull(npuProvider),
+                    requireNotNull(qnnEvidenceDir),
+                    qnnProfiling,
+                )
+            } else {
+                null
+            },
             output = nhwcToNchw(
                 requireNotNull(outputNhwc) { "LiteRT produced no output." },
                 height,
@@ -701,6 +778,35 @@ class InferenceBenchmarkService : Service() {
 
     private fun inputsDir(): File = File(benchmarkDir(), "inputs").apply { mkdirs() }
 
+    private fun qnnEvidenceRoot(): File = File(benchmarkDir(), "qnn").apply { mkdirs() }
+
+    private fun qnnEvidence(
+        provider: BuiltinNpuAcceleratorProvider,
+        evidenceDir: File,
+        detailedProfiling: Boolean,
+    ): JSONObject = JSONObject()
+        .put("provider", "BuiltinNpuAcceleratorProvider")
+        .put("compatibilityChecker", "Qualcomm")
+        .put("deviceSupported", provider.isDeviceSupported())
+        .put("libraryReady", provider.isLibraryReady())
+        .put("libraryDir", provider.getLibraryDir())
+        .put("socManufacturer", Build.SOC_MANUFACTURER)
+        .put("socModel", Build.SOC_MODEL)
+        .put("htpPerformanceMode", "SUSTAINED_HIGH_PERFORMANCE")
+        .put("optimizationLevel", "HTP_OPTIMIZE_FOR_INFERENCE")
+        .put("profiling", if (detailedProfiling) "DETAILED" else "OFF")
+        .put("irJsonDir", evidenceDir.absolutePath)
+        .put("irFiles", JSONArray(
+            evidenceDir.walkTopDown()
+                .filter { it.isFile }
+                .map { file ->
+                    JSONObject()
+                        .put("path", file.relativeTo(evidenceDir).invariantSeparatorsPath)
+                        .put("bytes", file.length())
+                }
+                .toList(),
+        ))
+
     private fun createNotificationChannel() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(
@@ -769,6 +875,7 @@ class InferenceBenchmarkService : Service() {
         val dispatchCpuMs: List<Long>,
         val outputReadWallMs: Double,
         val outputReadCpuMs: Long,
+        val backendEvidence: JSONObject? = null,
         val output: FloatArray,
     )
 
@@ -776,7 +883,8 @@ class InferenceBenchmarkService : Service() {
         ORT("ort"),
         LITERT_CPU("litert_cpu"),
         LITERT_GPU("litert_gpu"),
-        LITERT_GPU_FP32("litert_gpu_fp32");
+        LITERT_GPU_FP32("litert_gpu_fp32"),
+        LITERT_QNN("litert_qnn");
 
         companion object {
             fun from(value: String?): BenchmarkBackend = entries.firstOrNull { it.id == value }
@@ -799,6 +907,7 @@ class InferenceBenchmarkService : Service() {
         const val EXTRA_INPUT_FILE = "inputFile"
         const val EXTRA_ONNX_MODEL = "onnxModel"
         const val EXTRA_LITERT_MODEL = "litertModel"
+        const val EXTRA_QNN_PROFILING = "qnnProfiling"
 
         const val DEFAULT_ONNX_MODEL = "UVR_MDXNET_9482.onnx"
         const val DEFAULT_LITERT_MODEL = "UVR_MDXNET_9482_float32.tflite"
@@ -812,6 +921,7 @@ class InferenceBenchmarkService : Service() {
         private const val LATEST_REPORT = "latest.json"
         private const val NOTIFICATION_CHANNEL_ID = "inference_benchmark"
         private const val NOTIFICATION_ID = 9482
+        private const val QNN_LOG_TAG = "MSS-QNN"
 
         private const val BATCH = 1
         private const val CHANNELS = 4

@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Serial,
 
-    [ValidateSet("ort", "litert_cpu", "litert_gpu", "litert_gpu_fp32")]
+    [ValidateSet("ort", "litert_cpu", "litert_gpu", "litert_gpu_fp32", "litert_qnn")]
     [string]$Backend = "ort",
 
     [int]$Iterations = 5,
@@ -14,6 +14,7 @@ param(
     [string]$ModelId = "uvr_mdxnet_9482",
     [int]$Height = 2048,
     [int]$Width = 256,
+    [switch]$QnnProfiling,
     [switch]$UploadModels,
     [string]$InputFile = "",
     [string]$OnnxModel = "models/uvr-mdx/UVR_MDXNET_9482.onnx",
@@ -120,6 +121,9 @@ $samples = Join-Path $sampleDir "device-samples.jsonl"
 
 Reset-BenchmarkHost
 Invoke-Adb shell rm -f $remoteReport
+if ($Backend -eq "litert_qnn") {
+    Invoke-Adb logcat -c
+}
 $serviceArgs = @(
     "-a", "com.example.musicsourceseparation.RUN_INFERENCE_BENCHMARK",
     "-n", $component,
@@ -132,6 +136,7 @@ $serviceArgs = @(
     "--es", "modelId", $ModelId,
     "--ei", "height", $Height,
     "--ei", "width", $Width,
+    "--ez", "qnnProfiling", $QnnProfiling.IsPresent.ToString().ToLowerInvariant(),
     "--es", "onnxModel", $onnxModelName,
     "--es", "litertModel", $liteRtModelName
 )
@@ -162,6 +167,22 @@ do {
 
 if ((Get-Date) -ge $deadline) {
     throw "Benchmark timed out. Samples: $samples"
+}
+
+if ($Backend -eq "litert_qnn") {
+    $logcatPath = Join-Path $sampleDir "runtime-logcat.txt"
+    $runtimeLog = & $adb -s $Serial logcat -d -v threadtime 2>&1 |
+        Select-String -Pattern "MSS-QNN|LiteRt|LiteRT|QNN|Qnn|HTP|Qualcomm|CompiledModel" |
+        ForEach-Object { $_.Line }
+    $runtimeLog | Set-Content -LiteralPath $logcatPath -Encoding utf8
+
+    $remoteEvidence = "$externalRoot/qnn/$Tag"
+    & $adb -s $Serial shell test -d $remoteEvidence
+    if ($LASTEXITCODE -eq 0) {
+        $localEvidence = Join-Path $sampleDir "qnn-ir"
+        New-Item -ItemType Directory -Force -Path $localEvidence | Out-Null
+        Invoke-Adb pull "$remoteEvidence/." $localEvidence
+    }
 }
 
 Write-Host "Saved report and device samples to $sampleDir"

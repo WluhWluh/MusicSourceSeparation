@@ -19,9 +19,38 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    flavorDimensions += "runtime"
+    productFlavors {
+        create("standard") {
+            dimension = "runtime"
+        }
+        create("qnnV79") {
+            dimension = "runtime"
+            minSdk = 31
+            ndk {
+                abiFilters += "arm64-v8a"
+            }
+        }
+    }
+
     sourceSets {
         getByName("main") {
             assets.directories.add("../models/uvr-mdx")
+        }
+        getByName("qnnV79") {
+            jniLibs.directories.add("../.tmp/litert-qnn-v79-runtime/jni")
+            assets.directories.add("../.tmp/litert-qnn-v79-runtime/licenses")
+        }
+    }
+
+    packaging {
+        jniLibs {
+            // BuiltinNpuAcceleratorProvider discovers plugins through nativeLibraryDir.
+            useLegacyPackaging = true
+            keepDebugSymbols += setOf(
+                "**/libLiteRt*Qualcomm.so",
+                "**/libQnn*.so",
+            )
         }
     }
 }

@@ -20,6 +20,12 @@ same time so the same APK can make controlled runtime comparisons.
 - `tools/run_android_inference_benchmark.ps1`: the ADB benchmark driver. It
   uploads models and inputs, starts the foreground service, samples device
   state, and pulls JSON results.
+- `tools/prepare_litert_qnn_v79_runtime.py`: prepares the pinned, ignored
+  LiteRT/QAIRT HTP v79 JIT payload after explicit license acceptance.
+- `tools/run_android_qnn_audio_benchmark.ps1`: runs one complete WAV through a
+  single QNN session and pulls verified stems, device samples, and QNN IR.
+- `tools/evaluate_mdx_tensor_window.py`: prepares real MDX windows and
+  reconstructs reference/candidate output tensors into listening files.
 - `tools/generate_ort_tensor_reference.py`: generates an element-wise desktop
   ORT output tensor for numerical comparisons.
 - `docs/model_contracts.md`: MDX tensor and DSP assumptions used by the Android
@@ -28,6 +34,8 @@ same time so the same APK can make controlled runtime comparisons.
   GPU results for UVR MDXNET 9482.
 - `docs/android-litert-x86-build-2026-07-20.md`: the original 32-bit x86 LiteRT
   build investigation and emulator results.
+- `docs/android-litert-qnn-s25-2026-07-29.md`: Qualcomm HTP v79 delegation,
+  UI, lifecycle, reconstructed-audio, and full-song results on Galaxy S25.
 - `docs/progress.md`: the chronological MVP development log. It is useful for
   history, but the focused benchmark reports above are the current result
   summaries.
@@ -159,6 +167,9 @@ The benchmark service compares these backends:
 - `litert_cpu`: LiteRT CPU with XNNPACK.
 - `litert_gpu`: LiteRT GPU with FP16 precision.
 - `litert_gpu_fp32`: LiteRT GPU with FP32 precision.
+- `litert_gpu_bounded`: the audited N=1 bounded OpenCL FP32 runtime.
+- `litert_qnn`: Qualcomm HTP through the QNN JIT plugin in the `qnnV79`
+  flavor.
 
 Build and install the app first. Then define one parameter set so every backend
 uses the same model files and identity:
@@ -168,7 +179,7 @@ $benchmark = @{
   Serial = "DEVICE_SERIAL"
   ModelId = "uvr_mdxnet_9482"
   OnnxModel = "models/uvr-mdx/UVR_MDXNET_9482.onnx"
-  LiteRtModel = "C:\path\to\UVR_MDXNET_9482_static_float32.tflite"
+  LiteRtModel = "<path-to-UVR_MDXNET_9482_static_float32.tflite>"
   Height = 2048
   Width = 256
   Threads = 8
@@ -184,8 +195,8 @@ $benchmark = @{
 
 Run ORT first when numerical comparison is required. The service stores its
 output as the device-side reference used by subsequent LiteRT runs. Add
-`-InputFile <path>` to upload a little-endian float32 NCHW tensor instead of
-using the deterministic generated input.
+`-InputFile <path>` together with `-UploadModels` to upload a little-endian
+float32 NCHW tensor instead of using the deterministic generated input.
 
 Host-side reports and thermal/battery samples are written below:
 
@@ -194,6 +205,42 @@ outputs/android-benchmark/<device-serial>/<tag>/
 ```
 
 These raw files remain ignored; stable conclusions belong in `docs/`.
+
+## Qualcomm HTP v79 research flavor
+
+The `qnnV79` flavor is an arm64/API 31 research build. It pins LiteRT 2.1.5,
+QAIRT 2.44.0.260225, and HTP v79. Review the QAIRT license before preparing its
+ignored local runtime:
+
+```powershell
+python -m pip install -r requirements-qnn.txt
+python tools/prepare_litert_qnn_v79_runtime.py --accept-qairt-license
+
+.\gradlew.bat :app:assembleQnnV79Debug `
+  -PliteRtAar=<path-to-litert-android-2.1.5-bss.2.aar>
+```
+
+The full-song driver accepts a canonical 44.1 kHz stereo PCM16 WAV (up to 128
+MiB of PCM), uploads it with the frozen 9662 TFLite model, creates one QNN
+session, samples device state, and pulls SHA-256-verified stems and QNN IR:
+
+```powershell
+.\tools\run_android_qnn_audio_benchmark.ps1 `
+  -Serial <adb-serial> `
+  -SourceAudio <path-to-canonical-pcm16-test.wav> `
+  -LiteRtModel <path-to-UVR_MDXNET_3_9662_static_float32.tflite> `
+  -Tag qnn-full-song
+```
+
+`-ReuseDeviceFiles` still compares the local and device SHA-256 values for both
+inputs. Tags are write-once on the host so reruns cannot append samples to an
+earlier result directory.
+
+This flavor is not a redistributable runtime package or a claimed Booming SS
+backend. See
+[the S25 QNN report](docs/android-litert-qnn-s25-2026-07-29.md) for the
+measured benefits, 145.2 MiB installed runtime cost, and remaining
+qualification gates.
 
 ## 32-bit x86 LiteRT runtime
 

@@ -29,6 +29,7 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import java.security.MessageDigest
 import java.util.Locale
 import java.util.Random
 import java.util.concurrent.atomic.AtomicBoolean
@@ -80,6 +81,7 @@ class InferenceBenchmarkService : Service() {
         val threads = intent.getIntExtra(EXTRA_THREADS, DEFAULT_THREADS).coerceIn(1, 16)
         val seed = intent.getLongExtra(EXTRA_SEED, DEFAULT_SEED)
         val qnnProfiling = intent.getBooleanExtra(EXTRA_QNN_PROFILING, false)
+        val exportOutputTensor = intent.getBooleanExtra(EXTRA_EXPORT_OUTPUT_TENSOR, false)
         val height = intent.getIntExtra(EXTRA_HEIGHT, DEFAULT_HEIGHT)
         val width = intent.getIntExtra(EXTRA_WIDTH, DEFAULT_WIDTH)
         require(height in 1..4096 && width in 1..4096) {
@@ -219,6 +221,11 @@ class InferenceBenchmarkService : Service() {
         val deviceEnd = deviceSnapshot()
         val output = result.output
         val outputStats = outputStats(output)
+        val outputTensorFile = if (exportOutputTensor) {
+            File(tensorOutputDir(), "$tag-nchw-f32.bin").also { writeFloatArray(it, output) }
+        } else {
+            null
+        }
         val referenceKey = inputFile?.nameWithoutExtension ?: "generated"
         val referenceFile = File(
             referenceDir(),
@@ -265,6 +272,12 @@ class InferenceBenchmarkService : Service() {
             .put("outputReadCpuMs", result.outputReadCpuMs)
             .put("inferenceSummary", timingSummary(result.inferenceWallMs, result.inferenceCpuMs))
             .put("output", outputStats)
+            .put("outputTensor", outputTensorFile?.let { file ->
+                JSONObject()
+                    .put("path", file.absolutePath)
+                    .put("bytes", file.length())
+                    .put("sha256", sha256(file))
+            } ?: JSONObject.NULL)
             .put("comparisonToOrt", comparison ?: JSONObject.NULL)
             .put("backendEvidence", result.backendEvidence ?: JSONObject.NULL)
             .put("processStart", processStart)
@@ -285,6 +298,7 @@ class InferenceBenchmarkService : Service() {
         val models = File(root, "models").apply { mkdirs() }
         val reports = reportsDir()
         val reference = referenceDir()
+        val tensorOutput = tensorOutputDir()
         inputsDir().mkdirs()
         val report = JSONObject()
             .put("schemaVersion", 1)
@@ -295,6 +309,7 @@ class InferenceBenchmarkService : Service() {
             .put("modelsPath", models.absolutePath)
             .put("reportsPath", reports.absolutePath)
             .put("referencePath", reference.absolutePath)
+            .put("tensorOutputPath", tensorOutput.absolutePath)
             .put("inputsPath", inputsDir().absolutePath)
         File(reports, "$tag.json").writeText(report.toString(2))
         File(reports, LATEST_REPORT).writeText(report.toString(2))
@@ -781,6 +796,19 @@ class InferenceBenchmarkService : Service() {
         return floats
     }
 
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+    }
+
     private fun writeErrorReport(message: String, intent: Intent?) {
         val backend = intent?.getStringExtra(EXTRA_BACKEND).orEmpty().ifBlank { "unknown" }
         val tag = intent?.getStringExtra(EXTRA_TAG)?.sanitizeTag()
@@ -804,6 +832,8 @@ class InferenceBenchmarkService : Service() {
     private fun reportsDir(): File = File(benchmarkDir(), "reports").apply { mkdirs() }
 
     private fun referenceDir(): File = File(benchmarkDir(), "reference").apply { mkdirs() }
+
+    private fun tensorOutputDir(): File = File(benchmarkDir(), "tensor-output").apply { mkdirs() }
 
     private fun inputsDir(): File = File(benchmarkDir(), "inputs").apply { mkdirs() }
 
@@ -1006,6 +1036,7 @@ class InferenceBenchmarkService : Service() {
         const val EXTRA_ONNX_MODEL = "onnxModel"
         const val EXTRA_LITERT_MODEL = "litertModel"
         const val EXTRA_QNN_PROFILING = "qnnProfiling"
+        const val EXTRA_EXPORT_OUTPUT_TENSOR = "exportOutputTensor"
 
         const val DEFAULT_ONNX_MODEL = "UVR_MDXNET_9482.onnx"
         const val DEFAULT_LITERT_MODEL = "UVR_MDXNET_9482_float32.tflite"

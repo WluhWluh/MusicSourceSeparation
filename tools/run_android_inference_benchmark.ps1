@@ -20,6 +20,7 @@ param(
     [int]$SwipeCount = 0,
     [ValidateRange(0, 120)]
     [double]$UiStartDelaySeconds = 10,
+    [switch]$ExportOutputTensor,
     [switch]$UploadModels,
     [string]$InputFile = "",
     [string]$OnnxModel = "models/uvr-mdx/UVR_MDXNET_9482.onnx",
@@ -144,6 +145,7 @@ $serviceArgs = @(
     "--ei", "height", $Height,
     "--ei", "width", $Width,
     "--ez", "qnnProfiling", $QnnProfiling.IsPresent.ToString().ToLowerInvariant(),
+    "--ez", "exportOutputTensor", $ExportOutputTensor.IsPresent.ToString().ToLowerInvariant(),
     "--es", "onnxModel", $onnxModelName,
     "--es", "litertModel", $liteRtModelName
 )
@@ -221,6 +223,19 @@ do {
 
 if ((Get-Date) -ge $deadline) {
     throw "Benchmark timed out. Samples: $samples"
+}
+
+if ($ExportOutputTensor) {
+    $parsedReport = ($report -join "`n") | ConvertFrom-Json
+    if ($parsedReport.status -ne "complete" -or -not $parsedReport.outputTensor.path) {
+        throw "Benchmark did not publish an output tensor: $($report -join "`n")"
+    }
+    $localTensor = Join-Path $sampleDir "output-nchw-f32.bin"
+    Invoke-Adb pull $parsedReport.outputTensor.path $localTensor
+    $actualHash = (Get-FileHash -LiteralPath $localTensor -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualHash -ne $parsedReport.outputTensor.sha256) {
+        throw "Pulled output tensor SHA-256 mismatch: $actualHash"
+    }
 }
 
 if ($Backend -eq "litert_qnn") {

@@ -93,12 +93,12 @@ adb -s emulator-5554 install -r --no-streaming `
 ### Downloadable LiteRT core probe
 
 The `downloadableCore` flavor compiles against the pure API AAR from the
-[`downloadable-runtime-v2.1.5-bss.2-exp.1`](https://github.com/WluhWluh/bss-litert-android/releases/tag/downloadable-runtime-v2.1.5-bss.2-exp.1)
+[`downloadable-runtime-v2.1.5-bss.2-exp.2`](https://github.com/WluhWluh/bss-litert-android/releases/tag/downloadable-runtime-v2.1.5-bss.2-exp.2)
 prerelease. The AAR must be supplied explicitly and must have SHA-256
-`2cdac3840bd664109c151da7737811f6c1e8004ab140c4b369f99b339623f0de`.
+`a68b51546f268b6db0b64bec3d1d95389ba44a48c59beaa1769794682c94b4f9`.
 
 ```powershell
-$apiAar = "<path-to-litert-api-2.1.5-bss.2-downloadable.aar>"
+$apiAar = "<path-to-litert-api-2.1.5-bss.2-downloadable-loader.aar>"
 Get-FileHash -Algorithm SHA256 $apiAar
 .\gradlew.bat testDownloadableCoreDebugUnitTest `
   assembleDownloadableCoreDebug --no-daemon `
@@ -107,11 +107,12 @@ Get-FileHash -Algorithm SHA256 $apiAar
 
 This APK contains no LiteRT native runtime. A LiteRT benchmark downloads the
 fixed CPU bundle for the current process ABI, verifies the bundle and inner
-files, installs them under `noBackupFilesDir`, and preloads `libLiteRt.so` by
-absolute path. This is an experiment rather than a production updater: the
-current unmodified API AAR works on the tested Android 12 and newer devices but
-still calls `System.loadLibrary` in a way that fails on the API 26 emulator.
-See the linked experiment report before reusing the loader.
+files, streams the native library into `noBackupFilesDir`, and configures the
+source-built API to load it by absolute path. The CPU loader has completed real
+9662 inference on API 26 through 37 and all four Android ABIs. This remains an
+experiment rather than a production updater; cross-process installation and
+GPU component loading are later gates. See the linked experiment report before
+reusing the component store.
 
 The probe APK is written to:
 

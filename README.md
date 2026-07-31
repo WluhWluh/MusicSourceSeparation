@@ -20,8 +20,9 @@ same time so the same APK can make controlled runtime comparisons.
 - `tools/run_android_inference_benchmark.ps1`: the ADB benchmark driver. It
   uploads models and inputs, starts the foreground service, samples device
   state, and pulls JSON results.
-- `tools/prepare_litert_qnn_v79_runtime.py`: prepares the pinned, ignored
-  LiteRT/QAIRT HTP v79 JIT payload after explicit license acceptance.
+- `tools/prepare_litert_qnn_runtime.py`: prepares a pinned, ignored
+  LiteRT/QAIRT HTP v69, v73, v75, v79, or v81 JIT payload after explicit
+  license acceptance.
 - `tools/run_android_qnn_audio_benchmark.ps1`: runs one complete WAV through a
   single QNN session and pulls verified stems, device samples, and QNN IR.
 - `tools/evaluate_mdx_tensor_window.py`: prepares real MDX windows and
@@ -168,8 +169,8 @@ The benchmark service compares these backends:
 - `litert_gpu`: LiteRT GPU with FP16 precision.
 - `litert_gpu_fp32`: LiteRT GPU with FP32 precision.
 - `litert_gpu_bounded`: the audited N=1 bounded OpenCL FP32 runtime.
-- `litert_qnn`: Qualcomm HTP through the QNN JIT plugin in the `qnnV79`
-  flavor.
+- `litert_qnn`: Qualcomm HTP through the QNN JIT plugin in a matching
+  generation-specific QNN flavor.
 
 Build and install the app first. Then define one parameter set so every backend
 uses the same model files and identity:
@@ -206,19 +207,62 @@ outputs/android-benchmark/<device-serial>/<tag>/
 
 These raw files remain ignored; stable conclusions belong in `docs/`.
 
-## Qualcomm HTP v79 research flavor
+## Qualcomm HTP research flavors
 
-The `qnnV79` flavor is an arm64/API 31 research build. It pins LiteRT 2.1.5,
-QAIRT 2.44.0.260225, and HTP v79. Review the QAIRT license before preparing its
+The `qnnV69`, `qnnV73`, `qnnV75`, and `qnnV79` flavors are arm64/API 31
+research builds. They pin LiteRT 2.1.5 and QAIRT 2.44.0.260225 while packaging
+one HTP generation per APK. Review the QAIRT license before preparing an
 ignored local runtime:
 
 ```powershell
 python -m pip install -r requirements-qnn.txt
-python tools/prepare_litert_qnn_v79_runtime.py --accept-qairt-license
+python tools/prepare_litert_qnn_runtime.py `
+  --htp-version 75 `
+  --accept-qairt-license
 
-.\gradlew.bat :app:assembleQnnV79Debug `
+.\gradlew.bat :app:assembleQnnV75Debug `
   -PliteRtAar=<path-to-litert-android-2.1.5-bss.2.aar>
 ```
+
+The runtime preparation tool also has frozen file metadata for HTP v69, v73,
+and v81. Add a Gradle flavor only when that generation is ready for device
+validation. The legacy `prepare_litert_qnn_v79_runtime.py` command remains as
+a v79-compatible entry point.
+
+LiteRT 2.1.5's built-in Qualcomm compatibility checker only recognizes
+SM8550 and newer SoCs. The research harness preserves that checker and adds an
+explicit API 31+ allowlist for QTI/Qualcomm SM8450 and SM8475 so HTP v69 can be
+validated on Snapdragon 8 Gen 1 and 8+ Gen 1 devices. This only bypasses the
+Java preflight gate; successful provider registration, graph compilation, and
+inference remain required before a device result is accepted.
+
+To package the self-contained BrowserStack fixtures for a v75 validation APK,
+prepare the runtime first and then run:
+
+```powershell
+python tools/prepare_app_live_validation_assets.py `
+  --htp-version 75 `
+  --campaign app-live-oneplus-13r-qnn-v75-v1
+```
+
+Fresh installs default to `BrowserStack App Live`; `Local control` remains a
+persistent manual option. App Live assets contain local fixtures and a
+write-only relay credential, so they remain ignored by Git.
+
+App Live validation is fail-closed for QNN. Provider readiness and an `NPU`
+accelerator label are only preflight signals; every QNN tensor and audio stage
+must emit at least one non-empty QNN IR partition. Reports record
+`delegationStatus` as `delegated`, `cpu_fallback`, `provider_unavailable`, or
+`indeterminate`. Each stage uploads its report and IR before validation, then
+uploads an app-process logcat and a progress checkpoint. Device identity also
+includes the full build fingerprint, security patch, vendor properties, APK
+inventory, and hashes of all packaged native libraries.
+
+One BrowserStack Galaxy Tab S8 session emitted no QNN IR and behaved like a
+single-thread CPU fallback. That remote device was unusually difficult to
+connect to and severely laggy, so the observation is not a model-wide Tab S8
+compatibility result. It remains a useful failed-session artifact pending a
+repeat on an independently healthy SM-X706B or another SM8450 tablet.
 
 The full-song driver accepts a canonical 44.1 kHz stereo PCM16 WAV (up to 128
 MiB of PCM), uploads it with the frozen 9662 TFLite model, creates one QNN
@@ -236,11 +280,13 @@ session, samples device state, and pulls SHA-256-verified stems and QNN IR:
 inputs. Tags are write-once on the host so reruns cannot append samples to an
 earlier result directory.
 
-This flavor is not a redistributable runtime package or a claimed Booming SS
-backend. See
+These flavors are not redistributable runtime packages or claimed Booming SS
+backends. See
 [the S25 QNN report](docs/android-litert-qnn-s25-2026-07-29.md) for the
-measured benefits, 145.2 MiB installed runtime cost, and remaining
-qualification gates.
+measured benefits and 145.2 MiB installed runtime cost, and the
+[cross-generation device matrix](docs/android-litert-qnn-device-matrix-2026-07-31.md)
+for the v69 through v79 results, failed delegation boundaries, and closure
+decision.
 
 ## 32-bit x86 LiteRT runtime
 

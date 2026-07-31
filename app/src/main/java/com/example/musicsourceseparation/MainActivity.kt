@@ -1,13 +1,17 @@
 package com.example.musicsourceseparation
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.InputType
 import android.view.Gravity
 import android.view.ViewGroup
+import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
@@ -19,6 +23,11 @@ import android.widget.TextView
 import com.example.musicsourceseparation.audio.AudioMetadata
 import com.example.musicsourceseparation.audio.AudioMetadataReader
 import com.example.musicsourceseparation.audio.AudioPassthroughExporter
+import com.example.musicsourceseparation.benchmark.applive.AppLiveRunOrigin
+import com.example.musicsourceseparation.benchmark.applive.AppLiveValidationBundle
+import com.example.musicsourceseparation.benchmark.applive.AppLiveValidationProfile
+import com.example.musicsourceseparation.benchmark.applive.AppLiveValidationService
+import com.example.musicsourceseparation.benchmark.applive.AppLiveValidationState
 import com.example.musicsourceseparation.model.MdxOnnxSmokeTester
 import com.example.musicsourceseparation.model.MdxModelVariant
 import com.example.musicsourceseparation.model.MdxOneWindowSeparator
@@ -26,6 +35,11 @@ import com.example.musicsourceseparation.model.MdxRangeSeparator
 import com.example.musicsourceseparation.model.MdxRuntimeSettings
 
 class MainActivity : Activity() {
+    private lateinit var appLiveBundleText: TextView
+    private lateinit var appLiveStatusText: TextView
+    private lateinit var appLiveOriginSpinner: Spinner
+    private lateinit var appLiveQuickButton: Button
+    private lateinit var appLiveFullButton: Button
     private lateinit var selectedFileText: TextView
     private lateinit var statusText: TextView
     private lateinit var exportButton: Button
@@ -44,10 +58,33 @@ class MainActivity : Activity() {
     private lateinit var useXnnpackInput: CheckBox
     private var selectedAudioUri: Uri? = null
     private var selectedAudioMetadata: AudioMetadata? = null
+    private val appLiveHandler = Handler(Looper.getMainLooper())
+    private val appLiveRefresh = object : Runnable {
+        override fun run() {
+            refreshAppLiveControls()
+            appLiveHandler.postDelayed(this, APP_LIVE_REFRESH_MS)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val snapshot = AppLiveValidationState.snapshot(this)
+        if (snapshot.running && !AppLiveValidationService.isRunning()) {
+            AppLiveValidationState.markInterrupted(this)
+        }
         setContentView(createContentView())
+        refreshAppLiveControls()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        appLiveHandler.removeCallbacks(appLiveRefresh)
+        appLiveHandler.post(appLiveRefresh)
+    }
+
+    override fun onPause() {
+        appLiveHandler.removeCallbacks(appLiveRefresh)
+        super.onPause()
     }
 
     @Deprecated("The platform callback is sufficient for this dependency-light scaffold.")
@@ -57,9 +94,11 @@ class MainActivity : Activity() {
 
         val uri = data?.data ?: return
         val persistableGranted = data.flags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION != 0
-        val readFlags = data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION
-        if (persistableGranted && readFlags != 0) {
-            runCatching { contentResolver.takePersistableUriPermission(uri, readFlags) }
+        val readPermissionGranted = data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0
+        if (persistableGranted && readPermissionGranted) {
+            runCatching {
+                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
         }
 
         selectedAudioUri = uri
@@ -107,6 +146,7 @@ class MainActivity : Activity() {
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
         }
+        val appLiveControls = createAppLiveControls()
 
         selectedFileText = TextView(this).apply {
             text = getString(R.string.no_file_selected)
@@ -159,6 +199,7 @@ class MainActivity : Activity() {
         }
 
         container.addView(title, spacedLayoutParams(top = 16, density = density))
+        container.addView(appLiveControls, spacedLayoutParams(top = 20, density = density))
         container.addView(selectedFileText, spacedLayoutParams(top = 28, density = density))
         container.addView(selectButton, spacedLayoutParams(top = 20, density = density))
         container.addView(rangeInputs, spacedLayoutParams(top = 20, density = density))
@@ -173,6 +214,150 @@ class MainActivity : Activity() {
 
         return ScrollView(this).apply {
             addView(container)
+        }
+    }
+
+    private fun createAppLiveControls(): LinearLayout {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        val title = TextView(this).apply {
+            text = getString(R.string.app_live_validation_title)
+            textSize = 18f
+            typeface = Typeface.DEFAULT_BOLD
+        }
+        appLiveBundleText = TextView(this).apply {
+            textSize = 13f
+        }
+        val originLabel = TextView(this).apply {
+            text = getString(R.string.app_live_run_origin)
+            textSize = 14f
+        }
+        appLiveOriginSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(
+                this@MainActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                AppLiveRunOrigin.entries.map { it.displayName },
+            )
+            val currentOrigin = AppLiveValidationState.snapshot(this@MainActivity).origin
+            setSelection(AppLiveRunOrigin.entries.indexOf(currentOrigin))
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                    AppLiveValidationState.setOrigin(
+                        this@MainActivity,
+                        AppLiveRunOrigin.entries[position],
+                    )
+                }
+
+                override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+            }
+        }
+        appLiveQuickButton = Button(this).apply {
+            text = getString(R.string.app_live_quick_gate)
+            setOnClickListener { startAppLiveValidation(AppLiveValidationProfile.QUICK) }
+        }
+        appLiveFullButton = Button(this).apply {
+            text = getString(R.string.app_live_full_validation)
+            setOnClickListener { confirmFullValidation() }
+        }
+        val buttonRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(appLiveQuickButton, LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f,
+            ).apply { marginEnd = (8 * resources.displayMetrics.density).toInt() })
+            addView(appLiveFullButton, LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f,
+            ))
+        }
+        appLiveStatusText = TextView(this).apply {
+            textSize = 13f
+        }
+        root.addView(title)
+        root.addView(appLiveBundleText, spacedLayoutParams(top = 6, density = resources.displayMetrics.density))
+        root.addView(originLabel, spacedLayoutParams(top = 10, density = resources.displayMetrics.density))
+        root.addView(appLiveOriginSpinner)
+        root.addView(buttonRow, spacedLayoutParams(top = 8, density = resources.displayMetrics.density))
+        root.addView(appLiveStatusText, spacedLayoutParams(top = 8, density = resources.displayMetrics.density))
+        return root
+    }
+
+    private fun confirmFullValidation() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.app_live_full_validation)
+            .setMessage(R.string.app_live_full_validation_confirmation)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.app_live_run) { _, _ ->
+                startAppLiveValidation(AppLiveValidationProfile.FULL)
+            }
+            .show()
+    }
+
+    private fun startAppLiveValidation(profile: AppLiveValidationProfile) {
+        val bundle = AppLiveValidationBundle.loadCatching(this)
+        if (bundle.isFailure) {
+            appLiveStatusText.text = bundle.exceptionOrNull()?.message ?: getString(R.string.app_live_bundle_missing)
+            return
+        }
+        val snapshot = AppLiveValidationState.snapshot(this)
+        if (snapshot.running || AppLiveValidationService.isRunning()) return
+        AppLiveValidationState.update(
+            this,
+            state = "starting",
+            running = true,
+            profile = profile,
+            runId = "",
+            message = "Starting ${profile.displayName}",
+        )
+        runCatching { AppLiveValidationService.start(this, profile) }
+            .onFailure { error ->
+                AppLiveValidationState.update(
+                    this,
+                    state = "error",
+                    running = false,
+                    profile = profile,
+                    runId = "",
+                    message = error.message ?: error::class.java.simpleName,
+                )
+            }
+        refreshAppLiveControls()
+    }
+
+    private fun refreshAppLiveControls() {
+        if (!::appLiveBundleText.isInitialized) return
+        val bundleResult = AppLiveValidationBundle.loadCatching(this)
+        val snapshot = AppLiveValidationState.snapshot(this)
+        val running = snapshot.running || AppLiveValidationService.isRunning()
+        bundleResult.onSuccess { bundle ->
+            appLiveBundleText.text = getString(
+                R.string.app_live_bundle_ready,
+                bundle.bundleId.take(12),
+                bundle.diagnosticContractVersion,
+                bundle.relay.campaign,
+            ) + "\n" + getString(
+                if (snapshot.origin == AppLiveRunOrigin.BROWSERSTACK) {
+                    R.string.app_live_large_artifacts_enabled
+                } else {
+                    R.string.app_live_large_artifacts_local
+                },
+            )
+        }.onFailure { error ->
+            appLiveBundleText.text = error.message ?: getString(R.string.app_live_bundle_missing)
+        }
+        appLiveQuickButton.isEnabled = bundleResult.isSuccess && !running
+        appLiveFullButton.isEnabled = bundleResult.isSuccess && !running
+        appLiveOriginSpinner.isEnabled = !running
+        appLiveStatusText.text = buildString {
+            append(snapshot.state.uppercase())
+            append(": ")
+            append(snapshot.message)
+            if (snapshot.runId.isNotBlank()) {
+                append("\n")
+                append(snapshot.runId)
+            }
         }
     }
 
@@ -447,5 +632,6 @@ class MainActivity : Activity() {
 
     private companion object {
         const val REQUEST_AUDIO = 1001
+        const val APP_LIVE_REFRESH_MS = 500L
     }
 }

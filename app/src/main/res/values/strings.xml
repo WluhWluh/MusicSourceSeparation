@@ -1,5 +1,15 @@
 <resources>
     <string name="app_name">Music Source Separation</string>
+    <string name="app_live_validation_title">App Live validation</string>
+    <string name="app_live_run_origin">Run origin</string>
+    <string name="app_live_quick_gate">Quick gate</string>
+    <string name="app_live_full_validation">Full validation</string>
+    <string name="app_live_full_validation_confirmation">Run the complete Coast Town QNN validation and upload both output stems?</string>
+    <string name="app_live_run">Run</string>
+    <string name="app_live_bundle_missing">App Live bundle not packaged</string>
+    <string name="app_live_bundle_ready">Bundle %1$s / diagnostics v%2$d - %3$s</string>
+    <string name="app_live_large_artifacts_enabled">Large artifacts: upload</string>
+    <string name="app_live_large_artifacts_local">Large artifacts: keep on device</string>
     <string name="select_audio">Select audio</string>
     <string name="export_wav">Export WAV</string>
     <string name="separate_range">Separate range</string>

@@ -21,7 +21,6 @@ import com.google.ai.edge.litert.Accelerator
 import com.google.ai.edge.litert.BuiltinNpuAcceleratorProvider
 import com.google.ai.edge.litert.CompiledModel
 import com.google.ai.edge.litert.Environment
-import com.google.ai.edge.litert.NpuCompatibilityChecker
 import com.google.ai.edge.litert.TensorBuffer
 import org.json.JSONArray
 import org.json.JSONObject
@@ -48,20 +47,25 @@ class InferenceBenchmarkService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val requestIntent = intent ?: Intent()
         startForeground(NOTIFICATION_ID, notification("Preparing inference benchmark"))
         if (!running.compareAndSet(false, true)) {
-            writeErrorReport("A benchmark is already running.", intent)
+            writeErrorReport("A benchmark is already running.", requestIntent)
+            notifyFinished(requestIntent, succeeded = false)
             stopSelf(startId)
             return START_NOT_STICKY
         }
 
         thread(name = "inference-benchmark") {
+            var succeeded = false
             try {
-                runBenchmark(intent ?: Intent())
+                runBenchmark(requestIntent)
+                succeeded = true
             } catch (error: Throwable) {
-                writeErrorReport(error.stackTraceToString(), intent)
+                writeErrorReport(error.stackTraceToString(), requestIntent)
             } finally {
                 running.set(false)
+                notifyFinished(requestIntent, succeeded)
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf(startId)
             }
@@ -512,11 +516,11 @@ class InferenceBenchmarkService : Service() {
         }
         val boundedGpuRuntime = if (boundedGpu) BoundedGpuRuntime.loadAndValidate() else null
         val npuProvider = if (useQnn) {
-            require(Build.VERSION.SDK_INT >= 31) { "QNN v79 requires Android API 31 or newer." }
+            require(Build.VERSION.SDK_INT >= 31) { "QNN requires Android API 31 or newer." }
             require(Build.SUPPORTED_ABIS.firstOrNull() == "arm64-v8a") {
-                "QNN v79 requires an arm64-v8a process; ABIs=${Build.SUPPORTED_ABIS.toList()}"
+                "QNN requires an arm64-v8a process; ABIs=${Build.SUPPORTED_ABIS.toList()}"
             }
-            BuiltinNpuAcceleratorProvider(this, NpuCompatibilityChecker.Qualcomm).also { provider ->
+            BuiltinNpuAcceleratorProvider(this, QnnDeviceCompatibility.checker).also { provider ->
                 require(provider.isDeviceSupported()) {
                     "LiteRT does not recognize ${Build.SOC_MANUFACTURER}/${Build.SOC_MODEL} as a supported Qualcomm NPU."
                 }
@@ -928,6 +932,17 @@ class InferenceBenchmarkService : Service() {
         )
     }
 
+    private fun notifyFinished(intent: Intent, succeeded: Boolean) {
+        sendBroadcast(
+            Intent(ACTION_FINISHED)
+                .setPackage(packageName)
+                .putExtra(EXTRA_TAG, intent.getStringExtra(EXTRA_TAG))
+                .putExtra(EXTRA_BACKEND, intent.getStringExtra(EXTRA_BACKEND))
+                .putExtra(EXTRA_SUCCEEDED, succeeded),
+            INTERNAL_BENCHMARK_PERMISSION,
+        )
+    }
+
     private fun benchmarkDir(): File = File(getExternalFilesDir(null) ?: filesDir, "benchmark")
         .apply { mkdirs() }
 
@@ -949,28 +964,33 @@ class InferenceBenchmarkService : Service() {
         provider: BuiltinNpuAcceleratorProvider,
         evidenceDir: File,
         detailedProfiling: Boolean,
-    ): JSONObject = JSONObject()
-        .put("provider", "BuiltinNpuAcceleratorProvider")
-        .put("compatibilityChecker", "Qualcomm")
-        .put("deviceSupported", provider.isDeviceSupported())
-        .put("libraryReady", provider.isLibraryReady())
-        .put("libraryDir", provider.getLibraryDir())
-        .put("socManufacturer", Build.SOC_MANUFACTURER)
-        .put("socModel", Build.SOC_MODEL)
-        .put("htpPerformanceMode", "SUSTAINED_HIGH_PERFORMANCE")
-        .put("optimizationLevel", "HTP_OPTIMIZE_FOR_INFERENCE")
-        .put("profiling", if (detailedProfiling) "DETAILED" else "OFF")
-        .put("irJsonDir", evidenceDir.absolutePath)
-        .put("irFiles", JSONArray(
+    ): JSONObject {
+        val evidence = JSONObject()
+            .put("provider", "BuiltinNpuAcceleratorProvider")
+            .put("compatibilityChecker", QnnDeviceCompatibility.CHECKER_NAME)
+            .put("deviceSupported", provider.isDeviceSupported())
+            .put("libraryReady", provider.isLibraryReady())
+            .put("libraryDir", provider.getLibraryDir())
+            .put("socManufacturer", Build.SOC_MANUFACTURER)
+            .put("socModel", Build.SOC_MODEL)
+            .put("htpPerformanceMode", "SUSTAINED_HIGH_PERFORMANCE")
+            .put("optimizationLevel", "HTP_OPTIMIZE_FOR_INFERENCE")
+            .put("profiling", if (detailedProfiling) "DETAILED" else "OFF")
+            .put("irJsonDir", evidenceDir.absolutePath)
+            .put("irFiles", JSONArray(
             evidenceDir.walkTopDown()
                 .filter { it.isFile }
                 .map { file ->
                     JSONObject()
                         .put("path", file.relativeTo(evidenceDir).invariantSeparatorsPath)
                         .put("bytes", file.length())
+                        .put("sha256", sha256(file))
                 }
                 .toList(),
-        ))
+            ))
+        QnnDelegationEvidence.annotate(evidence)
+        return evidence
+    }
 
     private fun runLiteRtModel(
         model: CompiledModel,
@@ -1135,6 +1155,9 @@ class InferenceBenchmarkService : Service() {
 
     companion object {
         const val ACTION_RUN = "com.example.musicsourceseparation.RUN_INFERENCE_BENCHMARK"
+        const val ACTION_FINISHED = "com.example.musicsourceseparation.INFERENCE_BENCHMARK_FINISHED"
+        const val INTERNAL_BENCHMARK_PERMISSION =
+            "com.example.musicsourceseparation.permission.INTERNAL_BENCHMARK"
 
         const val EXTRA_BACKEND = "backend"
         const val EXTRA_ITERATIONS = "iterations"
@@ -1152,6 +1175,7 @@ class InferenceBenchmarkService : Service() {
         const val EXTRA_EXPORT_OUTPUT_TENSOR = "exportOutputTensor"
         const val EXTRA_AUDIO_FILE = "audioFile"
         const val EXTRA_MODEL_OUTPUT_SCALE = "modelOutputScale"
+        const val EXTRA_SUCCEEDED = "succeeded"
 
         const val DEFAULT_ONNX_MODEL = "UVR_MDXNET_9482.onnx"
         const val DEFAULT_LITERT_MODEL = "UVR_MDXNET_9482_float32.tflite"

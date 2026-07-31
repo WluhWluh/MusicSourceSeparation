@@ -28,6 +28,8 @@ same time so the same APK can make controlled runtime comparisons.
   GPU results for UVR MDXNET 9482.
 - `docs/android-litert-x86-build-2026-07-20.md`: the original 32-bit x86 LiteRT
   build investigation and emulator results.
+- `docs/android-downloadable-litert-core-2026-07-31.md`: the native-runtime
+  download and absolute-path loading experiment.
 - `docs/progress.md`: the chronological MVP development log. It is useful for
   history, but the focused benchmark reports above are the current result
   summaries.
@@ -71,20 +73,50 @@ The benchmark driver looks for ADB at the standard Windows SDK location,
 From the repository root on Windows:
 
 ```powershell
-.\gradlew.bat testDebugUnitTest assembleDebug
+.\gradlew.bat testStandardDebugUnitTest assembleStandardDebug
 ```
 
 The debug APK is written to:
 
 ```text
-app/build/outputs/apk/debug/app-debug.apk
+app/build/outputs/apk/standard/debug/app-standard-debug.apk
 ```
 
 For the API 26 pure x86 emulator, use the non-streaming installer if the
 streamed install stalls:
 
 ```powershell
-adb -s emulator-5554 install -r --no-streaming app/build/outputs/apk/debug/app-debug.apk
+adb -s emulator-5554 install -r --no-streaming `
+  app/build/outputs/apk/standard/debug/app-standard-debug.apk
+```
+
+### Downloadable LiteRT core probe
+
+The `downloadableCore` flavor compiles against the pure API AAR from the
+[`downloadable-runtime-v2.1.5-bss.2-exp.1`](https://github.com/WluhWluh/bss-litert-android/releases/tag/downloadable-runtime-v2.1.5-bss.2-exp.1)
+prerelease. The AAR must be supplied explicitly and must have SHA-256
+`2cdac3840bd664109c151da7737811f6c1e8004ab140c4b369f99b339623f0de`.
+
+```powershell
+$apiAar = "<path-to-litert-api-2.1.5-bss.2-downloadable.aar>"
+Get-FileHash -Algorithm SHA256 $apiAar
+.\gradlew.bat testDownloadableCoreDebugUnitTest `
+  assembleDownloadableCoreDebug --no-daemon `
+  -PliteRtApiAar=$apiAar
+```
+
+This APK contains no LiteRT native runtime. A LiteRT benchmark downloads the
+fixed CPU bundle for the current process ABI, verifies the bundle and inner
+files, installs them under `noBackupFilesDir`, and preloads `libLiteRt.so` by
+absolute path. This is an experiment rather than a production updater: the
+current unmodified API AAR works on the tested Android 12 and newer devices but
+still calls `System.loadLibrary` in a way that fails on the API 26 emulator.
+See the linked experiment report before reusing the loader.
+
+The probe APK is written to:
+
+```text
+app/build/outputs/apk/downloadableCore/debug/app-downloadableCore-debug.apk
 ```
 
 ## Desktop reference pipeline

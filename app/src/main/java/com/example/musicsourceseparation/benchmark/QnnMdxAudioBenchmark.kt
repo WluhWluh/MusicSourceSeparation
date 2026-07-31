@@ -14,7 +14,6 @@ import com.google.ai.edge.litert.Accelerator
 import com.google.ai.edge.litert.BuiltinNpuAcceleratorProvider
 import com.google.ai.edge.litert.CompiledModel
 import com.google.ai.edge.litert.Environment
-import com.google.ai.edge.litert.NpuCompatibilityChecker
 import com.google.ai.edge.litert.TensorBuffer
 import org.json.JSONArray
 import org.json.JSONObject
@@ -42,9 +41,9 @@ internal class QnnMdxAudioBenchmark(
         onPhase: (String) -> Unit = {},
         onProgress: (completed: Int, total: Int) -> Unit = { _, _ -> },
     ): JSONObject {
-        require(Build.VERSION.SDK_INT >= 31) { "QNN v79 requires Android API 31 or newer." }
+        require(Build.VERSION.SDK_INT >= 31) { "QNN requires Android API 31 or newer." }
         require(Build.SUPPORTED_ABIS.firstOrNull() == "arm64-v8a") {
-            "QNN v79 requires an arm64-v8a process; ABIs=${Build.SUPPORTED_ABIS.toList()}"
+            "QNN requires an arm64-v8a process; ABIs=${Build.SUPPORTED_ABIS.toList()}"
         }
         require(modelFile.isFile && modelFile.length() > 0L) {
             "Model file is missing: ${modelFile.absolutePath}"
@@ -114,7 +113,7 @@ internal class QnnMdxAudioBenchmark(
         var completedWindows = 0
 
         onPhase("Preparing Qualcomm HTP graph")
-        val provider = BuiltinNpuAcceleratorProvider(context, NpuCompatibilityChecker.Qualcomm)
+        val provider = BuiltinNpuAcceleratorProvider(context, QnnDeviceCompatibility.checker)
         require(provider.isDeviceSupported()) {
             "LiteRT does not recognize ${Build.SOC_MANUFACTURER}/${Build.SOC_MODEL} as a supported Qualcomm NPU."
         }
@@ -278,6 +277,26 @@ internal class QnnMdxAudioBenchmark(
             fileEvidence(instrumentalFile, instrumentalPcmStats)
         }
         val endToEndWallMs = nanosToMs(SystemClock.elapsedRealtimeNanos() - totalStarted)
+        val backendEvidence = JSONObject()
+            .put("provider", "BuiltinNpuAcceleratorProvider")
+            .put("compatibilityChecker", QnnDeviceCompatibility.CHECKER_NAME)
+            .put("deviceSupported", provider.isDeviceSupported())
+            .put("libraryReady", provider.isLibraryReady())
+            .put("libraryDir", provider.getLibraryDir())
+            .put("socManufacturer", Build.SOC_MANUFACTURER)
+            .put("socModel", Build.SOC_MODEL)
+            .put("htpPerformanceMode", "SUSTAINED_HIGH_PERFORMANCE")
+            .put("optimizationLevel", "HTP_OPTIMIZE_FOR_INFERENCE")
+            .put("profiling", "OFF")
+            .put("irJsonDir", evidenceDir.absolutePath)
+            .put("irFiles", JSONArray(evidenceDir.walkTopDown()
+                .filter { it.isFile }
+                .map { file -> JSONObject()
+                    .put("path", file.relativeTo(evidenceDir).invariantSeparatorsPath)
+                    .put("bytes", file.length())
+                    .put("sha256", sha256(file)) }
+                .toList()))
+        QnnDelegationEvidence.annotate(backendEvidence)
         return JSONObject()
             .put("contract", JSONObject()
                 .put("contractId", CONTRACT_ID)
@@ -341,24 +360,7 @@ internal class QnnMdxAudioBenchmark(
             .put("outputs", JSONObject()
                 .put("vocals", vocalsEvidence)
                 .put("instrumental", instrumentalEvidence))
-            .put("backendEvidence", JSONObject()
-                .put("provider", "BuiltinNpuAcceleratorProvider")
-                .put("compatibilityChecker", "Qualcomm")
-                .put("deviceSupported", provider.isDeviceSupported())
-                .put("libraryReady", provider.isLibraryReady())
-                .put("libraryDir", provider.getLibraryDir())
-                .put("socManufacturer", Build.SOC_MANUFACTURER)
-                .put("socModel", Build.SOC_MODEL)
-                .put("htpPerformanceMode", "SUSTAINED_HIGH_PERFORMANCE")
-                .put("optimizationLevel", "HTP_OPTIMIZE_FOR_INFERENCE")
-                .put("profiling", "OFF")
-                .put("irJsonDir", evidenceDir.absolutePath)
-                .put("irFiles", JSONArray(evidenceDir.walkTopDown()
-                    .filter { it.isFile }
-                    .map { file -> JSONObject()
-                        .put("path", file.relativeTo(evidenceDir).invariantSeparatorsPath)
-                        .put("bytes", file.length()) }
-                    .toList())))
+            .put("backendEvidence", backendEvidence)
     }
 
     private fun DecodedPcmAudio.toStereoFloatContextWindow(

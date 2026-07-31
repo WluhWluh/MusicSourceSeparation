@@ -16,6 +16,8 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.os.Process
 import android.os.SystemClock
+import com.example.musicsourceseparation.BuildConfig
+import com.example.musicsourceseparation.runtime.DownloadableLiteRtCore
 import com.google.ai.edge.litert.Accelerator
 import com.google.ai.edge.litert.CompiledModel
 import com.google.ai.edge.litert.Environment
@@ -71,6 +73,13 @@ class InferenceBenchmarkService : Service() {
             return
         }
         val backend = BenchmarkBackend.from(intent.getStringExtra(EXTRA_BACKEND))
+        val downloadableRuntime = if (
+            BuildConfig.DOWNLOADABLE_LITERT_CORE && backend != BenchmarkBackend.ORT
+        ) {
+            DownloadableLiteRtCore.ensureLoaded(this)
+        } else {
+            null
+        }
         val iterations = intent.getIntExtra(EXTRA_ITERATIONS, DEFAULT_ITERATIONS).coerceIn(1, 100)
         val warmups = intent.getIntExtra(EXTRA_WARMUPS, DEFAULT_WARMUPS).coerceIn(0, 20)
         val threads = intent.getIntExtra(EXTRA_THREADS, DEFAULT_THREADS).coerceIn(1, 16)
@@ -110,24 +119,23 @@ class InferenceBenchmarkService : Service() {
         }
 
         val reportFile = File(reportsDir(), "$tag.json")
-        File(reportsDir(), LATEST_REPORT).writeText(
-            baseReport(
-                tag = tag,
-                backend = backend,
-                modelId = modelId,
-                modelFile = modelFile,
-                iterations = iterations,
-                warmups = warmups,
-                threads = threads,
-                seed = seed,
-                inputSource = inputFile?.absolutePath ?: "generated",
-                height = height,
-                width = width,
-            )
-                .put("status", "running")
-                .put("reportPath", reportFile.absolutePath)
-                .toString(2),
+        val runningReport = baseReport(
+            tag = tag,
+            backend = backend,
+            modelId = modelId,
+            modelFile = modelFile,
+            iterations = iterations,
+            warmups = warmups,
+            threads = threads,
+            seed = seed,
+            inputSource = inputFile?.absolutePath ?: "generated",
+            height = height,
+            width = width,
         )
+            .put("status", "running")
+            .put("reportPath", reportFile.absolutePath)
+        downloadableRuntime?.let { runningReport.put("downloadableRuntime", it) }
+        File(reportsDir(), LATEST_REPORT).writeText(runningReport.toString(2))
         updateNotification("Running ${backend.id}")
 
         val elementCount = elementCount(height, width)
@@ -231,6 +239,7 @@ class InferenceBenchmarkService : Service() {
             .put("processEnd", processEnd)
             .put("deviceStart", deviceStart)
             .put("deviceEnd", deviceEnd)
+        downloadableRuntime?.let { report.put("downloadableRuntime", it) }
 
         reportFile.writeText(report.toString(2))
         File(reportsDir(), LATEST_REPORT).writeText(report.toString(2))
@@ -687,6 +696,7 @@ class InferenceBenchmarkService : Service() {
             .put("backend", backend)
             .put("message", message)
             .put("device", JSONObject().put("model", Build.MODEL).put("sdk", Build.VERSION.SDK_INT))
+        DownloadableLiteRtCore.lastAttempt()?.let { report.put("downloadableRuntime", it) }
         val reportFile = File(reportsDir(), "$tag.json")
         reportFile.writeText(report.toString(2))
         File(reportsDir(), LATEST_REPORT).writeText(report.toString(2))

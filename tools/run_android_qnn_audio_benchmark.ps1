@@ -127,9 +127,9 @@ function Get-DeviceSha256([string]$Path) {
 }
 
 function Start-HostActivity {
+    Invoke-Adb shell input keyevent KEYCODE_WAKEUP
+    Invoke-Adb shell wm dismiss-keyguard
     Invoke-Adb shell am start -W -n "$package/.MainActivity" | Out-Null
-    Start-Sleep -Milliseconds 500
-    Invoke-Adb shell input keyevent KEYCODE_HOME
     Start-Sleep -Milliseconds 500
 }
 

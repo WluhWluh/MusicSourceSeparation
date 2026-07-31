@@ -314,6 +314,7 @@ $tensorBenchmark = @{
   Iterations = 20
   Warmups = 2
   Threads = 4
+  KeepActivityForeground = $true
 }
 
 .\tools\run_android_inference_benchmark.ps1 @tensorBenchmark `

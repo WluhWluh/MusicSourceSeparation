@@ -203,6 +203,7 @@ $benchmark = @{
   Iterations = 20
   Warmups = 2
   Threads = 4
+  KeepActivityForeground = $true
 }
 
 .\tools\run_android_inference_benchmark.ps1 @benchmark `
@@ -224,6 +225,8 @@ and rejects an existing local tag. The completed device report must match the
 contract, ONNX, LiteRT, input, source revision, dirty state, and runtime AAR
 identities before the runner accepts it. The runner also hashes the installed
 base APK and requires it to match `AppApk` exactly.
+Foreground mode wakes and unlocks the test device before launching the Activity;
+this is required for reliable shell-started FGS execution on Android 15.
 
 Host-side reports and thermal/battery samples are written below:
 

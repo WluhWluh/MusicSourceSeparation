@@ -182,6 +182,10 @@ function Reset-BenchmarkHost {
     # Samsung's Android 15 build rejects a shell-started FGS while force-stop has
     # left the package in the stopped state. Launching the exported activity once
     # clears that state while still giving every benchmark a fresh app process.
+    if ($KeepActivityForeground) {
+        Invoke-Adb shell input keyevent KEYCODE_WAKEUP
+        Invoke-Adb shell wm dismiss-keyguard
+    }
     Invoke-Adb shell am start -W -n "$package/.MainActivity"
     Start-Sleep -Milliseconds 500
     if (-not $KeepActivityForeground) {
@@ -256,6 +260,10 @@ $hostIdentity | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $s
 if ($UploadModels) {
     Invoke-Adb shell am force-stop $package
     Invoke-Adb shell rm -rf $externalRoot
+    if ($KeepActivityForeground) {
+        Invoke-Adb shell input keyevent KEYCODE_WAKEUP
+        Invoke-Adb shell wm dismiss-keyguard
+    }
     Invoke-Adb shell am start -W -n "$package/.MainActivity"
     Start-Sleep -Milliseconds 500
     Invoke-Adb shell input keyevent KEYCODE_HOME

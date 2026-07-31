@@ -894,6 +894,7 @@ class InferenceBenchmarkService : Service() {
         return JSONObject()
             .put("wallMeanMs", wallMs.average())
             .put("wallMedianMs", sorted.percentile(0.5))
+            .put("wallP95Ms", sorted.percentile(0.95))
             .put("wallMinMs", sorted.firstOrNull() ?: 0.0)
             .put("wallMaxMs", sorted.lastOrNull() ?: 0.0)
             .put("cpuMeanMs", cpuMs.average())

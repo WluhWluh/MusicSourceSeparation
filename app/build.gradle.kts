@@ -3,6 +3,7 @@ plugins {
 }
 
 val liteRtAar = providers.gradleProperty("liteRtAar").orNull
+val qnnHtpVersions = listOf(69, 73, 75, 79)
 
 android {
     namespace = "com.example.musicsourceseparation"
@@ -26,11 +27,13 @@ android {
         create("standard") {
             dimension = "runtime"
         }
-        create("qnnV79") {
-            dimension = "runtime"
-            minSdk = 31
-            ndk {
-                abiFilters += "arm64-v8a"
+        qnnHtpVersions.forEach { htpVersion ->
+            create("qnnV$htpVersion") {
+                dimension = "runtime"
+                minSdk = 31
+                ndk {
+                    abiFilters += "arm64-v8a"
+                }
             }
         }
     }
@@ -39,9 +42,11 @@ android {
         getByName("main") {
             assets.directories.add("../models/uvr-mdx")
         }
-        getByName("qnnV79") {
-            jniLibs.directories.add("../.tmp/litert-qnn-v79-runtime/jni")
-            assets.directories.add("../.tmp/litert-qnn-v79-runtime/licenses")
+        qnnHtpVersions.forEach { htpVersion ->
+            getByName("qnnV$htpVersion") {
+                jniLibs.directories.add("../.tmp/litert-qnn-v$htpVersion-runtime/jni")
+                assets.directories.add("../.tmp/litert-qnn-v$htpVersion-runtime/licenses")
+            }
         }
     }
 

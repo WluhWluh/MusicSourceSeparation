@@ -8,6 +8,8 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.file.AtomicMoveNotSupportedException
@@ -267,8 +269,11 @@ internal object DownloadableLiteRtCore {
         destination: File,
         artifact: DownloadableLiteRtCoreArtifact,
     ) {
+        var manifest: ByteArray? = null
+        var libraryResult: StreamCopyResult? = null
+        val seen = mutableSetOf<String>()
+        val libraryFile = File(destination, DownloadableLiteRtCoreArtifact.LIBRARY_NAME)
         ZipFile(bundle).use { archive ->
-            val files = mutableMapOf<String, ByteArray>()
             val entries = archive.entries()
             while (entries.hasMoreElements()) {
                 val entry = entries.nextElement()
@@ -276,27 +281,38 @@ internal object DownloadableLiteRtCore {
                 require(entry.name in setOf(MANIFEST_NAME, DownloadableLiteRtCoreArtifact.LIBRARY_NAME)) {
                     "Unexpected runtime bundle entry: ${entry.name}"
                 }
-                require(entry.name !in files) { "Duplicate runtime bundle entry: ${entry.name}" }
-                val maximum = if (entry.name == MANIFEST_NAME) {
-                    MAX_MANIFEST_BYTES.toLong()
-                } else {
-                    artifact.libraryBytes
+                require(seen.add(entry.name)) { "Duplicate runtime bundle entry: ${entry.name}" }
+                archive.getInputStream(entry).use { input ->
+                    if (entry.name == MANIFEST_NAME) {
+                        manifest = readBounded(input, MAX_MANIFEST_BYTES.toLong())
+                    } else {
+                        FileOutputStream(libraryFile).use { output ->
+                            libraryResult = copyBoundedAndHash(
+                                input = input,
+                                output = output,
+                                maximum = artifact.libraryBytes,
+                            )
+                            output.fd.sync()
+                        }
+                    }
                 }
-                files[entry.name] = archive.getInputStream(entry).use { readBounded(it, maximum) }
             }
-            require(files.keys == setOf(MANIFEST_NAME, DownloadableLiteRtCoreArtifact.LIBRARY_NAME)) {
+            require(seen == setOf(MANIFEST_NAME, DownloadableLiteRtCoreArtifact.LIBRARY_NAME)) {
                 "Runtime bundle file set is incomplete"
             }
-            val manifest = requireNotNull(files[MANIFEST_NAME])
-            val library = requireNotNull(files[DownloadableLiteRtCoreArtifact.LIBRARY_NAME])
-            require(sha256(manifest) == artifact.manifestSha256) { "Manifest SHA-256 mismatch" }
-            require(validateManifest(manifest.toString(Charsets.UTF_8), artifact)) {
+            val verifiedManifest = requireNotNull(manifest)
+            val verifiedLibrary = requireNotNull(libraryResult)
+            require(sha256(verifiedManifest) == artifact.manifestSha256) {
+                "Manifest SHA-256 mismatch"
+            }
+            require(validateManifest(verifiedManifest.toString(Charsets.UTF_8), artifact)) {
                 "Runtime manifest contract mismatch"
             }
-            require(library.size.toLong() == artifact.libraryBytes) { "Library size mismatch" }
-            require(sha256(library) == artifact.librarySha256) { "Library SHA-256 mismatch" }
-            writeSynced(File(destination, MANIFEST_NAME), manifest)
-            writeSynced(File(destination, DownloadableLiteRtCoreArtifact.LIBRARY_NAME), library)
+            require(verifiedLibrary.byteSize == artifact.libraryBytes) { "Library size mismatch" }
+            require(verifiedLibrary.sha256 == artifact.librarySha256) {
+                "Library SHA-256 mismatch"
+            }
+            writeSynced(File(destination, MANIFEST_NAME), verifiedManifest)
         }
     }
 
@@ -387,5 +403,32 @@ internal object DownloadableLiteRtCore {
     private data class Installation(
         val library: File,
         val downloaded: Boolean,
+    )
+}
+
+internal data class StreamCopyResult(
+    val byteSize: Long,
+    val sha256: String,
+)
+
+internal fun copyBoundedAndHash(
+    input: InputStream,
+    output: OutputStream,
+    maximum: Long,
+): StreamCopyResult {
+    val digest = MessageDigest.getInstance("SHA-256")
+    val buffer = ByteArray(64 * 1024)
+    var total = 0L
+    while (true) {
+        val count = input.read(buffer)
+        if (count < 0) break
+        total += count
+        require(total <= maximum) { "Runtime archive entry exceeds expected size" }
+        digest.update(buffer, 0, count)
+        output.write(buffer, 0, count)
+    }
+    return StreamCopyResult(
+        byteSize = total,
+        sha256 = digest.digest().joinToString("") { byte -> "%02x".format(byte) },
     )
 }

@@ -1,10 +1,45 @@
 package com.example.musicsourceseparation.runtime
 
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class DownloadableLiteRtCoreArtifactTest {
+    @Test
+    fun streamsAndHashesRuntimeEntriesWithinTheBound() {
+        val source = ByteArray(256 * 1024 + 17) { index -> (index % 251).toByte() }
+        val output = ByteArrayOutputStream()
+
+        val result = copyBoundedAndHash(
+            input = ByteArrayInputStream(source),
+            output = output,
+            maximum = source.size.toLong(),
+        )
+
+        assertEquals(source.size.toLong(), result.byteSize)
+        assertArrayEquals(source, output.toByteArray())
+        assertEquals(
+            MessageDigest.getInstance("SHA-256").digest(source)
+                .joinToString("") { byte -> "%02x".format(byte) },
+            result.sha256,
+        )
+    }
+
+    @Test
+    fun rejectsRuntimeEntriesThatExceedTheBound() {
+        assertThrows(IllegalArgumentException::class.java) {
+            copyBoundedAndHash(
+                input = ByteArrayInputStream(ByteArray(65 * 1024)),
+                output = ByteArrayOutputStream(),
+                maximum = 64 * 1024L,
+            )
+        }
+    }
+
     @Test
     fun freezesExplicitLoaderReleaseContract() {
         assertEquals("2.1.5-bss.2-exp.2", DownloadableLiteRtCoreArtifact.RELEASE_VERSION)

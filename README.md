@@ -172,32 +172,58 @@ The benchmark service compares these backends:
 - `litert_qnn`: Qualcomm HTP through the QNN JIT plugin in a matching
   generation-specific QNN flavor.
 
-Build and install the app first. Then define one parameter set so every backend
-uses the same model files and identity:
+Build from a clean revision and embed the benchmark source/runtime identity in
+the APK. The runtime AAR passed to the runner must be the same file used by
+Gradle:
+
+```powershell
+$revision = (git rev-parse HEAD).Trim()
+$runtimeAar = "<path-to-litert-android-2.1.5-bss.2.aar>"
+.\gradlew.bat :app:assembleStandardDebug `
+  "-PliteRtAar=$runtimeAar" `
+  "-PbenchmarkSourceRevision=$revision" `
+  -PbenchmarkSourceDirty=false `
+  -PbenchmarkRuntimeId=litert-android-2.1.5-bss.2
+```
+
+Install that APK, then define one frozen parameter set for the 9662 calibration
+model. Tensor dimensions come from the versioned contract and cannot be
+overridden on the command line:
 
 ```powershell
 $benchmark = @{
   Serial = "DEVICE_SERIAL"
-  ModelId = "uvr_mdxnet_9482"
-  OnnxModel = "models/uvr-mdx/UVR_MDXNET_9482.onnx"
-  LiteRtModel = "<path-to-UVR_MDXNET_9482_static_float32.tflite>"
-  Height = 2048
-  Width = 256
-  Threads = 8
+  ModelId = "uvr_mdxnet_3_9662"
+  ContractFile = "app/src/main/assets/benchmark-contracts/uvr_mdxnet_3_9662.json"
+  OnnxModel = "models/uvr-mdx-candidates/trvlvr-all-public-uvr-models/UVR_MDXNET_3_9662.onnx"
+  LiteRtModel = "<path-to-UVR_MDXNET_3_9662_static_float32.tflite>"
+  InputFile = "<path-to-frozen-input-nchw-f32.bin>"
+  AppApk = "app/build/outputs/apk/standard/debug/app-standard-debug.apk"
+  RuntimeArtifact = $runtimeAar
+  Iterations = 20
+  Warmups = 2
+  Threads = 4
 }
 
 .\tools\run_android_inference_benchmark.ps1 @benchmark `
-  -Backend ort -UploadModels -Tag 9482-ort
+  -Backend ort -UploadModels -Tag 9662-ort
 .\tools\run_android_inference_benchmark.ps1 @benchmark `
-  -Backend litert_cpu -Tag 9482-litert-cpu
+  -Backend litert_cpu -Tag 9662-litert-cpu
 .\tools\run_android_inference_benchmark.ps1 @benchmark `
-  -Backend litert_gpu_fp32 -Tag 9482-litert-gpu-fp32
+  -Backend litert_gpu_bounded -Tag 9662-litert-gpu-bounded
 ```
 
 Run ORT first when numerical comparison is required. The service stores its
-output as the device-side reference used by subsequent LiteRT runs. Add
-`-InputFile <path>` together with `-UploadModels` to upload a little-endian
-float32 NCHW tensor instead of using the deterministic generated input.
+output as the device-side reference used by subsequent LiteRT runs. The first
+`-UploadModels` run uploads the contract, both model artifacts, and the required
+little-endian float32 NCHW input. It also clears any previous device-side ORT
+reference, so do not use `-UploadModels` again within the same comparison batch.
+
+Every invocation writes `host-identity.json` with APK/runtime/model/input hashes
+and rejects an existing local tag. The completed device report must match the
+contract, ONNX, LiteRT, input, source revision, dirty state, and runtime AAR
+identities before the runner accepts it. The runner also hashes the installed
+base APK and requires it to match `AppApk` exactly.
 
 Host-side reports and thermal/battery samples are written below:
 
@@ -220,9 +246,21 @@ python tools/prepare_litert_qnn_runtime.py `
   --htp-version 75 `
   --accept-qairt-license
 
+$revision = (git rev-parse HEAD).Trim()
+$runtimeAar = "<path-to-litert-android-2.1.5-bss.2.aar>"
 .\gradlew.bat :app:assembleQnnV75Debug `
-  -PliteRtAar=<path-to-litert-android-2.1.5-bss.2.aar>
+  "-PliteRtAar=$runtimeAar" `
+  "-PbenchmarkSourceRevision=$revision" `
+  -PbenchmarkSourceDirty=false `
+  -PbenchmarkRuntimeId=litert-android-2.1.5-bss.2
 ```
+
+For a QNN tensor run, install the generated QNN APK and use the same frozen
+arguments as the CPU/GPU batch, including `ContractFile`, `InputFile`,
+`RuntimeArtifact`, `AcceleratorBundleManifest`, and the QNN `AppApk`. Run ORT
+with `-UploadModels` first on that device, then invoke `-Backend litert_qnn`; a
+result is accepted only when
+the report records verified delegation and a frozen accelerator bundle hash.
 
 The runtime preparation tool also has frozen file metadata for HTP v69, v73,
 and v81. Add a Gradle flavor only when that generation is ready for device
@@ -272,13 +310,18 @@ session, samples device state, and pulls SHA-256-verified stems and QNN IR:
 .\tools\run_android_qnn_audio_benchmark.ps1 `
   -Serial <adb-serial> `
   -SourceAudio <path-to-canonical-pcm16-test.wav> `
+  -ContractFile app/src/main/assets/benchmark-contracts/uvr_mdxnet_3_9662.json `
+  -OnnxModel models/uvr-mdx-candidates/trvlvr-all-public-uvr-models/UVR_MDXNET_3_9662.onnx `
   -LiteRtModel <path-to-UVR_MDXNET_3_9662_static_float32.tflite> `
+  -AppApk app/build/outputs/apk/qnnV79/debug/app-qnnV79-debug.apk `
+  -RuntimeArtifact $runtimeAar `
+  -AcceleratorBundleManifest .tmp/litert-qnn-v79-runtime/runtime-manifest.json `
   -Tag qnn-full-song
 ```
 
-`-ReuseDeviceFiles` still compares the local and device SHA-256 values for both
-inputs. Tags are write-once on the host so reruns cannot append samples to an
-earlier result directory.
+`-ReuseDeviceFiles` compares the contract, ONNX, LiteRT model, and audio SHA-256
+values on both host and device. Tags are write-once on the host so reruns cannot
+append samples to an earlier result directory.
 
 These flavors are not redistributable runtime packages or claimed Booming SS
 backends. See

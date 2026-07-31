@@ -287,13 +287,40 @@ python tools/prepare_litert_qnn_v79_runtime.py --accept-qairt-license
 Build with the audited bounded LiteRT core when GPU comparisons are required:
 
 ```powershell
+$revision = (git rev-parse HEAD).Trim()
+$runtimeAar = "<path-to-litert-android-2.1.5-bss.2.aar>"
 .\gradlew.bat :app:assembleQnnV79Debug `
-  -PliteRtAar=<path-to-litert-android-2.1.5-bss.2.aar>
+  "-PliteRtAar=$runtimeAar" `
+  "-PbenchmarkSourceRevision=$revision" `
+  -PbenchmarkSourceDirty=false `
+  -PbenchmarkRuntimeId=litert-android-2.1.5-bss.2
 ```
 
 Run a tensor test with `run_android_inference_benchmark.ps1`. Add
 `-ExportOutputTensor` to retain an exact NCHW output for reconstruction, and
 use `evaluate_mdx_tensor_window.py` to generate or compare audio windows.
+
+```powershell
+$tensorBenchmark = @{
+  Serial = "<adb-serial>"
+  ModelId = "uvr_mdxnet_3_9662"
+  ContractFile = "app/src/main/assets/benchmark-contracts/uvr_mdxnet_3_9662.json"
+  OnnxModel = "models/uvr-mdx-candidates/trvlvr-all-public-uvr-models/UVR_MDXNET_3_9662.onnx"
+  LiteRtModel = "<path-to-UVR_MDXNET_3_9662_static_float32.tflite>"
+  InputFile = "<path-to-frozen-input-nchw-f32.bin>"
+  AppApk = "app/build/outputs/apk/qnnV79/debug/app-qnnV79-debug.apk"
+  RuntimeArtifact = $runtimeAar
+  AcceleratorBundleManifest = ".tmp/litert-qnn-v79-runtime/runtime-manifest.json"
+  Iterations = 20
+  Warmups = 2
+  Threads = 4
+}
+
+.\tools\run_android_inference_benchmark.ps1 @tensorBenchmark `
+  -Backend ort -UploadModels -Tag s25-9662-ort-reference
+.\tools\run_android_inference_benchmark.ps1 @tensorBenchmark `
+  -Backend litert_qnn -Tag s25-9662-qnn-v79
+```
 
 Run the full-song path:
 
@@ -301,7 +328,12 @@ Run the full-song path:
 .\tools\run_android_qnn_audio_benchmark.ps1 `
   -Serial <adb-serial> `
   -SourceAudio <path-to-canonical-44.1-kHz-stereo-pcm16-wav> `
+  -ContractFile app/src/main/assets/benchmark-contracts/uvr_mdxnet_3_9662.json `
+  -OnnxModel models/uvr-mdx-candidates/trvlvr-all-public-uvr-models/UVR_MDXNET_3_9662.onnx `
   -LiteRtModel <path-to-UVR_MDXNET_3_9662_static_float32.tflite> `
+  -AppApk app/build/outputs/apk/qnnV79/debug/app-qnnV79-debug.apk `
+  -RuntimeArtifact $runtimeAar `
+  -AcceleratorBundleManifest .tmp/litert-qnn-v79-runtime/runtime-manifest.json `
   -Tag s25-qnn-full-song
 ```
 

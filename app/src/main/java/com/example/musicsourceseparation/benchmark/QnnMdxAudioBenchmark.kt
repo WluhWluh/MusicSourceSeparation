@@ -30,7 +30,12 @@ import kotlin.math.roundToInt
 
 internal class QnnMdxAudioBenchmark(
     private val context: Context,
-    private val config: MdxDspConfig = MdxDspConfig(),
+    private val config: MdxDspConfig,
+    private val contractId: String,
+    private val inputName: String,
+    private val outputName: String,
+    private val expectedModelSha256: String,
+    private val expectedModelOutputScale: Float,
 ) {
     fun run(
         modelFile: File,
@@ -51,8 +56,8 @@ internal class QnnMdxAudioBenchmark(
         require(audioFile.isFile && audioFile.length() > 0L) {
             "Audio file is missing: ${audioFile.absolutePath}"
         }
-        require(modelOutputScale == MODEL_OUTPUT_SCALE) {
-            "9662 model output scale must be $MODEL_OUTPUT_SCALE."
+        require(modelOutputScale == expectedModelOutputScale) {
+            "Model output scale must match contract value $expectedModelOutputScale."
         }
         val inputWav = validateCanonicalPcm16Wav(audioFile)
 
@@ -80,8 +85,8 @@ internal class QnnMdxAudioBenchmark(
         }
 
         val modelSha256 = measured("modelHash") { sha256(modelFile) }
-        require(modelSha256 == MODEL_SHA256) {
-            "QNN audio benchmark requires the frozen 9662 artifact, got $modelSha256."
+        require(modelSha256 == expectedModelSha256) {
+            "QNN audio benchmark model does not match the loaded contract, got $modelSha256."
         }
         val sourceSha256 = measured("sourceHash") { sha256(audioFile) }
 
@@ -159,10 +164,10 @@ internal class QnnMdxAudioBenchmark(
                 "Expected one input and one output, got ${inputBuffers.size}/${outputBuffers.size}."
             }
             val expectedShape = listOf(1, config.dimF, config.dimT, MdxDspConfig.STEM_COMPLEX_CHANNELS)
-            val inputShape = requireNotNull(model.getInputTensorType(INPUT_NAME).layout) {
+            val inputShape = requireNotNull(model.getInputTensorType(inputName).layout) {
                 "LiteRT input tensor has no layout."
             }.dimensions
-            val outputShape = requireNotNull(model.getOutputTensorType(OUTPUT_NAME).layout) {
+            val outputShape = requireNotNull(model.getOutputTensorType(outputName).layout) {
                 "LiteRT output tensor has no layout."
             }.dimensions
             require(inputShape == expectedShape && outputShape == expectedShape) {
@@ -283,6 +288,7 @@ internal class QnnMdxAudioBenchmark(
             .put("deviceSupported", provider.isDeviceSupported())
             .put("libraryReady", provider.isLibraryReady())
             .put("libraryDir", provider.getLibraryDir())
+            .put("nativeLibraries", QnnRuntimeLibraryEvidence.collect(provider.getLibraryDir()))
             .put("socManufacturer", Build.SOC_MANUFACTURER)
             .put("socModel", Build.SOC_MODEL)
             .put("htpPerformanceMode", "SUSTAINED_HIGH_PERFORMANCE")
@@ -299,7 +305,7 @@ internal class QnnMdxAudioBenchmark(
         QnnDelegationEvidence.annotate(backendEvidence)
         return JSONObject()
             .put("contract", JSONObject()
-                .put("contractId", CONTRACT_ID)
+                .put("contractId", contractId)
                 .put("modelOutputStem", "vocals")
                 .put("modelOutputScale", modelOutputScale.toDouble())
                 .put("logicalShapeNchw", JSONArray(listOf(
@@ -604,12 +610,7 @@ internal class QnnMdxAudioBenchmark(
     )
 
     private companion object {
-        const val INPUT_NAME = "input"
-        const val OUTPUT_NAME = "output"
         const val LOG_TAG = "MSS-QNN"
-        const val CONTRACT_ID = "uvr_mdxnet_3_9662@2"
-        const val MODEL_OUTPUT_SCALE = 1.035f
-        const val MODEL_SHA256 = "f74eee1ac06845a7cf277416138b19a6203f34316a3a74b2bde19acbfb2f8378"
         const val MAX_DECODED_PCM_BYTES = 128L * 1024 * 1024
         const val WAV_HEADER_BYTES = 44L
         const val WAV_FORMAT_PCM = 1

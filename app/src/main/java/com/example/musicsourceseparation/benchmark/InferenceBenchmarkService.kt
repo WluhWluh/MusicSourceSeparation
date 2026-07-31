@@ -3,6 +3,7 @@ package com.example.musicsourceseparation.benchmark
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
+import android.app.ActivityManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -17,6 +18,10 @@ import android.os.PowerManager
 import android.os.Process
 import android.os.SystemClock
 import android.util.Log
+import com.example.musicsourceseparation.BuildConfig
+import com.example.musicsourceseparation.benchmark.contract.BenchmarkModelContractLoader
+import com.example.musicsourceseparation.benchmark.contract.LoadedBenchmarkModelContract
+import com.example.musicsourceseparation.model.MdxDspConfig
 import com.google.ai.edge.litert.Accelerator
 import com.google.ai.edge.litert.BuiltinNpuAcceleratorProvider
 import com.google.ai.edge.litert.CompiledModel
@@ -32,7 +37,6 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.Locale
-import java.util.Random
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 import kotlin.math.ln
@@ -92,42 +96,40 @@ class InferenceBenchmarkService : Service() {
         val seed = intent.getLongExtra(EXTRA_SEED, DEFAULT_SEED)
         val qnnProfiling = intent.getBooleanExtra(EXTRA_QNN_PROFILING, false)
         val exportOutputTensor = intent.getBooleanExtra(EXTRA_EXPORT_OUTPUT_TENSOR, false)
-        val height = intent.getIntExtra(EXTRA_HEIGHT, DEFAULT_HEIGHT)
-        val width = intent.getIntExtra(EXTRA_WIDTH, DEFAULT_WIDTH)
-        require(height in 1..4096 && width in 1..4096) {
-            "Invalid model input dimensions: $height x $width"
-        }
         val tag = intent.getStringExtra(EXTRA_TAG)?.sanitizeTag()
             ?.takeIf { it.isNotBlank() }
             ?: "${backend.id}-${System.currentTimeMillis()}"
-        val modelsDir = File(benchmarkDir(), "models").apply { mkdirs() }
-        val modelFile = File(
-            modelsDir,
-            when (backend) {
-                BenchmarkBackend.ORT -> intent.getStringExtra(EXTRA_ONNX_MODEL)
-                    ?: DEFAULT_ONNX_MODEL
-                BenchmarkBackend.LITERT_CPU,
-                BenchmarkBackend.LITERT_GPU,
-                BenchmarkBackend.LITERT_GPU_FP32,
-                BenchmarkBackend.LITERT_GPU_BOUNDED,
-                BenchmarkBackend.LITERT_QNN,
-                BenchmarkBackend.LITERT_QNN_AUDIO -> intent.getStringExtra(EXTRA_LITERT_MODEL)
-                    ?: DEFAULT_LITERT_MODEL
-            },
-        )
-        require(modelFile.isFile && modelFile.length() > 0L) {
-            "Model file is missing: ${modelFile.absolutePath}"
-        }
         val modelId = intent.getStringExtra(EXTRA_MODEL_ID)?.sanitizeTag()
             ?.takeIf { it.isNotBlank() }
-            ?: modelFile.nameWithoutExtension.sanitizeTag()
+            ?: error("A benchmark model ID is required.")
+        val frozenModel = loadFrozenModel(intent, modelId)
+        val contract = frozenModel.loaded.contract
+        val height = contract.dsp.dimF
+        val width = contract.dsp.modelTimeFrames
+        validateRequestedDimensions(intent, height, width)
+        val modelFile = when (backend) {
+            BenchmarkBackend.ORT -> frozenModel.onnxFile
+            BenchmarkBackend.LITERT_CPU,
+            BenchmarkBackend.LITERT_GPU,
+            BenchmarkBackend.LITERT_GPU_FP32,
+            BenchmarkBackend.LITERT_GPU_BOUNDED,
+            BenchmarkBackend.LITERT_QNN,
+            BenchmarkBackend.LITERT_QNN_AUDIO -> frozenModel.liteRtFile
+        }
         val inputFile = intent.getStringExtra(EXTRA_INPUT_FILE)
-            ?.sanitizeTag()
+            ?.validatedFileName()
             ?.takeIf { it.isNotBlank() }
             ?.let { File(inputsDir(), it) }
-        require(inputFile == null || inputFile.isFile) {
-            "Input file is missing: ${inputFile?.absolutePath}"
+            ?: error("A frozen input tensor file is required.")
+        require(inputFile.isFile && inputFile.length() > 0L) {
+            "Input file is missing: ${inputFile.absolutePath}"
         }
+        val expectedInputSha256 = requiredSha256Extra(intent, EXTRA_INPUT_SHA256, "input tensor")
+        val inputSha256 = sha256(inputFile)
+        require(inputSha256 == expectedInputSha256) {
+            "Input tensor SHA-256 mismatch for ${inputFile.absolutePath}."
+        }
+        val identity = frozenIdentity(frozenModel, inputFile, inputSha256, "nchw-float32-le")
 
         val reportFile = File(reportsDir(), "$tag.json")
         publishReport(
@@ -141,9 +143,10 @@ class InferenceBenchmarkService : Service() {
                 warmups = warmups,
                 threads = threads,
                 seed = seed,
-                inputSource = inputFile?.absolutePath ?: "generated",
+                inputSource = inputFile.absolutePath,
                 height = height,
                 width = width,
+                identity = identity,
             )
                 .put("status", "running")
                 .put("reportPath", reportFile.absolutePath),
@@ -151,19 +154,20 @@ class InferenceBenchmarkService : Service() {
         updateNotification("Running ${backend.id}")
 
         val elementCount = elementCount(height, width)
-        val inputNchw = inputFile?.let { readInput(it, elementCount) }
-            ?: createInput(seed, elementCount)
+        val inputNchw = readInput(inputFile, elementCount)
         val processStart = processSnapshot()
         val deviceStart = deviceSnapshot()
         val result = when (backend) {
             BenchmarkBackend.ORT -> runOrt(
-                modelFile,
-                inputNchw,
-                iterations,
-                warmups,
-                threads,
-                height,
-                width,
+                modelFile = modelFile,
+                inputNchw = inputNchw,
+                iterations = iterations,
+                warmups = warmups,
+                threads = threads,
+                height = height,
+                width = width,
+                inputName = contract.tensorContract.input.name,
+                outputName = contract.tensorContract.output.name,
             )
             BenchmarkBackend.LITERT_CPU -> runLiteRt(
                 modelFile = modelFile,
@@ -176,6 +180,8 @@ class InferenceBenchmarkService : Service() {
                 boundedGpu = false,
                 height = height,
                 width = width,
+                inputName = contract.tensorContract.input.name,
+                outputName = contract.tensorContract.output.name,
             )
             BenchmarkBackend.LITERT_GPU -> runLiteRt(
                 modelFile = modelFile,
@@ -188,6 +194,8 @@ class InferenceBenchmarkService : Service() {
                 boundedGpu = false,
                 height = height,
                 width = width,
+                inputName = contract.tensorContract.input.name,
+                outputName = contract.tensorContract.output.name,
             )
             BenchmarkBackend.LITERT_GPU_FP32 -> runLiteRt(
                 modelFile = modelFile,
@@ -200,6 +208,8 @@ class InferenceBenchmarkService : Service() {
                 boundedGpu = false,
                 height = height,
                 width = width,
+                inputName = contract.tensorContract.input.name,
+                outputName = contract.tensorContract.output.name,
             )
             BenchmarkBackend.LITERT_GPU_BOUNDED -> runLiteRt(
                 modelFile = modelFile,
@@ -212,6 +222,8 @@ class InferenceBenchmarkService : Service() {
                 boundedGpu = true,
                 height = height,
                 width = width,
+                inputName = contract.tensorContract.input.name,
+                outputName = contract.tensorContract.output.name,
             )
             BenchmarkBackend.LITERT_QNN -> runLiteRt(
                 modelFile = modelFile,
@@ -226,6 +238,8 @@ class InferenceBenchmarkService : Service() {
                 qnnEvidenceDir = File(qnnEvidenceRoot(), tag).apply { mkdirs() },
                 height = height,
                 width = width,
+                inputName = contract.tensorContract.input.name,
+                outputName = contract.tensorContract.output.name,
             )
             BenchmarkBackend.LITERT_QNN_AUDIO -> error("QNN audio is handled before tensor benchmarks.")
         }
@@ -238,10 +252,10 @@ class InferenceBenchmarkService : Service() {
         } else {
             null
         }
-        val referenceKey = inputFile?.nameWithoutExtension ?: "generated"
         val referenceFile = File(
             referenceDir(),
-            "ort-$modelId-$seed-$referenceKey-fp32.bin",
+            "ort-$modelId-${frozenModel.loaded.sidecarSha256}-" +
+                "${frozenModel.onnxSha256}-$inputSha256-fp32.bin",
         )
         val comparison = if (backend == BenchmarkBackend.ORT) {
             writeFloatArray(referenceFile, output)
@@ -261,9 +275,10 @@ class InferenceBenchmarkService : Service() {
             warmups = warmups,
             threads = threads,
             seed = seed,
-            inputSource = inputFile?.absolutePath ?: "generated",
+            inputSource = inputFile.absolutePath,
             height = height,
             width = width,
+            identity = identity,
         )
             .put("status", "complete")
             .put("reportPath", reportFile.absolutePath)
@@ -308,22 +323,45 @@ class InferenceBenchmarkService : Service() {
             ?: "${backend.id}-${System.currentTimeMillis()}"
         val modelId = intent.getStringExtra(EXTRA_MODEL_ID)?.sanitizeTag()
             ?.takeIf { it.isNotBlank() }
-            ?: "uvr_mdxnet_3_9662"
-        require(modelId == QNN_AUDIO_MODEL_ID) {
-            "QNN audio benchmark is frozen to $QNN_AUDIO_MODEL_ID, got $modelId."
-        }
+            ?: error("A benchmark model ID is required.")
+        val frozenModel = loadFrozenModel(intent, modelId)
+        val contract = frozenModel.loaded.contract
         val modelName = intent.getStringExtra(EXTRA_LITERT_MODEL)?.validatedFileName()
             ?.takeIf { it.isNotBlank() }
-            ?: DEFAULT_LITERT_MODEL
+            ?: error("A LiteRT model file name is required.")
+        require(modelName == contract.artifact.fileName) {
+            "LiteRT model $modelName does not match contract artifact ${contract.artifact.fileName}."
+        }
         val audioName = intent.getStringExtra(EXTRA_AUDIO_FILE)?.validatedFileName()
             ?.takeIf { it.isNotBlank() }
             ?: error("QNN audio benchmark requires an audio file name.")
-        val modelOutputScale = intent.getFloatExtra(EXTRA_MODEL_OUTPUT_SCALE, DEFAULT_MODEL_OUTPUT_SCALE)
-        require(modelOutputScale == DEFAULT_MODEL_OUTPUT_SCALE) {
-            "QNN audio benchmark is frozen to model output scale $DEFAULT_MODEL_OUTPUT_SCALE."
+        val modelOutputScale = contract.dsp.modelOutputScale.toFloat()
+        if (intent.hasExtra(EXTRA_MODEL_OUTPUT_SCALE)) {
+            require(intent.getFloatExtra(EXTRA_MODEL_OUTPUT_SCALE, Float.NaN) == modelOutputScale) {
+                "Requested model output scale does not match contract value $modelOutputScale."
+            }
         }
-        val modelFile = File(File(benchmarkDir(), "models"), modelName)
+        val modelFile = frozenModel.liteRtFile
         val audioFile = File(audioInputsDir(), audioName)
+        require(audioFile.isFile && audioFile.length() > 0L) {
+            "Audio input is missing: ${audioFile.absolutePath}"
+        }
+        val expectedAudioSha256 = requiredSha256Extra(intent, EXTRA_INPUT_SHA256, "source audio")
+        val audioSha256 = sha256(audioFile)
+        require(audioSha256 == expectedAudioSha256) {
+            "Source audio SHA-256 mismatch for ${audioFile.absolutePath}."
+        }
+        val identity = frozenIdentity(frozenModel, audioFile, audioSha256, "canonical-pcm16-wave")
+        val dspConfig = MdxDspConfig(
+            sampleRate = contract.dsp.sampleRate,
+            nFft = contract.dsp.nFft,
+            hopLength = contract.dsp.hopLength,
+            dimF = contract.dsp.dimF,
+            dimTPower = contract.dsp.dimTPower,
+        )
+        require(contract.dsp.channelCount == MdxDspConfig.STEREO_CHANNELS) {
+            "QNN audio pipeline supports only stereo contracts."
+        }
         val outputDir = File(audioOutputsDir(), tag)
         val evidenceDir = File(qnnEvidenceRoot(), tag).apply {
             deleteRecursively()
@@ -331,7 +369,7 @@ class InferenceBenchmarkService : Service() {
         }
         val reportFile = File(reportsDir(), "$tag.json")
         val reportBase = JSONObject()
-            .put("schemaVersion", 1)
+            .put("schemaVersion", REPORT_SCHEMA_VERSION)
             .put("tag", tag)
             .put("backend", backend.id)
             .put("modelId", modelId)
@@ -339,12 +377,9 @@ class InferenceBenchmarkService : Service() {
             .put("modelBytes", modelFile.length())
             .put("audioPath", audioFile.absolutePath)
             .put("audioBytes", audioFile.length())
-            .put("device", JSONObject()
-                .put("manufacturer", Build.MANUFACTURER)
-                .put("model", Build.MODEL)
-                .put("device", Build.DEVICE)
-                .put("sdk", Build.VERSION.SDK_INT)
-                .put("abis", JSONArray(Build.SUPPORTED_ABIS.toList())))
+            .put("identity", identity)
+            .put("app", appIdentity())
+            .put("device", deviceIdentity())
             .put("reportPath", reportFile.absolutePath)
         publishReport(
             File(reportsDir(), LATEST_REPORT),
@@ -353,7 +388,15 @@ class InferenceBenchmarkService : Service() {
 
         val processStart = processSnapshot()
         val deviceStart = deviceSnapshot()
-        val result = QnnMdxAudioBenchmark(this).run(
+        val result = QnnMdxAudioBenchmark(
+            context = this,
+            config = dspConfig,
+            contractId = contract.contractId,
+            inputName = contract.tensorContract.input.name,
+            outputName = contract.tensorContract.output.name,
+            expectedModelSha256 = contract.artifact.sha256,
+            expectedModelOutputScale = modelOutputScale,
+        ).run(
             modelFile = modelFile,
             audioFile = audioFile,
             outputDir = outputDir,
@@ -381,7 +424,8 @@ class InferenceBenchmarkService : Service() {
             ?.takeIf { it.isNotBlank() }
             ?: BACKEND_INIT
         val root = benchmarkDir()
-        val models = File(root, "models").apply { mkdirs() }
+        val models = modelsDir()
+        val contracts = contractsDir()
         val reports = reportsDir()
         val reference = referenceDir()
         val tensorOutput = tensorOutputDir()
@@ -389,12 +433,13 @@ class InferenceBenchmarkService : Service() {
         val audioOutput = audioOutputsDir()
         inputsDir().mkdirs()
         val report = JSONObject()
-            .put("schemaVersion", 1)
+            .put("schemaVersion", REPORT_SCHEMA_VERSION)
             .put("status", "complete")
             .put("tag", tag)
             .put("backend", BACKEND_INIT)
             .put("rootPath", root.absolutePath)
             .put("modelsPath", models.absolutePath)
+            .put("contractsPath", contracts.absolutePath)
             .put("reportsPath", reports.absolutePath)
             .put("referencePath", reference.absolutePath)
             .put("tensorOutputPath", tensorOutput.absolutePath)
@@ -414,6 +459,8 @@ class InferenceBenchmarkService : Service() {
         threads: Int,
         height: Int,
         width: Int,
+        inputName: String,
+        outputName: String,
     ): BackendResult {
         val environment = OrtEnvironment.getEnvironment()
         val setupStarted = timedStart()
@@ -426,8 +473,12 @@ class InferenceBenchmarkService : Service() {
         val session = environment.createSession(modelFile.absolutePath, options)
         options.close()
         val setup = setupStarted.elapsed()
-        val inputName = session.inputNames.first()
-        val outputName = session.outputNames.first()
+        require(session.inputNames == setOf(inputName)) {
+            "Unexpected ONNX inputs: ${session.inputNames}; expected only $inputName."
+        }
+        require(session.outputNames == setOf(outputName)) {
+            "Unexpected ONNX outputs: ${session.outputNames}; expected only $outputName."
+        }
         val shape = longArrayOf(
             BATCH.toLong(),
             CHANNELS.toLong(),
@@ -508,6 +559,8 @@ class InferenceBenchmarkService : Service() {
         qnnEvidenceDir: File? = null,
         height: Int,
         width: Int,
+        inputName: String,
+        outputName: String,
     ): BackendResult {
         val setupStarted = timedStart()
         require(!useQnn || gpuPrecision == null) { "QNN and GPU modes are mutually exclusive." }
@@ -592,10 +645,10 @@ class InferenceBenchmarkService : Service() {
             require(inputBuffers.size == 1 && outputBuffers.size == 1) {
                 "Expected one input and one output, got ${inputBuffers.size}/${outputBuffers.size}."
             }
-            val inputShape = requireNotNull(model.getInputTensorType("input").layout) {
+            val inputShape = requireNotNull(model.getInputTensorType(inputName).layout) {
                 "LiteRT input tensor has no layout."
             }.dimensions
-            val outputShape = requireNotNull(model.getOutputTensorType("output").layout) {
+            val outputShape = requireNotNull(model.getOutputTensorType(outputName).layout) {
                 "LiteRT output tensor has no layout."
             }.dimensions
             val expectedShape = listOf(BATCH, height, width, CHANNELS)
@@ -682,6 +735,130 @@ class InferenceBenchmarkService : Service() {
         }
     }
 
+    private fun loadFrozenModel(intent: Intent, requestedModelId: String): FrozenModel {
+        val contractName = intent.getStringExtra(EXTRA_CONTRACT_FILE)
+            ?.validatedFileName()
+            ?.takeIf { it.isNotBlank() }
+            ?: error("A model contract file is required.")
+        val expectedContractSha256 = requiredSha256Extra(
+            intent,
+            EXTRA_CONTRACT_SHA256,
+            "model contract",
+        )
+        val loaded = BenchmarkModelContractLoader.load(
+            File(contractsDir(), contractName),
+            expectedContractSha256,
+        )
+        val contract = loaded.contract
+        require(contract.modelId == requestedModelId) {
+            "Contract model ID ${contract.modelId} does not match requested $requestedModelId."
+        }
+
+        val requestedOnnxName = intent.getStringExtra(EXTRA_ONNX_MODEL)?.validatedFileName()
+            ?: error("An ONNX model file name is required.")
+        val requestedLiteRtName = intent.getStringExtra(EXTRA_LITERT_MODEL)?.validatedFileName()
+            ?: error("A LiteRT model file name is required.")
+        require(requestedOnnxName == contract.source.fileName) {
+            "ONNX file $requestedOnnxName does not match contract source ${contract.source.fileName}."
+        }
+        require(requestedLiteRtName == contract.artifact.fileName) {
+            "LiteRT file $requestedLiteRtName does not match contract artifact ${contract.artifact.fileName}."
+        }
+
+        val onnxFile = File(modelsDir(), contract.source.fileName)
+        val liteRtFile = File(modelsDir(), contract.artifact.fileName)
+        requireFileIdentity(onnxFile, contract.source.byteSize, contract.source.sha256, "ONNX model")
+        requireFileIdentity(liteRtFile, contract.artifact.byteSize, contract.artifact.sha256, "LiteRT model")
+        val expectedOnnxSha256 = requiredSha256Extra(intent, EXTRA_ONNX_MODEL_SHA256, "ONNX model")
+        val expectedLiteRtSha256 = requiredSha256Extra(
+            intent,
+            EXTRA_LITERT_MODEL_SHA256,
+            "LiteRT model",
+        )
+        require(expectedOnnxSha256 == contract.source.sha256) {
+            "Requested ONNX SHA-256 does not match the model contract."
+        }
+        require(expectedLiteRtSha256 == contract.artifact.sha256) {
+            "Requested LiteRT SHA-256 does not match the model contract."
+        }
+        return FrozenModel(
+            loaded = loaded,
+            onnxFile = onnxFile,
+            onnxSha256 = expectedOnnxSha256,
+            liteRtFile = liteRtFile,
+            liteRtSha256 = expectedLiteRtSha256,
+        )
+    }
+
+    private fun requireFileIdentity(
+        file: File,
+        expectedBytes: Long,
+        expectedSha256: String,
+        label: String,
+    ) {
+        require(file.isFile && file.length() == expectedBytes) {
+            "$label size does not match the contract: ${file.absolutePath}."
+        }
+        require(sha256(file) == expectedSha256) {
+            "$label SHA-256 does not match the contract: ${file.absolutePath}."
+        }
+    }
+
+    private fun requiredSha256Extra(intent: Intent, name: String, label: String): String {
+        val value = intent.getStringExtra(name).orEmpty()
+        require(SHA256.matches(value)) {
+            "$label SHA-256 must be 64 lowercase hexadecimal characters."
+        }
+        return value
+    }
+
+    private fun validateRequestedDimensions(intent: Intent, height: Int, width: Int) {
+        if (intent.hasExtra(EXTRA_HEIGHT)) {
+            require(intent.getIntExtra(EXTRA_HEIGHT, -1) == height) {
+                "Requested tensor height does not match contract value $height."
+            }
+        }
+        if (intent.hasExtra(EXTRA_WIDTH)) {
+            require(intent.getIntExtra(EXTRA_WIDTH, -1) == width) {
+                "Requested tensor width does not match contract value $width."
+            }
+        }
+    }
+
+    private fun frozenIdentity(
+        frozenModel: FrozenModel,
+        inputFile: File,
+        inputSha256: String,
+        inputFormat: String,
+    ): JSONObject {
+        val loaded = frozenModel.loaded
+        val contract = loaded.contract
+        return JSONObject()
+            .put("contract", JSONObject()
+                .put("id", contract.contractId)
+                .put("schemaVersion", contract.contractSchemaVersion)
+                .put("path", loaded.sidecarFile.absolutePath)
+                .put("fileName", loaded.sidecarFile.name)
+                .put("bytes", loaded.sidecarByteSize)
+                .put("sha256", loaded.sidecarSha256))
+            .put("onnx", JSONObject()
+                .put("path", frozenModel.onnxFile.absolutePath)
+                .put("fileName", frozenModel.onnxFile.name)
+                .put("bytes", frozenModel.onnxFile.length())
+                .put("sha256", frozenModel.onnxSha256))
+            .put("litert", JSONObject()
+                .put("path", frozenModel.liteRtFile.absolutePath)
+                .put("fileName", frozenModel.liteRtFile.name)
+                .put("bytes", frozenModel.liteRtFile.length())
+                .put("sha256", frozenModel.liteRtSha256))
+            .put("input", JSONObject()
+                .put("path", inputFile.absolutePath)
+                .put("fileName", inputFile.name)
+                .put("format", inputFormat)
+                .put("bytes", inputFile.length())
+                .put("sha256", inputSha256))
+    }
+
     private fun baseReport(
         tag: String,
         backend: BenchmarkBackend,
@@ -694,8 +871,9 @@ class InferenceBenchmarkService : Service() {
         inputSource: String,
         height: Int,
         width: Int,
+        identity: JSONObject,
     ): JSONObject = JSONObject()
-        .put("schemaVersion", 1)
+        .put("schemaVersion", REPORT_SCHEMA_VERSION)
         .put("tag", tag)
         .put("backend", backend.id)
         .put("modelId", modelId)
@@ -707,12 +885,9 @@ class InferenceBenchmarkService : Service() {
         .put("seed", seed)
         .put("inputSource", inputSource)
         .put("inputShapeNchw", JSONArray(listOf(BATCH, CHANNELS, height, width)))
-        .put("device", JSONObject()
-            .put("manufacturer", Build.MANUFACTURER)
-            .put("model", Build.MODEL)
-            .put("device", Build.DEVICE)
-            .put("sdk", Build.VERSION.SDK_INT)
-            .put("abis", JSONArray(Build.SUPPORTED_ABIS.toList())))
+        .put("identity", JSONObject(identity.toString()))
+        .put("app", appIdentity())
+        .put("device", deviceIdentity())
 
     private fun timingSummary(wallMs: List<Double>, cpuMs: List<Long>): JSONObject {
         val sorted = wallMs.sorted()
@@ -813,9 +988,39 @@ class InferenceBenchmarkService : Service() {
             .put("currentNowUa", batteryManager.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW))
     }
 
-    private fun createInput(seed: Long, elementCount: Int): FloatArray {
-        val random = Random(seed)
-        return FloatArray(elementCount) { (random.nextFloat() * 0.2f) - 0.1f }
+    private fun appIdentity(): JSONObject = JSONObject()
+        .put("applicationId", BuildConfig.APPLICATION_ID)
+        .put("versionName", BuildConfig.VERSION_NAME)
+        .put("versionCode", BuildConfig.VERSION_CODE)
+        .put("flavor", BuildConfig.FLAVOR)
+        .put("buildType", BuildConfig.BUILD_TYPE)
+        .put("sourceRevision", BuildConfig.BENCHMARK_SOURCE_REVISION)
+        .put("sourceDirty", BuildConfig.BENCHMARK_SOURCE_DIRTY)
+        .put("runtimeId", BuildConfig.BENCHMARK_RUNTIME_ID)
+        .put("runtimeVersion", BuildConfig.BENCHMARK_RUNTIME_VERSION)
+        .put("runtimeArtifactSha256", BuildConfig.BENCHMARK_RUNTIME_ARTIFACT_SHA256)
+        .put("acceleratorBundleSha256", BuildConfig.BENCHMARK_ACCELERATOR_BUNDLE_SHA256)
+
+    private fun deviceIdentity(): JSONObject {
+        val activityManager = getSystemService(ActivityManager::class.java)
+        val memory = ActivityManager.MemoryInfo().also(activityManager::getMemoryInfo)
+        return JSONObject()
+            .put("manufacturer", Build.MANUFACTURER)
+            .put("brand", Build.BRAND)
+            .put("model", Build.MODEL)
+            .put("device", Build.DEVICE)
+            .put("hardware", Build.HARDWARE)
+            .put("socManufacturer", if (Build.VERSION.SDK_INT >= 31) Build.SOC_MANUFACTURER else "")
+            .put("socModel", if (Build.VERSION.SDK_INT >= 31) Build.SOC_MODEL else "")
+            .put("buildFingerprint", Build.FINGERPRINT)
+            .put("securityPatch", Build.VERSION.SECURITY_PATCH)
+            .put("androidRelease", Build.VERSION.RELEASE)
+            .put("sdk", Build.VERSION.SDK_INT)
+            .put("abis", JSONArray(Build.SUPPORTED_ABIS.toList()))
+            .put("processIs64Bit", Process.is64Bit())
+            .put("totalMemoryBytes", memory.totalMem)
+            .put("lowMemoryThresholdBytes", memory.threshold)
+            .put("lowRamDevice", activityManager.isLowRamDevice)
     }
 
     private fun readInput(file: File, elementCount: Int): FloatArray {
@@ -910,12 +1115,13 @@ class InferenceBenchmarkService : Service() {
             ?.takeIf { it.isNotBlank() }
             ?: "error-${System.currentTimeMillis()}"
         val report = JSONObject()
-            .put("schemaVersion", 1)
+            .put("schemaVersion", REPORT_SCHEMA_VERSION)
             .put("status", "error")
             .put("tag", tag)
             .put("backend", backend)
             .put("message", message)
-            .put("device", JSONObject().put("model", Build.MODEL).put("sdk", Build.VERSION.SDK_INT))
+            .put("app", appIdentity())
+            .put("device", deviceIdentity())
         val reportFile = File(reportsDir(), "$tag.json")
         publishReport(File(reportsDir(), LATEST_REPORT), report)
         publishReport(reportFile, report)
@@ -948,6 +1154,10 @@ class InferenceBenchmarkService : Service() {
 
     private fun reportsDir(): File = File(benchmarkDir(), "reports").apply { mkdirs() }
 
+    private fun modelsDir(): File = File(benchmarkDir(), "models").apply { mkdirs() }
+
+    private fun contractsDir(): File = File(benchmarkDir(), "contracts").apply { mkdirs() }
+
     private fun referenceDir(): File = File(benchmarkDir(), "reference").apply { mkdirs() }
 
     private fun tensorOutputDir(): File = File(benchmarkDir(), "tensor-output").apply { mkdirs() }
@@ -971,6 +1181,7 @@ class InferenceBenchmarkService : Service() {
             .put("deviceSupported", provider.isDeviceSupported())
             .put("libraryReady", provider.isLibraryReady())
             .put("libraryDir", provider.getLibraryDir())
+            .put("nativeLibraries", QnnRuntimeLibraryEvidence.collect(provider.getLibraryDir()))
             .put("socManufacturer", Build.SOC_MANUFACTURER)
             .put("socModel", Build.SOC_MODEL)
             .put("htpPerformanceMode", "SUSTAINED_HIGH_PERFORMANCE")
@@ -1138,6 +1349,14 @@ class InferenceBenchmarkService : Service() {
         val output: FloatArray,
     )
 
+    private data class FrozenModel(
+        val loaded: LoadedBenchmarkModelContract,
+        val onnxFile: File,
+        val onnxSha256: String,
+        val liteRtFile: File,
+        val liteRtSha256: String,
+    )
+
     private enum class BenchmarkBackend(val id: String) {
         ORT("ort"),
         LITERT_CPU("litert_cpu"),
@@ -1154,6 +1373,7 @@ class InferenceBenchmarkService : Service() {
     }
 
     companion object {
+        private const val REPORT_SCHEMA_VERSION = 2
         const val ACTION_RUN = "com.example.musicsourceseparation.RUN_INFERENCE_BENCHMARK"
         const val ACTION_FINISHED = "com.example.musicsourceseparation.INFERENCE_BENCHMARK_FINISHED"
         const val INTERNAL_BENCHMARK_PERMISSION =
@@ -1166,6 +1386,11 @@ class InferenceBenchmarkService : Service() {
         const val EXTRA_SEED = "seed"
         const val EXTRA_TAG = "tag"
         const val EXTRA_MODEL_ID = "modelId"
+        const val EXTRA_CONTRACT_FILE = "contractFile"
+        const val EXTRA_CONTRACT_SHA256 = "contractSha256"
+        const val EXTRA_ONNX_MODEL_SHA256 = "onnxModelSha256"
+        const val EXTRA_LITERT_MODEL_SHA256 = "liteRtModelSha256"
+        const val EXTRA_INPUT_SHA256 = "inputSha256"
         const val EXTRA_HEIGHT = "height"
         const val EXTRA_WIDTH = "width"
         const val EXTRA_INPUT_FILE = "inputFile"
@@ -1177,9 +1402,6 @@ class InferenceBenchmarkService : Service() {
         const val EXTRA_MODEL_OUTPUT_SCALE = "modelOutputScale"
         const val EXTRA_SUCCEEDED = "succeeded"
 
-        const val DEFAULT_ONNX_MODEL = "UVR_MDXNET_9482.onnx"
-        const val DEFAULT_LITERT_MODEL = "UVR_MDXNET_9482_float32.tflite"
-
         private const val BACKEND_INIT = "init"
 
         private const val DEFAULT_ITERATIONS = 5
@@ -1187,8 +1409,6 @@ class InferenceBenchmarkService : Service() {
         private const val DEFAULT_WARMUPS = 1
         private const val DEFAULT_THREADS = 8
         private const val DEFAULT_SEED = 9482L
-        private const val DEFAULT_MODEL_OUTPUT_SCALE = 1.035f
-        private const val QNN_AUDIO_MODEL_ID = "uvr_mdxnet_3_9662"
         private const val LATEST_REPORT = "latest.json"
         private const val NOTIFICATION_CHANNEL_ID = "inference_benchmark"
         private const val NOTIFICATION_ID = 9482
@@ -1196,7 +1416,6 @@ class InferenceBenchmarkService : Service() {
 
         private const val BATCH = 1
         private const val CHANNELS = 4
-        private const val DEFAULT_HEIGHT = 2048
-        private const val DEFAULT_WIDTH = 256
+        private val SHA256 = Regex("^[0-9a-f]{64}$")
     }
 }

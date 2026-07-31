@@ -1,0 +1,91 @@
+{
+  "artifact": {
+    "byteSize": 29700464,
+    "fileName": "UVR_MDXNET_3_9662_static_float32.tflite",
+    "format": "tflite-flatbuffer",
+    "sha256": "f74eee1ac06845a7cf277416138b19a6203f34316a3a74b2bde19acbfb2f8378"
+  },
+  "contractId": "uvr_mdxnet_3_9662@2",
+  "contractSchemaVersion": 2,
+  "conversion": {
+    "pipelineVersion": 1,
+    "repository": "https://github.com/WluhWluh/bss-tflite",
+    "revision": "695cf49db9bbe0d43ef0c8b52ae145a16c10cf28",
+    "toolVersions": {
+      "ai-edge-litert": "2.1.2",
+      "flatbuffers": "25.12.19",
+      "numpy": "2.2.6",
+      "onnx": "1.20.1",
+      "onnx2tf": "2.6.6",
+      "onnxruntime": "1.26.0",
+      "tensorflow": "2.20.0",
+      "tf-keras": "2.20.1"
+    }
+  },
+  "displayName": "UVR-MDX-NET 3",
+  "dsp": {
+    "channelCount": 2,
+    "dimF": 2048,
+    "dimTPower": 8,
+    "hopLength": 1024,
+    "modelOutputScale": 1.035,
+    "modelTimeFrames": 256,
+    "nFft": 6144,
+    "sampleRate": 44100,
+    "window": "periodic-hann"
+  },
+  "modelId": "uvr_mdxnet_3_9662",
+  "pipelineCompatibility": {
+    "maximumVersion": 1,
+    "minimumVersion": 1,
+    "pipelineId": "booming-ss-mdx-stft"
+  },
+  "source": {
+    "attribution": [
+      "Ultimate Vocal Remover GUI",
+      "TRvlvr/model_repo"
+    ],
+    "byteSize": 29704436,
+    "canonicalSourceId": "trvlvr-all-public-uvr-models:UVR_MDXNET_3_9662.onnx",
+    "fileName": "UVR_MDXNET_3_9662.onnx",
+    "sha256": "e02220e80d8253f4c2209f8924298b2b686bbdf2868b788ff5500fb9bd94aadc",
+    "url": "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/UVR_MDXNET_3_9662.onnx"
+  },
+  "stemContract": {
+    "modelOutput": {
+      "displayLabel": "Vocals",
+      "semantic": "vocals"
+    },
+    "residual": {
+      "displayLabel": "Instrumental",
+      "semantic": "instrumental"
+    },
+    "residualRule": "mixture-minus-scaled-model-output"
+  },
+  "tensorContract": {
+    "batchSize": 1,
+    "complexChannelCount": 4,
+    "input": {
+      "dtype": "float32",
+      "layout": "NHWC",
+      "name": "input",
+      "shape": [
+        1,
+        2048,
+        256,
+        4
+      ]
+    },
+    "output": {
+      "dtype": "float32",
+      "layout": "NHWC",
+      "name": "output",
+      "shape": [
+        1,
+        2048,
+        256,
+        4
+      ]
+    }
+  }
+}

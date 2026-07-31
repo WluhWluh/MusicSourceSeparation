@@ -1,9 +1,33 @@
+import java.security.MessageDigest
+
 plugins {
     id("com.android.application")
 }
 
+fun sha256(file: File): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    file.inputStream().buffered().use { input ->
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            digest.update(buffer, 0, count)
+        }
+    }
+    return digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+}
+
+fun buildConfigString(value: String): String =
+    "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
+
 val liteRtAar = providers.gradleProperty("liteRtAar").orNull
 val qnnHtpVersions = listOf(69, 73, 75, 79)
+val sourceRevision = providers.gradleProperty("benchmarkSourceRevision").orElse("unknown").get()
+val sourceDirty = providers.gradleProperty("benchmarkSourceDirty").orElse("unknown").get()
+val runtimeId = providers.gradleProperty("benchmarkRuntimeId").orElse(
+    if (liteRtAar == null) "com.google.ai.edge.litert:litert:2.1.5" else "local-litert-aar",
+).get()
+val runtimeArtifactSha256 = liteRtAar?.let { sha256(file(it)) } ?: "maven-unresolved"
 
 android {
     namespace = "com.example.musicsourceseparation"
@@ -15,6 +39,20 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "0.1.0"
+        buildConfigField("String", "BENCHMARK_SOURCE_REVISION", buildConfigString(sourceRevision))
+        buildConfigField("String", "BENCHMARK_SOURCE_DIRTY", buildConfigString(sourceDirty))
+        buildConfigField("String", "BENCHMARK_RUNTIME_ID", buildConfigString(runtimeId))
+        buildConfigField("String", "BENCHMARK_RUNTIME_VERSION", buildConfigString("2.1.5"))
+        buildConfigField(
+            "String",
+            "BENCHMARK_RUNTIME_ARTIFACT_SHA256",
+            buildConfigString(runtimeArtifactSha256),
+        )
+        buildConfigField("String", "BENCHMARK_ACCELERATOR_BUNDLE_SHA256", buildConfigString("none"))
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     compileOptions {
@@ -34,6 +72,13 @@ android {
                 ndk {
                     abiFilters += "arm64-v8a"
                 }
+                val runtimeManifest = file("../.tmp/litert-qnn-v$htpVersion-runtime/runtime-manifest.json")
+                val manifestSha256 = if (runtimeManifest.isFile) sha256(runtimeManifest) else "missing"
+                buildConfigField(
+                    "String",
+                    "BENCHMARK_ACCELERATOR_BUNDLE_SHA256",
+                    buildConfigString(manifestSha256),
+                )
             }
         }
     }

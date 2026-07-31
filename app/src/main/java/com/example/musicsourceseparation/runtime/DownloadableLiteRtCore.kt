@@ -31,20 +31,20 @@ internal data class DownloadableLiteRtCoreArtifact(
         get() = "$RELEASE_BASE_URL/$bundleFileName"
 
     companion object {
-        const val RELEASE_VERSION = "2.1.5-bss.2-exp.1"
+        const val RELEASE_VERSION = "2.1.5-bss.2-exp.2"
         const val RUNTIME_ARTIFACT_VERSION = "2.1.5-bss.2"
         const val LIBRARY_NAME = "libLiteRt.so"
         private const val RELEASE_BASE_URL =
-            "https://github.com/WluhWluh/bss-litert-android/releases/download/" +
-                "downloadable-runtime-v2.1.5-bss.2-exp.1"
+                "https://github.com/WluhWluh/bss-litert-android/releases/download/" +
+                "downloadable-runtime-v2.1.5-bss.2-exp.2"
 
         private val artifacts = listOf(
             DownloadableLiteRtCoreArtifact(
                 abi = "arm64-v8a",
                 bundleFileName = "litert-cpu-core-2.1.5-bss.2-arm64-v8a.zip",
-                bundleBytes = 2_220_465,
-                bundleSha256 = "bf5f9afcdec13387e21e9e376606895b72d00385c38424fd6036314c6e17f76c",
-                manifestSha256 = "c3724ae70b5c38ac7f2afc30604cce3b2330f9e091e12fee80d0ca3c7fd99ddf",
+                bundleBytes = 2_209_051,
+                bundleSha256 = "542efb984795c8cd412c9a14e1b87ca0a5d09a0ebe3b82a4ba31e058b5c384de",
+                manifestSha256 = "15e04dd49bb377b25bad8f96752dc13e10b84baff508a54cdf4d0bc4b974d7de",
                 libraryBytes = 5_328_296,
                 librarySha256 = "ae2b996fde27021b070e88b56eebc9626a5261feb72f09791bdac38b2f09abd2",
                 soname = "libLiteRt.so",
@@ -52,9 +52,9 @@ internal data class DownloadableLiteRtCoreArtifact(
             DownloadableLiteRtCoreArtifact(
                 abi = "armeabi-v7a",
                 bundleFileName = "litert-cpu-core-2.1.5-bss.2-armeabi-v7a.zip",
-                bundleBytes = 1_843_958,
-                bundleSha256 = "bd4d1ee5ab036c4123a168ceeee386b8c1b690d0ee7464547594f64f0b5e618a",
-                manifestSha256 = "193c5489471fec633aba3198e8d12a859f8aa7d7e2667dd9847f72fb1f1c44d9",
+                bundleBytes = 1_838_482,
+                bundleSha256 = "d3cc46bc360b70092a45ed7a843ae7c2faa14e163b53c310d42456e6a063267c",
+                manifestSha256 = "0b765913fa1ca1c531530e2bed17e971a88d3cbf317c8e1c758b60d148bc6cdc",
                 libraryBytes = 3_504_124,
                 librarySha256 = "836ee7a2321c9453f02658b6774fc4c5951716432b450ba6bc4e9a94fe524e6c",
                 soname = "libLiteRt.so",
@@ -62,9 +62,9 @@ internal data class DownloadableLiteRtCoreArtifact(
             DownloadableLiteRtCoreArtifact(
                 abi = "x86_64",
                 bundleFileName = "litert-cpu-core-2.1.5-bss.2-x86_64.zip",
-                bundleBytes = 2_938_161,
-                bundleSha256 = "adb8da3b3e5649a76c3057563958ecdefabbf2fba15232919c4d13a25ff7b18f",
-                manifestSha256 = "d0c39ad00a7d719a04f72d0af58d3b2bf36706fdd1883395c62cdb4d9403d75a",
+                bundleBytes = 2_932_040,
+                bundleSha256 = "a4381cf7ef8731fc7392555d85337a0dc559f75e02661d03f1d4b0fe03116668",
+                manifestSha256 = "ec4249fda523203e3ef7e85565071dadeac5a742b19b241d1f933ca6a2005148",
                 libraryBytes = 7_272_904,
                 librarySha256 = "6d5b2f35d536a3b2d38b26d26328cc9c259133ef2aa0413ec554cd7ef84f6604",
                 soname = "libLiteRt.so",
@@ -72,9 +72,9 @@ internal data class DownloadableLiteRtCoreArtifact(
             DownloadableLiteRtCoreArtifact(
                 abi = "x86",
                 bundleFileName = "litert-cpu-core-2.1.5-bss.2-x86.zip",
-                bundleBytes = 2_886_193,
-                bundleSha256 = "fcdcd36c3c3192222f58301de09b0d99f76c670071c5a19949680e47121ba055",
-                manifestSha256 = "cfa4d7f370989be280c5f5fec6a2612435d5594928244a476de4d45ed9c74a07",
+                bundleBytes = 2_881_458,
+                bundleSha256 = "e201c1e0c8a7e6a9676184af80d84c6393c6b4ae9d1118f09151551978fe85d4",
+                manifestSha256 = "e3e06af11982bf2e02ea1751c889935c4d67c869a57d0eeffa2691dd9bf1679a",
                 libraryBytes = 7_482_132,
                 librarySha256 = "02b6556ec235926c11eb0c067eb16e459adcddb1568a42eefe0c40f4cc4b59af",
                 soname = "LiteRt",
@@ -120,14 +120,13 @@ internal object DownloadableLiteRtCore {
         val started = SystemClock.elapsedRealtimeNanos()
         return try {
             val installation = ensureInstalled(context.applicationContext, artifact)
-            val loadStarted = SystemClock.elapsedRealtimeNanos()
-            System.load(installation.library.absolutePath)
+            val loader = DownloadableLiteRtNativeLoader.configureAndLoad(installation.library)
             val report = baseReport(artifact)
                 .put("status", "loaded")
                 .put("downloaded", installation.downloaded)
                 .put("libraryPath", installation.library.absolutePath)
                 .put("libraryWritable", installation.library.canWrite())
-                .put("systemLoadWallMs", nanosToMs(SystemClock.elapsedRealtimeNanos() - loadStarted))
+                .put("nativeLoader", loader.toJson())
                 .put("totalWallMs", nanosToMs(SystemClock.elapsedRealtimeNanos() - started))
                 .put("reusedInProcess", false)
             val serialized = report.toString()
@@ -310,7 +309,7 @@ internal object DownloadableLiteRtCore {
         val library = files.getJSONObject(0)
         val elf = library.getJSONObject("elf")
         manifest.getInt("schemaVersion") == 1 &&
-            manifest.getString("contractSchemaVersion") == "bss-litert-downloadable-runtime-v1" &&
+            manifest.getString("contractSchemaVersion") == "bss-litert-downloadable-runtime-v2" &&
             manifest.getString("releaseVersion") == DownloadableLiteRtCoreArtifact.RELEASE_VERSION &&
             manifest.getString("runtimeArtifactVersion") ==
                 DownloadableLiteRtCoreArtifact.RUNTIME_ARTIFACT_VERSION &&

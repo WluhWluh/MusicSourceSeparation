@@ -6,6 +6,21 @@ import org.junit.Test
 
 class DownloadableLiteRtCoreArtifactTest {
     @Test
+    fun freezesExplicitLoaderReleaseContract() {
+        assertEquals("2.1.5-bss.2-exp.2", DownloadableLiteRtCoreArtifact.RELEASE_VERSION)
+        assertEquals(
+            "https://github.com/WluhWluh/bss-litert-android/releases/download/" +
+                "downloadable-runtime-v2.1.5-bss.2-exp.2/" +
+                "litert-cpu-core-2.1.5-bss.2-x86.zip",
+            DownloadableLiteRtCoreArtifact.forProcess(
+                is64Bit = false,
+                supported64BitAbis = emptyList(),
+                supported32BitAbis = listOf("x86"),
+            ).downloadUrl,
+        )
+    }
+
+    @Test
     fun selectsTheCurrent64BitProcessAbi() {
         val arm64 = DownloadableLiteRtCoreArtifact.forProcess(
             is64Bit = true,

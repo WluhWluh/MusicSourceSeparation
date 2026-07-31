@@ -42,8 +42,8 @@ internal data class DownloadableLiteRtCoreArtifact(
             DownloadableLiteRtCoreArtifact(
                 abi = "arm64-v8a",
                 bundleFileName = "litert-cpu-core-2.1.5-bss.2-arm64-v8a.zip",
-                bundleBytes = 2_209_051,
-                bundleSha256 = "542efb984795c8cd412c9a14e1b87ca0a5d09a0ebe3b82a4ba31e058b5c384de",
+                bundleBytes = 2_220_465,
+                bundleSha256 = "ba566a2b0d3ee95190bced05bf20dff790ef90602af066fc502540c160a0ce49",
                 manifestSha256 = "15e04dd49bb377b25bad8f96752dc13e10b84baff508a54cdf4d0bc4b974d7de",
                 libraryBytes = 5_328_296,
                 librarySha256 = "ae2b996fde27021b070e88b56eebc9626a5261feb72f09791bdac38b2f09abd2",
@@ -52,8 +52,8 @@ internal data class DownloadableLiteRtCoreArtifact(
             DownloadableLiteRtCoreArtifact(
                 abi = "armeabi-v7a",
                 bundleFileName = "litert-cpu-core-2.1.5-bss.2-armeabi-v7a.zip",
-                bundleBytes = 1_838_482,
-                bundleSha256 = "d3cc46bc360b70092a45ed7a843ae7c2faa14e163b53c310d42456e6a063267c",
+                bundleBytes = 1_843_957,
+                bundleSha256 = "a5c21e9c64030ae9a2a29c6d458e3f7b63018b766981064d570f19082c2c19c1",
                 manifestSha256 = "0b765913fa1ca1c531530e2bed17e971a88d3cbf317c8e1c758b60d148bc6cdc",
                 libraryBytes = 3_504_124,
                 librarySha256 = "836ee7a2321c9453f02658b6774fc4c5951716432b450ba6bc4e9a94fe524e6c",
@@ -62,8 +62,8 @@ internal data class DownloadableLiteRtCoreArtifact(
             DownloadableLiteRtCoreArtifact(
                 abi = "x86_64",
                 bundleFileName = "litert-cpu-core-2.1.5-bss.2-x86_64.zip",
-                bundleBytes = 2_932_040,
-                bundleSha256 = "a4381cf7ef8731fc7392555d85337a0dc559f75e02661d03f1d4b0fe03116668",
+                bundleBytes = 2_938_161,
+                bundleSha256 = "0425958720617ee00689af1efb1ac2dd03da8481ad0e03c42e0dff7006bc4d85",
                 manifestSha256 = "ec4249fda523203e3ef7e85565071dadeac5a742b19b241d1f933ca6a2005148",
                 libraryBytes = 7_272_904,
                 librarySha256 = "6d5b2f35d536a3b2d38b26d26328cc9c259133ef2aa0413ec554cd7ef84f6604",
@@ -72,8 +72,8 @@ internal data class DownloadableLiteRtCoreArtifact(
             DownloadableLiteRtCoreArtifact(
                 abi = "x86",
                 bundleFileName = "litert-cpu-core-2.1.5-bss.2-x86.zip",
-                bundleBytes = 2_881_458,
-                bundleSha256 = "e201c1e0c8a7e6a9676184af80d84c6393c6b4ae9d1118f09151551978fe85d4",
+                bundleBytes = 2_886_192,
+                bundleSha256 = "8ece235a9c1da2478c0ff6d5f7f13908aaca5dec7c8393a36c8058975bd4c975",
                 manifestSha256 = "e3e06af11982bf2e02ea1751c889935c4d67c869a57d0eeffa2691dd9bf1679a",
                 libraryBytes = 7_482_132,
                 librarySha256 = "02b6556ec235926c11eb0c067eb16e459adcddb1568a42eefe0c40f4cc4b59af",

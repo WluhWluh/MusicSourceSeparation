@@ -6,7 +6,7 @@ plugins {
 
 val liteRtApiAar = providers.gradleProperty("liteRtApiAar").orNull?.let(::file)
 val expectedLiteRtApiAarSha256 =
-    "e0ec15d28ad8d0b81d2cd2f5d9dba265d038c2676f89d2381614a0713c3689e7"
+    "a68b51546f268b6db0b64bec3d1d95389ba44a48c59beaa1769794682c94b4f9"
 val downloadableCoreTaskRequested = gradle.startParameter.taskNames.any { task ->
     task.contains("DownloadableCore", ignoreCase = true)
 }

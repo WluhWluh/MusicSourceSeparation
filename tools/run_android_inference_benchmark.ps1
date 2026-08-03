@@ -186,7 +186,11 @@ function Reset-BenchmarkHost {
         Invoke-Adb shell input keyevent KEYCODE_WAKEUP
         Invoke-Adb shell wm dismiss-keyguard
     }
-    Invoke-Adb shell am start -W -n "$package/.MainActivity"
+    $activityArgs = @("shell", "am", "start", "-W", "-n", "$package/.MainActivity")
+    if ($KeepActivityForeground) {
+        $activityArgs += @("--ez", "benchmarkKeepScreenOn", "true")
+    }
+    Invoke-Adb @activityArgs
     Start-Sleep -Milliseconds 500
     if (-not $KeepActivityForeground) {
         Invoke-Adb shell input keyevent KEYCODE_HOME
@@ -251,6 +255,10 @@ $hostIdentity = [ordered]@{
     litert = [ordered]@{ path = $LiteRtModel; bytes = (Get-Item $LiteRtModel).Length; sha256 = $liteRtSha256 }
     input = [ordered]@{ path = $InputFile; bytes = $actualInputBytes; sha256 = $inputSha256; layout = "NCHW" }
     source = [ordered]@{ revision = $sourceRevision; dirty = $sourceDirty }
+    execution = [ordered]@{
+        keepActivityForeground = $KeepActivityForeground.IsPresent
+        keepScreenOn = $KeepActivityForeground.IsPresent
+    }
     appApk = [ordered]@{ path = $AppApk; bytes = (Get-Item $AppApk).Length; sha256 = $appApkSha256; installedPath = $installedApkPath }
     runtimeArtifact = [ordered]@{ path = $RuntimeArtifact; bytes = (Get-Item $RuntimeArtifact).Length; sha256 = $runtimeArtifactSha256 }
     acceleratorBundle = if ($AcceleratorBundleManifest) { [ordered]@{ path = $AcceleratorBundleManifest; bytes = (Get-Item $AcceleratorBundleManifest).Length; sha256 = $acceleratorBundleSha256 } } else { $null }
@@ -264,9 +272,15 @@ if ($UploadModels) {
         Invoke-Adb shell input keyevent KEYCODE_WAKEUP
         Invoke-Adb shell wm dismiss-keyguard
     }
-    Invoke-Adb shell am start -W -n "$package/.MainActivity"
+    $activityArgs = @("shell", "am", "start", "-W", "-n", "$package/.MainActivity")
+    if ($KeepActivityForeground) {
+        $activityArgs += @("--ez", "benchmarkKeepScreenOn", "true")
+    }
+    Invoke-Adb @activityArgs
     Start-Sleep -Milliseconds 500
-    Invoke-Adb shell input keyevent KEYCODE_HOME
+    if (-not $KeepActivityForeground) {
+        Invoke-Adb shell input keyevent KEYCODE_HOME
+    }
     Invoke-Adb shell am start-foreground-service `
         -a com.example.musicsourceseparation.RUN_INFERENCE_BENCHMARK `
         -n $component `

@@ -11,6 +11,7 @@ import android.os.Looper
 import android.text.InputType
 import android.view.Gravity
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
@@ -68,12 +69,27 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        updateBenchmarkScreenPolicy(intent)
         val snapshot = AppLiveValidationState.snapshot(this)
         if (snapshot.running && !AppLiveValidationService.isRunning()) {
             AppLiveValidationState.markInterrupted(this)
         }
         setContentView(createContentView())
         refreshAppLiveControls()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        updateBenchmarkScreenPolicy(intent)
+    }
+
+    private fun updateBenchmarkScreenPolicy(intent: Intent) {
+        if (intent.getBooleanExtra(EXTRA_BENCHMARK_KEEP_SCREEN_ON, false)) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
     }
 
     override fun onResume() {
@@ -631,6 +647,7 @@ class MainActivity : Activity() {
     }
 
     private companion object {
+        const val EXTRA_BENCHMARK_KEEP_SCREEN_ON = "benchmarkKeepScreenOn"
         const val REQUEST_AUDIO = 1001
         const val APP_LIVE_REFRESH_MS = 500L
     }

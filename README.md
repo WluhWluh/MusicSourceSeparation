@@ -225,8 +225,9 @@ and rejects an existing local tag. The completed device report must match the
 contract, ONNX, LiteRT, input, source revision, dirty state, and runtime AAR
 identities before the runner accepts it. The runner also hashes the installed
 base APK and requires it to match `AppApk` exactly.
-Foreground mode wakes and unlocks the test device before launching the Activity;
-this is required for reliable shell-started FGS execution on Android 15.
+Foreground mode wakes and unlocks the test device and keeps the benchmark
+Activity's screen on; this prevents Android 15 FGS rejection and long-run UID
+throttling after the normal display timeout.
 
 Host-side reports and thermal/battery samples are written below:
 

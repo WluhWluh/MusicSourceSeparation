@@ -129,7 +129,8 @@ function Get-DeviceSha256([string]$Path) {
 function Start-HostActivity {
     Invoke-Adb shell input keyevent KEYCODE_WAKEUP
     Invoke-Adb shell wm dismiss-keyguard
-    Invoke-Adb shell am start -W -n "$package/.MainActivity" | Out-Null
+    Invoke-Adb shell am start -W -n "$package/.MainActivity" `
+        --ez benchmarkKeepScreenOn true | Out-Null
     Start-Sleep -Milliseconds 500
 }
 
@@ -215,6 +216,7 @@ $hostIdentity = [ordered]@{
     litert = [ordered]@{ path = $LiteRtModel; bytes = (Get-Item $LiteRtModel).Length; sha256 = $modelSha256 }
     input = [ordered]@{ path = $SourceAudio; bytes = (Get-Item $SourceAudio).Length; sha256 = $audioSha256; format = "canonical-pcm16-wave" }
     source = [ordered]@{ revision = $sourceRevision; dirty = $sourceDirty }
+    execution = [ordered]@{ keepActivityForeground = $true; keepScreenOn = $true }
     appApk = [ordered]@{ path = $AppApk; bytes = (Get-Item $AppApk).Length; sha256 = $appApkSha256; installedPath = $installedApkPath }
     runtimeArtifact = [ordered]@{ path = $RuntimeArtifact; bytes = (Get-Item $RuntimeArtifact).Length; sha256 = $runtimeArtifactSha256 }
     acceleratorBundle = [ordered]@{ path = $AcceleratorBundleManifest; bytes = (Get-Item $AcceleratorBundleManifest).Length; sha256 = $acceleratorBundleSha256 }

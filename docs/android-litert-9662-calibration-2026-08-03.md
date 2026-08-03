@@ -15,16 +15,18 @@ Only the 29 completed `b0screen-*` reports are valid performance evidence.
 | Galaxy S10, SM8150 | completed | completed | completed | unavailable in the current QNN runtime matrix | not run |
 | Galaxy S25, SM8750 | completed | completed | completed | completed, delegation verified | QNN completed, 48/48 windows |
 
-The bounded GPU path is the best currently usable LiteRT path on the S10. On
-the S25, QNN is the fastest steady-state path at about 122 ms per model window,
-followed by the bounded GPU at about 304 ms in the 100-window run. QNN also has
-an approximately 8.6-second JIT setup cost and a materially larger tensor error
-than CPU or GPU, so steady-state speed alone is not an application-selection
-rule.
+The bounded GPU path is the fastest measured LiteRT tensor path on the S10. On
+the S25, QNN is the fastest measured steady-state tensor path at about 122 ms
+per model window, followed by the bounded GPU at about 304 ms in the 100-window
+run. QNN also has an approximately 8.6-second JIT setup cost and a materially
+larger tensor error than CPU or GPU, so steady-state speed alone is not an
+application-selection rule.
 
 Using the median cold-session setup and inference values, QNN overtakes the
 bounded GPU after about 50.8 model windows. This is approximately 294 seconds
-of generated audio at 44.1 kHz. The practical preliminary policy is therefore:
+of generated audio at 44.1 kHz. Because Batch 0 has no matching GPU full-song,
+UI, energy, or release-build result, this defines a model-only routing
+hypothesis for the next batch rather than an application policy:
 
 - use the bounded GPU for short, one-shot work on the S25;
 - consider QNN for audio longer than about five minutes or when a session can
@@ -44,9 +46,11 @@ This batch tested one model and one frozen real input tensor:
 - audio run: one full-song QNN run on the S25 only.
 
 Every accepted run kept the benchmark Activity foreground and the screen on.
-All 29 reports have `status=complete`, the same contract/model/build identities,
-source revision `2923b73c2b74a541e37d4c1fa113b9186fbf2cb9`, and
-`sourceDirty=false`.
+All 29 reports have `status=complete` and share the frozen contract, model,
+runtime artifact, and source revision
+`2923b73c2b74a541e37d4c1fa113b9186fbf2cb9`. Each report separately matched
+its expected APK/flavor, optional accelerator bundle, and tensor or audio input
+identity; all record `sourceDirty=false`.
 
 The earlier `b0final-*` runs are excluded from all rankings. Their host Activity
 did not hold `FLAG_KEEP_SCREEN_ON`; after the normal display timeout, Android
@@ -66,6 +70,7 @@ data remains useful only as framework diagnostics.
 | Branch | `experiment/model-matrix-batch0-9662` |
 | Benchmark source revision | `2923b73c2b74a541e37d4c1fa113b9186fbf2cb9` |
 | Source dirty state | `false` |
+| Build type | Android debug benchmark APKs |
 | LiteRT runtime | 2.1.5, bounded GPU artifact `2.1.5-bss.2` |
 | LiteRT AAR SHA-256 | `88cd2f7eaf1443d1c570085b1c24f239db87eb24c788a590adf5158e17443d0e` |
 | QNN bundle manifest SHA-256 | `8e20d10a6b27107fcb80460cc27892d5c2b797107c09ecbebeb095fbfe09c297` |
@@ -134,17 +139,20 @@ fails closed on missing, unknown, or inconsistent fields.
 
 ## Method
 
-Each cold tag starts with `am force-stop`, launches the benchmark Activity,
-wakes and unlocks the device, and enables its benchmark-only screen-on flag.
+Each cold tag starts with `am force-stop`, wakes and unlocks the device, then
+launches the benchmark Activity with its benchmark-only screen-on flag.
 The contract, source/artifact pair, and tensor fixture are identical across
 backends on a device. ORT consumes the pinned ONNX; LiteRT consumes the pinned
 TFLite. ORT runs first and writes the element-wise reference used by the
 LiteRT paths.
 
-The cold-session result for each backend consists of three independent process
-sessions. Each session performs two warmups followed by 20 measured iterations
-with four CPU threads configured for the CPU backends. Setup is reported
-separately. LiteRT per-window inference includes dispatch and output readback.
+The cold-session result for each backend consists of three independent
+process-cold sessions. There was no device reboot, OS cache drop, driver cache
+reset, or controlled cooldown between them, so setup is not a hardware-cold
+measurement. Each session performs two warmups followed by 20 measured
+iterations with four CPU threads configured for the CPU backends. Setup is
+reported separately. LiteRT per-window inference includes dispatch and output
+readback.
 ORT `inferenceWallMs` covers `session.run`; its output copy is accumulated in
 `outputReadWallMs` instead. The accepted cold ORT runs measured 5.4-8.8 ms per
 iteration, so this asymmetry does not change the observed ranking but must be
@@ -226,7 +234,7 @@ and file I/O.
 
 ## Numerical consistency
 
-All accepted outputs have the expected 2,097,152 float elements and zero
+All accepted tensor outputs have the expected 2,097,152 float elements and zero
 non-finite values. CPU and bounded GPU are very close to the device-side ORT
 reference. QNN is directionally similar but not FP32-equivalent.
 
@@ -289,6 +297,13 @@ The canonical input is a 273.699093-second, 44.1 kHz stereo PCM16 WAV with
 12,070,130 frames. One QNN session completed all 48 windows; the last window
 contained 86,258 source frames.
 
+Unlike the tensor LiteRT timer, full-song `inferenceWallMs` covers `model.run`
+only. Output readback is the separate 194.503 ms stage, or 4.052 ms per window;
+adding it gives a same-scope mean of about 122.226 ms per window. The reported
+end-to-end timer is the in-process QNN audio pipeline: it includes decode,
+session setup, DSP, output commit, and output hashing, but excludes APK/process
+startup, service prevalidation and staging, ADB upload, and host artifact pull.
+
 | Metric | Result |
 | --- | ---: |
 | Completed windows | 48 / 48 |
@@ -298,9 +313,9 @@ contained 86,258 source frames.
 | Inference min / max | 114.243 / 120.540 ms |
 | Inference CPU / wall ratio | 0.1729 |
 | Processing wall time | 26,347.805 ms |
-| End-to-end wall time | 26,437.667 ms |
-| Reported end-to-end RTF | 0.096594 |
-| End-to-end audio rate | 10.35x real time |
+| In-process pipeline end-to-end | 26,437.667 ms |
+| In-process pipeline RTF | 0.096594 |
+| In-process pipeline audio rate | 10.35x real time |
 | Android thermal status | 0 -> 0; all 21 samples were 0 |
 | Sampled peak PSS | 706.7 MiB |
 
@@ -320,7 +335,7 @@ does not remove the host DSP cost:
 
 Output files were pulled and re-hashed on the host:
 
-| Stem | Bytes | SHA-256 | Peak | Saturated samples | Non-finite |
+| Stem | Bytes | SHA-256 | Pre-quantization float peak | Saturated samples | Non-finite |
 | --- | ---: | --- | ---: | ---: | ---: |
 | Vocals | 48,280,564 | `f7e5a030f4d3be64da73a4890d9f5e91de3b0f690e74b2e9e35fe82846d0ac10` | 0.98447 | 0 | 0 |
 | Instrumental | 48,280,564 | `ba7858db0311f1a3067b19c1309eeed933dfd708c7cd16f1c050f5f43ff401ca` | 1.34834 | 7,801 positive / 5,374 negative | 0 |
@@ -348,9 +363,9 @@ batch has a QNN full-song run but no corresponding GPU full-song run.
 
 Batch 0 closes the infrastructure and calibration objective for 9662:
 
-- the strict versioned contract, full host/device identity chain, write-once
-  tags, installed-APK check, and fail-closed accelerator evidence worked on all
-  accepted reports;
+- the strict versioned contract, full host/device identity chain,
+  overwrite-protected retained host output directories, installed-APK check,
+  and fail-closed accelerator evidence worked on all accepted reports;
 - LiteRT CPU and bounded GPU can execute the model on both devices;
 - QNN v79 can execute and fully delegate the model on the S25;
 - the current QNN runtime matrix does not provide an S10 path; and
@@ -360,7 +375,9 @@ Before using this evidence for application adaptation, the next gates should
 be performed in this order:
 
 1. Run the same full-song fixture through CPU, bounded GPU, and QNN, then
-   compute stem SI-SDR, waveform error, clipping, and residual consistency.
+   compute SI-SDR versus ORT, waveform error, clipping, and residual
+   consistency as backend-fidelity measures. Separation-quality SI-SDR needs a
+   different dataset with ground-truth isolated stems.
 2. Complete controlled listening or ABX qualification for QNN output, focusing
    on low-energy vocals and transient-heavy passages where tensor error can be
    perceptually misleading.
@@ -410,6 +427,7 @@ dispatch evidence is embedded in `report.json`. The full-song directory
 additionally contains the two pulled WAV outputs.
 
 The frozen build and runner workflow is documented in the repository README.
-The raw tag names are write-once, and the runners reject report identities that
-do not match the contract, source revision, runtime artifact, APK, model, or
-input supplied by the host.
+Retained host output directories are overwrite-protected, and the runners
+reject report identities that do not match the contract, source revision,
+runtime artifact, APK, model, or input supplied by the host. Removing a local
+directory permits deliberate tag reuse and replacement of remote artifacts.

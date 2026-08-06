@@ -265,7 +265,8 @@ following community exports are pinned to the open-source
 The exporter predates the maintainer's safetensors publication and loads the
 legacy official `.th` checkpoints. Each v3 sidecar therefore records that
 exact legacy file as `conversion.exporterInput`; the safetensors are recorded
-separately as the safer maintainer-published mirror and future oracle source.
+separately as the maintainer-published source used by the later canonical
+Torch/LiteRT oracle.
 The exporter repository license and each fixed ONNX model-card file are pinned
 as separate conversion artifacts. The ONNX source contract states float32 I/O,
 no quantization, and `runtimePrecisionStatus=not-established`; the internal
@@ -273,10 +274,11 @@ storage inventory is not a claim about a future delegate's activation type.
 
 Both are opset 17 graphs produced by PyTorch 2.4.1. The exporter replaces
 complex STFT/iSTFT with large convolutional DFT kernels, freezes positional
-randomness, and replaces fused multi-head attention. The repository reports a
-single synthetic parity check, but that claim has not yet been independently
-reproduced here against the pinned official safetensors. These ONNX files are
-therefore conversion and allocation probes only. Their graph I/O is float32,
+randomness, and replaces fused multi-head attention. The source-freeze report
+recorded a single synthetic parity check before the later FP32/FP16 and
+checkpoint-equivalence diagnostics. Those later diagnostics do not turn these
+graphs into the canonical mobile producer; they remain conversion and
+allocation probes only. Their graph I/O is float32,
 but storage is mixed: most neural weights are float16, while embedded DFT/iSTFT
 constants include float16, float32, float64, and int64. The sidecars record the
 exact dtype inventories; `fp16weights` must not be interpreted as an FP16
@@ -305,9 +307,12 @@ strict schema v3 now describes tensor-only multi-stem experiments:
 
 Schema v3 is deliberately candidate-only and cannot describe a TFLite runtime.
 This prevents the downloaded ONNX files from being passed off as LiteRT device
-artifacts. A future executable tensor-only runtime contract must be a separate
-type that references the candidate contract ID and sidecar SHA, then freezes the
-ONNX-to-TFLite conversion, actual FlatBuffer signature, and TFLite identity.
+artifacts. For any future imported ONNX candidate, an executable tensor-only
+runtime contract must be a separate type that references the candidate contract
+ID and sidecar SHA, then freezes the conversion, actual FlatBuffer signature,
+and TFLite identity. The completed official 4-stem and 6-stem experiments use
+their own generated host manifests and identity-indexed harnesses; they do not
+promote these v3 ONNX sidecars.
 
 Current sidecars:
 
@@ -316,8 +321,9 @@ Current sidecars:
 | `htdemucs_4s_waveform_7p8s_onnx@3` | 6,360 | `f53a3cdad1d162541b8b353257d716e25b4178a433d8629a4804b3178484277d` |
 | `htdemucs_6s_waveform_7p8s_onnx@3` | 6,604 | `cc8dafb665602b6b8410ca87c6450e29ff4986990f22613e6451cf8da9f4c513` |
 
-The existing Android inference service is still schema-v2-only. It must not be
-used for these sidecars until a separate v3 tensor runner is implemented.
+The general Android inference service remains schema-v2-only and must not be
+used for these sidecars. The canonical device experiments used a separate
+identity-indexed benchmark harness, not an implicit v3 service upgrade.
 Likewise, the MDX QNN audio runner remains intentionally out of scope because
 it hard-codes target plus residual audio reconstruction.
 
@@ -410,7 +416,7 @@ ordering was subsequently executed and resolved as follows:
 | Device/backend | Measured closure | Remaining boundary |
 | --- | --- | --- |
 | S25 CPU | official 6-stem and 4-stem canonical artifacts completed 30/180-second E2E batches; guitar-ft completed three 30-second diagnostics | both official artifacts failed the strict per-stem device gate; guitar-ft is not host-admitted |
-| S10 CPU | all three canonical artifacts completed serial and four-lane 30-second matrices | four-lane RTF remains `1.292-1.382`; offline-only |
+| S10 CPU | three 7.8-second artifacts (guitar-ft diagnostic-only) completed serial and four-lane 30-second matrices | four-lane RTF remains `1.292-1.382`; offline-only |
 | S25 GPU | canonical official profiles completed only as GPU+CPU FP32 hybrids with 158 OpenCL nodes; latency/memory did not justify them | no strict GPU product route; the tested hybrids are rejected |
 | S10 GPU | not run in these closure batches | no GPU claim |
 | S25 QNN | smoke IR generation reached VTCM schedule failure before model creation | no NPU inference; unchanged graph closed to option-only retries |
@@ -522,7 +528,7 @@ SHA-256. Passing
 The 2-second result cannot be linearly scaled to 7.8 seconds because attention
 cost grows approximately quadratically with token length.
 
-### Batch M1: CPU allocation boundary (canonical follow-up complete)
+### Batch M1: CPU allocation boundary (historical smoke protocol; canonical follow-up complete)
 
 At the smoke checkpoint, the generated `smoke_2s` S25 CPU allocation/inference
 probe
@@ -551,7 +557,10 @@ unknown status without retroactively changing this smoke measurement.
   reports at least `1.25 * S25 peak PSS + 512 MiB` as `MemAvailable`; use a
   300-second watchdog and the same PASS/RISK/FAIL rules. This is a resource
   safety ordering, not a claim that an S10 2-second smoke cannot be informative.
-- Do not reconstruct audio or run a full song.
+- At the source-freeze checkpoint, do not reconstruct audio or run a full song
+  in this smoke batch. Later canonical CPU and GPU+CPU experiments intentionally
+  used separate full DSP and long-duration contracts; their results are in the
+  dated reports above.
 
 ### Batch M2: historical protocol; expanded CPU batches complete
 
@@ -569,7 +578,7 @@ unknown status without retroactively changing this smoke measurement.
   faster than real time. With three measurements, do not label the maximum as
   a statistical P95.
 
-### Batch M3: GPU/NPU boundary
+### Batch M3: GPU/NPU boundary (historical smoke protocol)
 
 The generated smoke profile has exercised the M3 ordering on S25. Strict GPU
 prepare failed after reporting only `158/3504` GPU nodes. Explicit GPU+CPU
@@ -591,9 +600,11 @@ option retries.
 - Apply the FP32 `1e-3`/80 dB numerical gate independently. Lower-precision GPU
   or NPU results outside that gate may be retained as throughput-only evidence,
   but must not be described as numerically usable.
-- Do not run sustained GPU/NPU work until single-window memory and delegation
-  are understood. Sustained CPU research later proceeded under separate
-  canonical reports.
+- The source-freeze rule was not to run sustained GPU/NPU work until
+  single-window memory and delegation were understood. That rule applies only
+  to this historical smoke batch. Later canonical reports did run bounded
+  S25 GPU+CPU profiles, while no canonical NPU inference was completed; those
+  results supersede the then-future wording without changing the smoke result.
 
 For the external-DSP route, freeze and independently test the host reference
 before M1: periodic Hann (`n_fft=4096`, `hop=1024`), Demucs reflect padding,

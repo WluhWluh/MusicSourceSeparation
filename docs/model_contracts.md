@@ -43,7 +43,7 @@ portable executable tensor-only schema must remain a separate type that binds
 its source candidate, conversion recipe, FlatBuffer, and actual signature.
 
 See `android-litert-demucs-multistem-feasibility-2026-08-03.md` for the source
-freeze, conversion blockers, and proposed device batches.
+freeze, conversion blockers, historical batch plan, and measured closure.
 
 ## External LiteRT runtime candidates (schema v4)
 
@@ -161,22 +161,36 @@ none changes the schema-v1 smoke sidecar or grants product admission:
 | HTDemucs-6s guitar-ft | deterministic EOF gate miss: `79.245 dB` versus `80 dB` | S25 CPU three-song mean E2E RTF `0.6783`; same-weight PCM16 comparison differs by at most 1-2 LSB | diagnostic-only, research-only, not admitted |
 | official HTDemucs four-stem base | layered host pipeline passed | S25 CPU 180-second E2E RTF `0.617`; CPU and GPU+CPU strict per-stem device gates failed | CPU offline/producer-ahead feasibility only |
 
-Batch 4A selected official four-stem base as the sole general-purpose mobile
-export target from that batch. Psytrance ONNX sounded clearly worse with more
-cross-stem leakage. Official base, the complete fine-tuned bag, and the two
-base/specialist hybrids were not stably distinguishable in the multi-song blind
-review; this is no demonstrated advantage, not proof of perceptual equivalence.
+Batch 4A selected official four-stem base as that batch's research export
+baseline. Psytrance ONNX sounded clearly worse with more cross-stem leakage.
+Official base, the complete fine-tuned bag, and the two base/specialist hybrids
+were not stably distinguishable in the multi-song blind review; this is no
+demonstrated advantage, not proof of perceptual equivalence. This selection is
+not product qualification or a general-purpose support decision.
 
-All three artifacts also executed on the S10 LiteRT 2.1.5 CPU. With the original
-serial iSTFT, mean 30-second E2E RTF was `2.960`, `2.401`, and `2.905` for
-official six-stem, official four-stem, and guitar-ft. The bit-exact four-lane
-iSTFT experiment reduced those values to `1.292`, `1.382`, and `1.310`,
-respectively, while preserving every output WAV SHA. All remain slower than
-real time and are limited to offline research on S10.
+The four-stem S25 report has an explicit provenance limitation: its APK/source
+revision was not fully self-attested and the recorded Maven runtime digest was
+unresolved. Its device numbers remain valid bounded observations tied to the
+artifact, input, and report evidence, but they are not a fully self-contained
+rebuild identity.
+
+All three 7.8-second artifacts also executed on the S10 LiteRT 2.1.5 CPU
+(guitar-ft remains diagnostic-only). With the original serial iSTFT, mean
+30-second E2E RTF was `2.960`, `2.401`, and `2.905` for official six-stem,
+official four-stem, and guitar-ft. The four-lane experiment preserved the
+official six-stem and official four-stem raw-FP32 fixtures bit-for-bit; all
+three variants' final output WAV SHA values matched their serial counterparts.
+The resulting RTFs were `1.292`, `1.382`, and `1.310` in that same order. Serial
+and parallel runs used different APK/runner sessions, and a same-APK control
+showed scheduling variance, so these are measured research comparisons rather
+than a universal speedup guarantee. All remain slower than real time and are
+limited to offline research on S10.
 
 Authoritative result reports are:
 
+- `android-litert215-demucs6-canonical7p8-host-2026-08-04.md`;
 - `android-litert215-demucs6-canonical7p8-s25-2026-08-04.md`;
+- `htdemucs6-guitar-ft-host-experiment-2026-08-04.md`;
 - `htdemucs6-guitar-ft-litert-s25-diagnostic-2026-08-05.md`;
 - `htdemucs4-batch4a-host-quality-2026-08-05.md`;
 - `android-litert215-demucs4-official-s25-2026-08-05.md`;
@@ -364,7 +378,7 @@ status:  diagnosticOnly, researchOnly, hostAdmissionStatus=not-admitted
 ```
 
 Same-weight Torch is the conversion oracle; similarity to official weights is
-not a conversion gate. Single-window and full OLA comparisons pass, but the
+not a conversion gate. The full-OLA aggregate comparison passes, but the
 canonical EOF region reproducibly measures 79.245 dB and fails the frozen
 80 dB host threshold. S25 PCM16 renders closely match same-weight Torch, so the
 observed listening changes are attributed to the fine-tuned weights rather

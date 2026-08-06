@@ -157,9 +157,9 @@ none changes the schema-v1 smoke sidecar or grants product admission:
 
 | Artifact | Host status | Device result | Research decision |
 | --- | --- | --- | --- |
-| official HTDemucs-6s | layered host pipeline passed | S25 CPU 180-second E2E RTF `0.555`; CPU and GPU+CPU strict per-stem device gates failed | CPU offline/producer-ahead feasibility only |
+| official HTDemucs-6s | layered host pipeline passed | S25 CPU 180-second E2E RTF `0.555`; CPU and GPU+CPU neural-core strict per-stem device gates failed | CPU offline/producer-ahead feasibility only |
 | HTDemucs-6s guitar-ft | deterministic EOF gate miss: `79.245 dB` versus `80 dB` | S25 CPU three-song mean E2E RTF `0.6783`; same-weight PCM16 comparison differs by at most 1-2 LSB | diagnostic-only, research-only, not admitted |
-| official HTDemucs four-stem base | layered host pipeline passed | S25 CPU 180-second E2E RTF `0.617`; CPU and GPU+CPU strict per-stem device gates failed | CPU offline/producer-ahead feasibility only |
+| official HTDemucs four-stem base | layered host pipeline passed | S25 CPU 180-second E2E RTF `0.617`; CPU and GPU+CPU neural-core strict per-stem device gates failed | CPU offline/producer-ahead feasibility only |
 
 Batch 4A selected official four-stem base as that batch's research export
 baseline. Psytrance ONNX sounded clearly worse with more cross-stem leakage.
@@ -178,9 +178,10 @@ and the guitar-ft S25 diagnostic does not bind a resolved source identity.
 All three 7.8-second artifacts also executed on the S10 LiteRT 2.1.5 CPU
 (guitar-ft remains diagnostic-only). With the original serial iSTFT, mean
 30-second E2E RTF was `2.960`, `2.401`, and `2.905` for official six-stem,
-official four-stem, and guitar-ft. The four-lane experiment preserved the
-official six-stem and official four-stem raw-FP32 fixtures bit-for-bit; all
-three variants' final output WAV SHA values matched their serial counterparts.
+official four-stem, and guitar-ft. The four-worker `parallel-lanes` experiment
+preserved the official six-stem and official four-stem raw-FP32 fixtures
+bit-for-bit; all three variants' final output WAV SHA values matched their
+serial counterparts.
 The resulting RTFs were `1.292`, `1.382`, and `1.310` in that same order. Serial
 and parallel runs used different APK/runner sessions, and a same-APK control
 showed scheduling variance, so these are measured research comparisons rather
@@ -361,8 +362,9 @@ outputs are `[1,4,4,2048,336]` frequency and `[1,4,2,343980]` time branches in
 `drums, bass, other, vocals` order. The FlatBuffer has 3,458 operators and zero
 custom operators. Its layered host gate passed, including 121.256 dB
 single-window and 90.781 dB full-OLA aggregate comparisons. S25 CPU and
-GPU+CPU execution completed, but the strict per-stem device gate failed for
-both. See `android-litert215-demucs4-official-s25-2026-08-05.md`; host admission
+GPU+CPU neural-core execution completed, but the strict per-stem device gate
+failed for both. No GPU E2E audio batch ran. See
+`android-litert215-demucs4-official-s25-2026-08-05.md`; host admission
 authorizes research execution only.
 
 ### Guitar-ft diagnostic candidate

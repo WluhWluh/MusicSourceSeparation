@@ -38,12 +38,12 @@ through on LiteRT 2.1.5. The current bounded result is:
 
 | Candidate / batch | Completed evidence | Decision |
 | --- | --- | --- |
-| official HTDemucs-6s canonical | host pipeline passed; S25 CPU 180-second E2E RTF `0.555`; hybrid GPU+CPU tested | strict per-stem device gate failed; CPU offline/producer-ahead research only |
+| official HTDemucs-6s canonical | host pipeline passed; S25 CPU 180-second E2E RTF `0.555`; hybrid GPU+CPU neural-core profile tested, no GPU E2E run | strict per-stem neural-core device gate failed; CPU offline/producer-ahead research only |
 | guitar-ft six-stem | host and S25 diagnostic completed; three-song S25 mean E2E RTF `0.6783` | EOF host gate failed at `79.245 dB`; research-only/not admitted; license review still required |
 | Batch 4A four-stem quality | five host variants and blind review completed | Psytrance clearly worse/more cross-talk; other four not stably distinguishable; official base selected as the research baseline |
-| official HTDemucs four-stem canonical | host pipeline passed; S25 CPU 180-second E2E RTF `0.617`; hybrid GPU+CPU tested | strict per-stem device gate failed; CPU offline/producer-ahead research only |
+| official HTDemucs four-stem canonical | host pipeline passed; S25 CPU 180-second E2E RTF `0.617`; hybrid GPU+CPU neural-core profile tested, no GPU E2E run | strict per-stem neural-core device gate failed; CPU offline/producer-ahead research only |
 | S10 CPU serial matrix | three 7.8-second artifacts, including diagnostic-only guitar-ft, completed three 30-second tracks | RTF `2.960` / `2.401` / `2.905` in official-6s / official-4s / guitar-ft order; serial iSTFT dominated |
-| S10 four-lane iSTFT | official-6s and official-4s raw-FP32 checks were bit-exact; all three variants' final WAV SHA values matched serial | RTF `1.292` / `1.382` / `1.310` in the same order; still slower than real time and offline-only |
+| S10 four-worker `parallel-lanes` iSTFT | official-6s and official-4s raw-FP32 checks were bit-exact; all three variants' final WAV SHA values matched serial | RTF `1.292` / `1.382` / `1.310` in the same order; still slower than real time and offline-only |
 
 The four-stem S25 report records `sourceRevision=$rev` and
 `maven-unresolved`; its APK therefore does not self-attest a complete source
@@ -423,8 +423,8 @@ ordering was subsequently executed and resolved as follows:
 | Device/backend | Measured closure | Remaining boundary |
 | --- | --- | --- |
 | S25 CPU | official 6-stem and 4-stem canonical artifacts completed 30/180-second E2E batches; guitar-ft completed three 30-second diagnostics | both official artifacts failed the strict per-stem device gate; guitar-ft is not host-admitted |
-| S10 CPU | three 7.8-second artifacts (guitar-ft diagnostic-only) completed serial and four-lane 30-second matrices | four-lane RTF remains `1.292-1.382`; offline-only |
-| S25 GPU | canonical official profiles completed only as GPU+CPU FP32 hybrids with 158 OpenCL nodes; latency/memory did not justify them | no strict GPU product route; the tested hybrids are rejected |
+| S10 CPU | three 7.8-second artifacts (guitar-ft diagnostic-only) completed serial and four-worker `parallel-lanes` 30-second matrices | four-worker RTF remains `1.292-1.382`; offline-only |
+| S25 GPU | canonical official neural-core profiles completed only as GPU+CPU FP32 hybrids with 158 OpenCL nodes; no GPU E2E audio batch ran, and latency/memory did not justify the profiles | no strict GPU product route; the tested hybrids are rejected |
 | S10 GPU | not run in these closure batches | no GPU claim |
 | S25 QNN | smoke IR generation reached VTCM schedule failure before model creation | no NPU inference; unchanged graph closed to option-only retries |
 | S10 NPU | unavailable in the recorded runtime matrix | do not label CPU fallback as NPU execution |

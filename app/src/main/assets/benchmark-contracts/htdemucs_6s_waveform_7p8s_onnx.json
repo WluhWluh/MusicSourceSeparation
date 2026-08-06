@@ -1,0 +1,219 @@
+{
+  "conversionSource": {
+    "byteSize": 136428532,
+    "fileName": "htdemucs_6s_fp16weights.onnx",
+    "format": "onnx-model",
+    "localPath": "onnx/htdemucs_6s_fp16weights.onnx",
+    "sha256": "7ce55792e2231c93fbf92de95f5fd5b3a5e6c89f7db690dfd693e8f1dce56869",
+    "url": "https://huggingface.co/StemSplitio/htdemucs-6s-onnx/resolve/49df9b6989cf2150840ea65b0bef77a2e471b678/htdemucs_6s_fp16weights.onnx?download=true"
+  },
+  "contractId": "htdemucs_6s_waveform_7p8s_onnx@3",
+  "contractKind": "tensor-only-candidate",
+  "contractSchemaVersion": 3,
+  "conversion": {
+    "exporterInput": {
+      "byteSize": 54996327,
+      "fileName": "5c90dfd2-34c22ccb.th",
+      "format": "pytorch-checkpoint",
+      "localPath": "checkpoints/5c90dfd2-34c22ccb.th",
+      "sha256": "34c22ccb381c6f9fdbf324f04e1e2fe21aaaf293f5ded163a162697ff9a02ddd",
+      "url": "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/5c90dfd2-34c22ccb.th"
+    },
+    "modelRepository": "StemSplitio/htdemucs-6s-onnx",
+    "modelRevision": "49df9b6989cf2150840ea65b0bef77a2e471b678",
+    "modelCard": {
+      "byteSize": 8513,
+      "fileName": "htdemucs-6s-onnx-README.md",
+      "format": "markdown",
+      "localPath": "conversion/model-cards/htdemucs-6s-onnx-README.md",
+      "sha256": "42c63ffad79357ccd93f9b93a8ed7935a742bd2e08035321f7e6623c0635661c",
+      "url": "https://huggingface.co/StemSplitio/htdemucs-6s-onnx/raw/49df9b6989cf2150840ea65b0bef77a2e471b678/README.md"
+    },
+    "modelLicenseSpdx": "MIT",
+    "opset": 17,
+    "producerName": "pytorch",
+    "producerVersion": "2.4.1",
+    "repository": "https://github.com/StemSplit/demucs-onnx",
+    "repositoryLicense": {
+      "byteSize": 1066,
+      "fileName": "demucs-onnx-LICENSE.txt",
+      "format": "text",
+      "localPath": "conversion/licenses/demucs-onnx-LICENSE.txt",
+      "sha256": "002e90589e1030d13e3708342c89faf67b520273793b6a2c77c4d9bd9a5ec7e7",
+      "url": "https://raw.githubusercontent.com/StemSplit/demucs-onnx/85db5c80aba33f0f2bdf88034a4be6539feec85b/LICENSE"
+    },
+    "repositoryLicenseSpdx": "MIT",
+    "revision": "85db5c80aba33f0f2bdf88034a4be6539feec85b",
+    "verificationStatus": "local-structure-and-zero-input"
+  },
+  "displayName": "HTDemucs 6-stem waveform 7.8s ONNX conversion source",
+  "modelId": "htdemucs_6s_waveform_7p8s_onnx",
+  "pipelineCompatibility": {
+    "maximumVersion": 1,
+    "minimumVersion": 1,
+    "pipelineId": "tensor-only-multistem"
+  },
+  "precisionContract": {
+    "constantStorage": [
+      {
+        "byteSize": 67141632,
+        "dtype": "float16",
+        "elementCount": 33570816,
+        "tensorCount": 4
+      },
+      {
+        "byteSize": 2124,
+        "dtype": "float32",
+        "elementCount": 531,
+        "tensorCount": 341
+      },
+      {
+        "byteSize": 11141128,
+        "dtype": "float64",
+        "elementCount": 1392641,
+        "tensorCount": 341
+      },
+      {
+        "byteSize": 89184,
+        "dtype": "int64",
+        "elementCount": 11148,
+        "tensorCount": 10968
+      }
+    ],
+    "initializerStorage": [
+      {
+        "byteSize": 54609408,
+        "dtype": "float16",
+        "elementCount": 27304704,
+        "tensorCount": 144
+      },
+      {
+        "byteSize": 441168,
+        "dtype": "float32",
+        "elementCount": 110292,
+        "tensorCount": 397
+      }
+    ],
+    "ioDtype": "float32",
+    "quantization": "none",
+    "runtimePrecisionStatus": "not-established",
+    "scope": "conversion-source-storage"
+  },
+  "stemContract": {
+    "bindings": [
+      {
+        "outputIndex": 0,
+        "packing": {
+          "axis": 1,
+          "elementsPerStem": 1,
+          "kind": "axis-contiguous"
+        },
+        "stems": [
+          {
+            "displayLabel": "Drums",
+            "semantic": "drums"
+          },
+          {
+            "displayLabel": "Bass",
+            "semantic": "bass"
+          },
+          {
+            "displayLabel": "Other",
+            "semantic": "other"
+          },
+          {
+            "displayLabel": "Vocals",
+            "semantic": "vocals"
+          },
+          {
+            "displayLabel": "Guitar",
+            "semantic": "guitar"
+          },
+          {
+            "displayLabel": "Piano",
+            "semantic": "piano"
+          }
+        ]
+      }
+    ],
+    "derivation": "direct"
+  },
+  "tensorContract": {
+    "inputEncoding": "tensor-order-float32-le",
+    "inputs": [
+      {
+        "axes": [
+          "batch",
+          "channel",
+          "sample"
+        ],
+        "dtype": "float32",
+        "index": 0,
+        "name": "mix",
+        "shape": [
+          1,
+          2,
+          343980
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "axes": [
+          "batch",
+          "stem",
+          "channel",
+          "sample"
+        ],
+        "dtype": "float32",
+        "index": 0,
+        "name": "stems",
+        "shape": [
+          1,
+          6,
+          2,
+          343980
+        ]
+      }
+    ]
+  },
+  "upstream": {
+    "bagManifest": {
+      "byteSize": 21,
+      "fileName": "htdemucs_6s.yaml",
+      "format": "yaml",
+      "localPath": "official-hf/htdemucs_6s/htdemucs_6s.yaml",
+      "sha256": "207405151270af8fd81c2373c25d27950916682ac91dca7884a11ce13dad6f58",
+      "url": "https://huggingface.co/adefossez/HTDemucs-6s/raw/053e1404489b3dc58bf718224fac4b7316de8c93/htdemucs_6s.yaml"
+    },
+    "hubRepository": "adefossez/HTDemucs-6s",
+    "hubRevision": "053e1404489b3dc58bf718224fac4b7316de8c93",
+    "licenseSpdx": "MIT",
+    "loaderRepository": "https://github.com/adefossez/demucs",
+    "loaderRevision": "eeac1d15891af95b1288d2884b95baa3e5baa96c",
+    "metadata": {
+      "byteSize": 10398,
+      "fileName": "5c90dfd2.json",
+      "format": "json",
+      "localPath": "official-hf/htdemucs_6s/5c90dfd2.json",
+      "sha256": "72d7b4739ba40c8ff1d697404232edd335f397cedbf1bb88eec0034bdbab153e",
+      "url": "https://huggingface.co/adefossez/HTDemucs-6s/raw/053e1404489b3dc58bf718224fac4b7316de8c93/5c90dfd2.json"
+    },
+    "weight": {
+      "byteSize": 54885744,
+      "fileName": "5c90dfd2.safetensors",
+      "format": "safetensors",
+      "localPath": "official-hf/htdemucs_6s/5c90dfd2.safetensors",
+      "sha256": "d2a1745f0744721f6b8ca5bf469b67c651ea5ed1b52998cab033b2158609d411",
+      "url": "https://huggingface.co/adefossez/HTDemucs-6s/resolve/053e1404489b3dc58bf718224fac4b7316de8c93/5c90dfd2.safetensors?download=true"
+    }
+  },
+  "workloadContract": {
+    "channelCount": 2,
+    "kind": "waveform-segment",
+    "sampleCount": 343980,
+    "sampleRate": 44100,
+    "segmentDenominator": 5,
+    "segmentNumerator": 39
+  }
+}

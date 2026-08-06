@@ -90,6 +90,8 @@ enum class BenchmarkStemSemantic(val wireValue: String) {
     BASS("bass"),
     DRUMS("drums"),
     OTHER("other"),
+    GUITAR("guitar"),
+    PIANO("piano"),
     REVERB("reverb"),
     NO_CROWD("no_crowd"),
     TARGET_STEM("target_stem"),
@@ -387,8 +389,10 @@ object BenchmarkModelContractLoader {
     private fun parseStem(value: JsonObject, path: String): BenchmarkStem {
         val reader = ObjectReader(value, path)
         reader.requireExactKeys("semantic", "displayLabel")
+        val semantic = BenchmarkStemSemantic.fromWireValue(reader.string("semantic"), "$path.semantic")
+        expect(semantic in V2_STEM_SEMANTICS, "$path.semantic is not supported by schema v2.")
         return BenchmarkStem(
-            semantic = BenchmarkStemSemantic.fromWireValue(reader.string("semantic"), "$path.semantic"),
+            semantic = semantic,
             displayLabel = reader.nonEmptyString("displayLabel"),
         )
     }
@@ -454,9 +458,20 @@ object BenchmarkModelContractLoader {
     private val GIT_REVISION = Regex("^[0-9a-f]{40}$")
     private val MODEL_ID = Regex("^[a-z0-9_]+$")
     private val CONTRACT_ID = Regex("^[a-z0-9_]+@2$")
+    private val V2_STEM_SEMANTICS = setOf(
+        BenchmarkStemSemantic.VOCALS,
+        BenchmarkStemSemantic.INSTRUMENTAL,
+        BenchmarkStemSemantic.BASS,
+        BenchmarkStemSemantic.DRUMS,
+        BenchmarkStemSemantic.OTHER,
+        BenchmarkStemSemantic.REVERB,
+        BenchmarkStemSemantic.NO_CROWD,
+        BenchmarkStemSemantic.TARGET_STEM,
+        BenchmarkStemSemantic.REMAINING_AUDIO,
+    )
 }
 
-private class ObjectReader(
+internal class ObjectReader(
     private val value: JsonObject,
     private val path: String,
 ) {
@@ -476,6 +491,8 @@ private class ObjectReader(
 
     fun int(name: String): Int = required(name).asInt(childPath(name))
 
+    fun boolean(name: String): Boolean = required(name).asBoolean(childPath(name))
+
     fun positiveInt(name: String): Int = required(name).asPositiveInt(childPath(name))
 
     fun positiveLong(name: String): Long = required(name).asPositiveLong(childPath(name))
@@ -492,30 +509,33 @@ private class ObjectReader(
     private fun childPath(name: String): String = "$path.$name"
 }
 
-private sealed interface JsonValue
+internal sealed interface JsonValue
 
-private data class JsonObject(val values: LinkedHashMap<String, JsonValue>) : JsonValue
+internal data class JsonObject(val values: LinkedHashMap<String, JsonValue>) : JsonValue
 
-private data class JsonArray(val values: List<JsonValue>) : JsonValue
+internal data class JsonArray(val values: List<JsonValue>) : JsonValue
 
-private data class JsonString(val value: String) : JsonValue
+internal data class JsonString(val value: String) : JsonValue
 
-private data class JsonNumber(val value: BigDecimal) : JsonValue
+internal data class JsonNumber(val value: BigDecimal) : JsonValue
 
-private data class JsonBoolean(val value: Boolean) : JsonValue
+internal data class JsonBoolean(val value: Boolean) : JsonValue
 
-private data object JsonNull : JsonValue
+internal data object JsonNull : JsonValue
 
-private fun JsonValue.asObject(path: String): JsonObject = this as? JsonObject
+internal fun JsonValue.asObject(path: String): JsonObject = this as? JsonObject
     ?: invalid("$path must be an object, got ${typeName()}.")
 
-private fun JsonValue.asArray(path: String): JsonArray = this as? JsonArray
+internal fun JsonValue.asArray(path: String): JsonArray = this as? JsonArray
     ?: invalid("$path must be an array, got ${typeName()}.")
 
-private fun JsonValue.asString(path: String): String = (this as? JsonString)?.value
+internal fun JsonValue.asString(path: String): String = (this as? JsonString)?.value
     ?: invalid("$path must be a string, got ${typeName()}.")
 
-private fun JsonValue.asInt(path: String): Int {
+internal fun JsonValue.asBoolean(path: String): Boolean = (this as? JsonBoolean)?.value
+    ?: invalid("$path must be a boolean, got ${typeName()}.")
+
+internal fun JsonValue.asInt(path: String): Int {
     val number = (this as? JsonNumber)?.value
         ?: invalid("$path must be an integer, got ${typeName()}.")
     return try {
@@ -525,11 +545,11 @@ private fun JsonValue.asInt(path: String): Int {
     }
 }
 
-private fun JsonValue.asPositiveInt(path: String): Int = asInt(path).also {
+internal fun JsonValue.asPositiveInt(path: String): Int = asInt(path).also {
     expect(it > 0, "$path must be positive.")
 }
 
-private fun JsonValue.asPositiveLong(path: String): Long {
+internal fun JsonValue.asPositiveLong(path: String): Long {
     val number = (this as? JsonNumber)?.value
         ?: invalid("$path must be an integer, got ${typeName()}.")
     val result = try {
@@ -541,7 +561,7 @@ private fun JsonValue.asPositiveLong(path: String): Long {
     return result
 }
 
-private fun JsonValue.asPositiveDouble(path: String): Double {
+internal fun JsonValue.asPositiveDouble(path: String): Double {
     val number = (this as? JsonNumber)?.value
         ?: invalid("$path must be a number, got ${typeName()}.")
     expect(number > BigDecimal.ZERO, "$path must be positive.")
@@ -550,7 +570,7 @@ private fun JsonValue.asPositiveDouble(path: String): Double {
     }
 }
 
-private fun JsonValue.typeName(): String = when (this) {
+internal fun JsonValue.typeName(): String = when (this) {
     is JsonObject -> "object"
     is JsonArray -> "array"
     is JsonString -> "string"
@@ -559,7 +579,7 @@ private fun JsonValue.typeName(): String = when (this) {
     JsonNull -> "null"
 }
 
-private class StrictJsonParser(private val source: String) {
+internal class StrictJsonParser(private val source: String) {
     private var index = 0
 
     fun parse(): JsonValue {
@@ -709,8 +729,8 @@ private class StrictJsonParser(private val source: String) {
         invalid("$message at character $index.")
 }
 
-private fun expect(condition: Boolean, message: String) {
+internal fun expect(condition: Boolean, message: String) {
     if (!condition) invalid(message)
 }
 
-private fun invalid(message: String): Nothing = throw BenchmarkModelContractException(message)
+internal fun invalid(message: String): Nothing = throw BenchmarkModelContractException(message)

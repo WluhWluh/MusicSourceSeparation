@@ -105,6 +105,13 @@ class BenchmarkModelContractLoaderTest {
     }
 
     @Test
+    fun rejectsV3OnlyStemSemanticInSchemaV2() {
+        val tampered = replaceRequired(canonicalJson(), "\"semantic\": \"vocals\"", "\"semantic\": \"guitar\"")
+
+        assertRejected(tampered, "not supported by schema v2")
+    }
+
+    @Test
     fun rejectsAdditionalTopLevelField() {
         val tampered = replaceRequired(canonicalJson(), "{\n", "{\n  \"unexpected\": true,\n")
 

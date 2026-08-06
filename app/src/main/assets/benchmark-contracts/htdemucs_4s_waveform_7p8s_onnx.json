@@ -1,0 +1,211 @@
+{
+  "conversionSource": {
+    "byteSize": 165612636,
+    "fileName": "htdemucs_fp16weights.onnx",
+    "format": "onnx-model",
+    "localPath": "onnx/htdemucs_fp16weights.onnx",
+    "sha256": "d05c269d0178d2a72ad484b10b11dd370193fc923201c3b27a99f848745db70a",
+    "url": "https://huggingface.co/StemSplitio/htdemucs-onnx/resolve/d54ed9eb60e258ea82131c6ee14578628816456a/htdemucs_fp16weights.onnx?download=true"
+  },
+  "contractId": "htdemucs_4s_waveform_7p8s_onnx@3",
+  "contractKind": "tensor-only-candidate",
+  "contractSchemaVersion": 3,
+  "conversion": {
+    "exporterInput": {
+      "byteSize": 84141911,
+      "fileName": "955717e8-8726e21a.th",
+      "format": "pytorch-checkpoint",
+      "localPath": "checkpoints/955717e8-8726e21a.th",
+      "sha256": "8726e21a993978c7ba086d3872e7608d7d5bfca646ca4aca459ffda844faa8b4",
+      "url": "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/955717e8-8726e21a.th"
+    },
+    "modelRepository": "StemSplitio/htdemucs-onnx",
+    "modelRevision": "d54ed9eb60e258ea82131c6ee14578628816456a",
+    "modelCard": {
+      "byteSize": 8846,
+      "fileName": "htdemucs-onnx-README.md",
+      "format": "markdown",
+      "localPath": "conversion/model-cards/htdemucs-onnx-README.md",
+      "sha256": "671c5f3f0bcc8f28f637365996004b3f71a065673ff1833ff7548d7835cdf086",
+      "url": "https://huggingface.co/StemSplitio/htdemucs-onnx/raw/d54ed9eb60e258ea82131c6ee14578628816456a/README.md"
+    },
+    "modelLicenseSpdx": "MIT",
+    "opset": 17,
+    "producerName": "pytorch",
+    "producerVersion": "2.4.1",
+    "repository": "https://github.com/StemSplit/demucs-onnx",
+    "repositoryLicense": {
+      "byteSize": 1066,
+      "fileName": "demucs-onnx-LICENSE.txt",
+      "format": "text",
+      "localPath": "conversion/licenses/demucs-onnx-LICENSE.txt",
+      "sha256": "002e90589e1030d13e3708342c89faf67b520273793b6a2c77c4d9bd9a5ec7e7",
+      "url": "https://raw.githubusercontent.com/StemSplit/demucs-onnx/85db5c80aba33f0f2bdf88034a4be6539feec85b/LICENSE"
+    },
+    "repositoryLicenseSpdx": "MIT",
+    "revision": "85db5c80aba33f0f2bdf88034a4be6539feec85b",
+    "verificationStatus": "local-structure-and-zero-input"
+  },
+  "displayName": "HTDemucs 4-stem waveform 7.8s ONNX conversion source",
+  "modelId": "htdemucs_4s_waveform_7p8s_onnx",
+  "pipelineCompatibility": {
+    "maximumVersion": 1,
+    "minimumVersion": 1,
+    "pipelineId": "tensor-only-multistem"
+  },
+  "precisionContract": {
+    "constantStorage": [
+      {
+        "byteSize": 67141632,
+        "dtype": "float16",
+        "elementCount": 33570816,
+        "tensorCount": 4
+      },
+      {
+        "byteSize": 2380,
+        "dtype": "float32",
+        "elementCount": 595,
+        "tensorCount": 341
+      },
+      {
+        "byteSize": 11141128,
+        "dtype": "float64",
+        "elementCount": 1392641,
+        "tensorCount": 341
+      },
+      {
+        "byteSize": 89424,
+        "dtype": "int64",
+        "elementCount": 11178,
+        "tensorCount": 10998
+      }
+    ],
+    "initializerStorage": [
+      {
+        "byteSize": 83713024,
+        "dtype": "float16",
+        "elementCount": 41856512,
+        "tensorCount": 148
+      },
+      {
+        "byteSize": 511776,
+        "dtype": "float32",
+        "elementCount": 127944,
+        "tensorCount": 401
+      }
+    ],
+    "ioDtype": "float32",
+    "quantization": "none",
+    "runtimePrecisionStatus": "not-established",
+    "scope": "conversion-source-storage"
+  },
+  "stemContract": {
+    "bindings": [
+      {
+        "outputIndex": 0,
+        "packing": {
+          "axis": 1,
+          "elementsPerStem": 1,
+          "kind": "axis-contiguous"
+        },
+        "stems": [
+          {
+            "displayLabel": "Drums",
+            "semantic": "drums"
+          },
+          {
+            "displayLabel": "Bass",
+            "semantic": "bass"
+          },
+          {
+            "displayLabel": "Other",
+            "semantic": "other"
+          },
+          {
+            "displayLabel": "Vocals",
+            "semantic": "vocals"
+          }
+        ]
+      }
+    ],
+    "derivation": "direct"
+  },
+  "tensorContract": {
+    "inputEncoding": "tensor-order-float32-le",
+    "inputs": [
+      {
+        "axes": [
+          "batch",
+          "channel",
+          "sample"
+        ],
+        "dtype": "float32",
+        "index": 0,
+        "name": "mix",
+        "shape": [
+          1,
+          2,
+          343980
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "axes": [
+          "batch",
+          "stem",
+          "channel",
+          "sample"
+        ],
+        "dtype": "float32",
+        "index": 0,
+        "name": "stems",
+        "shape": [
+          1,
+          4,
+          2,
+          343980
+        ]
+      }
+    ]
+  },
+  "upstream": {
+    "bagManifest": {
+      "byteSize": 21,
+      "fileName": "htdemucs.yaml",
+      "format": "yaml",
+      "localPath": "official-hf/htdemucs/htdemucs.yaml",
+      "sha256": "239c445d0b14454d541ad8bd9bb271c9e536d267e8a4625208744cbb2e7bb66c",
+      "url": "https://huggingface.co/adefossez/HTDemucs/raw/bf35a81b663819a8255c8fefee17f9d812b786b5/htdemucs.yaml"
+    },
+    "hubRepository": "adefossez/HTDemucs",
+    "hubRevision": "bf35a81b663819a8255c8fefee17f9d812b786b5",
+    "licenseSpdx": "MIT",
+    "loaderRepository": "https://github.com/adefossez/demucs",
+    "loaderRevision": "eeac1d15891af95b1288d2884b95baa3e5baa96c",
+    "metadata": {
+      "byteSize": 12087,
+      "fileName": "955717e8.json",
+      "format": "json",
+      "localPath": "official-hf/htdemucs/955717e8.json",
+      "sha256": "12540373de858920b60002ebfbe17738860dbf2e89df625dc3b7875af2d28491",
+      "url": "https://huggingface.co/adefossez/HTDemucs/raw/bf35a81b663819a8255c8fefee17f9d812b786b5/955717e8.json"
+    },
+    "weight": {
+      "byteSize": 84025440,
+      "fileName": "955717e8.safetensors",
+      "format": "safetensors",
+      "localPath": "official-hf/htdemucs/955717e8.safetensors",
+      "sha256": "d9fa14133cfcc034a6758923bb3a8ca9f8dfd0b582134643bbf83f72c17576dd",
+      "url": "https://huggingface.co/adefossez/HTDemucs/resolve/bf35a81b663819a8255c8fefee17f9d812b786b5/955717e8.safetensors?download=true"
+    }
+  },
+  "workloadContract": {
+    "channelCount": 2,
+    "kind": "waveform-segment",
+    "sampleCount": 343980,
+    "sampleRate": 44100,
+    "segmentDenominator": 5,
+    "segmentNumerator": 39
+  }
+}

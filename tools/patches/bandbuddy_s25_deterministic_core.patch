@@ -1,0 +1,204 @@
+diff --git a/app/src/androidTest/java/cn/lonelyme/bandbuddy/DemucsInferenceInstrumentedTest.kt b/app/src/androidTest/java/cn/lonelyme/bandbuddy/DemucsInferenceInstrumentedTest.kt
+index ceeecac..6d8f102 100644
+--- a/app/src/androidTest/java/cn/lonelyme/bandbuddy/DemucsInferenceInstrumentedTest.kt
++++ b/app/src/androidTest/java/cn/lonelyme/bandbuddy/DemucsInferenceInstrumentedTest.kt
+@@ -56,6 +56,7 @@ class DemucsInferenceInstrumentedTest {
+         val spec = direct(4 * 2_048 * spectrumFrames)
+         val frequency = direct(6 * 4 * 2_048 * spectrumFrames)
+         val time = direct(6 * 2 * samples)
++        fillDeterministicCoreInputs(mix, spec)
+         val cache = File(context.codeCacheDir, "qnn-diagnostic-8s-safe-convs-v1").apply { mkdirs() }
+         val options = QnnDelegate.Options().apply {
+             setSkelLibraryDir(context.applicationInfo.nativeLibraryDir)
+@@ -110,11 +111,155 @@ class DemucsInferenceInstrumentedTest {
+             time.rewind()
+             assertTrue(frequency.get().isFinite())
+             assertTrue(time.get().isFinite())
++            exportCoreOutputs(context, "qnn", frequency, time)
+         } finally {
+             delegate.close()
+         }
+     }
+ 
++    @Test
++    fun originalWindowRunsThroughXnnpackCpuBaseline() {
++        val context = ApplicationProvider.getApplicationContext<Context>()
++        val modelFile = File(context.filesDir, "diagnostic-8s/htdemucs_6s.core.8s.fp16-safe.tflite")
++        check(modelFile.isFile && modelFile.length() == 117_784_760L) {
++            "Missing verified original-window candidate: $modelFile"
++        }
++        val samples = 343_980
++        val spectrumFrames = 336
++        val mix = direct(2 * samples)
++        val spec = direct(4 * 2_048 * spectrumFrames)
++        val frequency = direct(6 * 4 * 2_048 * spectrumFrames)
++        val time = direct(6 * 2 * samples)
++        fillDeterministicCoreInputs(mix, spec)
++        val mappedModel = FileInputStream(modelFile).channel.use { channel ->
++            channel.map(java.nio.channels.FileChannel.MapMode.READ_ONLY, 0, channel.size())
++        }
++        val started = SystemClock.elapsedRealtime()
++        Interpreter(mappedModel, Interpreter.Options().apply {
++            setUseXNNPACK(true)
++            setNumThreads(4)
++        }).use { interpreter ->
++            assertTrue(interpreter.getInputTensor(0).shape().contentEquals(intArrayOf(1, 2, samples)))
++            assertTrue(interpreter.getInputTensor(1).shape().contentEquals(intArrayOf(1, 4, 2_048, spectrumFrames)))
++            interpreter.runForMultipleInputsOutputs(
++                arrayOf(mix, spec),
++                mutableMapOf<Int, Any>(0 to frequency, 1 to time),
++            )
++            Log.i(
++                "BandBuddy8sCPU",
++                "prepare+inference=${SystemClock.elapsedRealtime() - started}ms, " +
++                    "nativeInference=${interpreter.lastNativeInferenceDurationNanoseconds}ns",
++            )
++        }
++        frequency.rewind()
++        time.rewind()
++        assertTrue(frequency.get().isFinite())
++        assertTrue(time.get().isFinite())
++        exportCoreOutputs(context, "cpu", frequency, time)
++    }
++
++    @Test
++    fun gpuCandidateSingleWindowProbe() {
++        val context = ApplicationProvider.getApplicationContext<Context>()
++        val candidate = requireNotNull(
++            androidx.test.platform.app.InstrumentationRegistry.getArguments()
++                .getString("gpuCandidate"),
++        ) { "Pass -e gpuCandidate gpu-fp16|gpu-fp32|gpu-broad-fp16|gpu-broad-fp32" }
++        val modelFile = File(context.filesDir, "diagnostic-8s/htdemucs_6s.core.8s.fp16-safe.tflite")
++        check(modelFile.isFile && modelFile.length() == 117_784_760L) {
++            "Missing verified original-window candidate: $modelFile"
++        }
++        val precision = when (candidate) {
++            "gpu-fp16", "gpu-broad-fp16" -> QnnDelegate.Options.GpuPrecision.GPU_PRECISION_FP16
++            "gpu-fp32", "gpu-broad-fp32" -> QnnDelegate.Options.GpuPrecision.GPU_PRECISION_FP32
++            else -> error("Unknown gpuCandidate=$candidate")
++        }
++        val skippedNodes = when (candidate) {
++            "gpu-broad-fp16", "gpu-broad-fp32" ->
++                ((1_291..2_203) + listOf(3_307, 3_487)).toIntArray()
++            else -> null
++        }
++        val resultRoot = File(
++            requireNotNull(context.getExternalFilesDir(null)),
++            "gpu-probe/$candidate",
++        ).apply {
++            if (exists()) deleteRecursively()
++            check(mkdirs())
++        }
++        val cache = File(context.codeCacheDir, "gpu-probe-$candidate-v1").apply {
++            if (exists()) deleteRecursively()
++            check(mkdirs())
++        }
++        val result = runCatching {
++            val options = QnnDelegate.Options().apply {
++                setCacheDir(cache.absolutePath)
++                setModelToken("bandbuddy-gpu-probe-$candidate-a9fcc89e-v1")
++                setBackendType(QnnDelegate.Options.BackendType.GPU_BACKEND)
++                setGpuPrecision(precision)
++                setGpuPerformanceMode(QnnDelegate.Options.GpuPerformanceMode.GPU_PERFORMANCE_HIGH)
++                setProfiling(QnnDelegate.Options.ProfilingOptions.BASIC_PROFILING)
++                setLogLevel(QnnDelegate.Options.LogLevel.LOG_LEVEL_INFO)
++                skippedNodes?.let(::setSkipNodeIds)
++            }
++            val delegate = QnnDelegate(options)
++            try {
++                check(delegate.isAvailable) { "GPU delegate unavailable for $candidate" }
++                val mappedModel = FileInputStream(modelFile).channel.use { channel ->
++                    channel.map(java.nio.channels.FileChannel.MapMode.READ_ONLY, 0L, channel.size())
++                }
++                val samples = 343_980
++                val frames = 336
++                val mix = direct(2 * samples)
++                val spec = direct(4 * 2_048 * frames)
++                val frequency = direct(6 * 4 * 2_048 * frames)
++                val time = direct(6 * 2 * samples)
++                fillDeterministicCoreInputs(mix, spec)
++                val started = SystemClock.elapsedRealtime()
++                Interpreter(mappedModel, Interpreter.Options().apply {
++                    setUseXNNPACK(true)
++                    setNumThreads(4)
++                    addDelegate(delegate)
++                }).use { interpreter ->
++                    check(interpreter.getInputTensor(0).shape().contentEquals(intArrayOf(1, 2, samples)))
++                    check(interpreter.getInputTensor(1).shape().contentEquals(intArrayOf(1, 4, 2_048, frames)))
++                    val inferenceStarted = System.nanoTime()
++                    interpreter.runForMultipleInputsOutputs(
++                        arrayOf(mix, spec),
++                        mutableMapOf<Int, Any>(0 to frequency, 1 to time),
++                    )
++                    val inferenceWallNanos = System.nanoTime() - inferenceStarted
++                    frequency.rewind()
++                    time.rewind()
++                    check(frequency.get().isFinite() && time.get().isFinite()) {
++                        "GPU output contains NaN/Infinity"
++                    }
++                    val report = buildString {
++                        append("candidate=").append(candidate)
++                        append(" preparePlusInferenceMs=")
++                            .append(SystemClock.elapsedRealtime() - started)
++                        append(" inferenceWallMs=").append(inferenceWallNanos / 1_000_000.0)
++                        append(" nativeInferenceMs=")
++                            .append(interpreter.lastNativeInferenceDurationNanoseconds?.div(1_000_000.0))
++                    }
++                    File(resultRoot, "result.txt").writeText(report, Charsets.UTF_8)
++                    Log.i("BandBuddyGpuProbe", report)
++                }
++            } finally {
++                delegate.close()
++            }
++        }
++        result.onFailure { error ->
++            val report = buildString {
++                append("candidate=").append(candidate)
++                append(" failure=").append(error::class.java.name)
++                append(" message=").append(error.message.orEmpty())
++            }
++            File(resultRoot, "failure.txt").writeText(report, Charsets.UTF_8)
++            Log.e("BandBuddyGpuProbe", report, error)
++        }
++        result.getOrThrow()
++    }
++
+     @Test
+     fun exportOriginalWindowRealAudioForTorchComparison() {
+         val context = ApplicationProvider.getApplicationContext<Context>()
+@@ -931,6 +1076,35 @@ class DemucsInferenceInstrumentedTest {
+         source.rewind()
+     }
+ 
++    private fun fillDeterministicCoreInputs(mix: FloatBuffer, spec: FloatBuffer) {
++        repeat(mix.capacity()) { index ->
++            mix.put(index, (((index * 17) % 257) - 128) / 512f)
++        }
++        repeat(spec.capacity()) { index ->
++            spec.put(index, (((index * 29) % 251) - 125) / 512f)
++        }
++        mix.rewind()
++        spec.rewind()
++    }
++
++    private fun exportCoreOutputs(
++        context: Context,
++        backend: String,
++        frequency: FloatBuffer,
++        time: FloatBuffer,
++    ) {
++        val export = File(
++            requireNotNull(context.getExternalFilesDir(null)),
++            "deterministic-core/$backend",
++        ).apply {
++            if (exists()) deleteRecursively()
++            check(mkdirs())
++        }
++        writeFloatBuffer(File(export, "frequency.f32le"), frequency)
++        writeFloatBuffer(File(export, "time.f32le"), time)
++        Log.i("BandBuddyCoreProbe", "backend=$backend output=${export.absolutePath}")
++    }
++
+     private data class SpecValue(
+         val component: Int,
+         val bin: Int,

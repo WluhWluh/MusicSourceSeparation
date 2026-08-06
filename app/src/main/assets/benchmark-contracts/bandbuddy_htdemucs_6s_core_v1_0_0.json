@@ -1,0 +1,150 @@
+{
+  "contractSchemaVersion": 4,
+  "contractKind": "external-litert-runtime-candidate",
+  "contractId": "bandbuddy_htdemucs_6s_core_v1_0_0@4",
+  "modelId": "bandbuddy_htdemucs_6s_core_v1_0_0",
+  "displayName": "BandBuddy HTDemucs 6-stem LiteRT neural-core release",
+  "sourceCandidateContract": {
+    "contractId": "htdemucs_6s_waveform_7p8s_onnx@3",
+    "sidecarPath": "benchmark-contracts/htdemucs_6s_waveform_7p8s_onnx.json",
+    "sidecarByteSize": 6604,
+    "sidecarSha256": "cc8dafb665602b6b8410ca87c6450e29ff4986990f22613e6451cf8da9f4c513"
+  },
+  "provenance": {
+    "artifactOrigin": "third-party-public-release",
+    "publisher": "dourgey/BandBuddy-Android",
+    "sourceRepository": "https://github.com/dourgey/BandBuddy-Android",
+    "sourceRevision": "010d28948607e2d9c62b56ab1038681359869736",
+    "modelRepository": "Zzzzzzorz/BandBuddy-HTDemucs-6s",
+    "modelRevision": "v1.0.0",
+    "conversionRecipeStatus": "incomplete-public-wrapper"
+  },
+  "artifact": {
+    "fileName": "htdemucs_6s.core.tflite",
+    "localPath": "external-litert/bandbuddy/htdemucs_6s.core.tflite",
+    "url": "https://www.modelscope.cn/models/Zzzzzzorz/BandBuddy-HTDemucs-6s/resolve/v1.0.0/htdemucs_6s.core.tflite",
+    "byteSize": 117784760,
+    "sha256": "a9fcc89e84aa65313e0540b582e710007ed12064969a0d49a3c85e49f1ae4e3d",
+    "format": "tflite-flatbuffer"
+  },
+  "flatBuffer": {
+    "fileIdentifier": "TFL3",
+    "schemaVersion": 3,
+    "subgraphCount": 1,
+    "operatorCount": 3504,
+    "tensorCount": 4332,
+    "customOperatorCount": 0,
+    "inputs": [
+      {
+        "index": 0,
+        "tensorIndex": 0,
+        "name": "serving_default_args_0",
+        "dtype": "float32",
+        "shape": [1, 2, 343980],
+        "axes": ["batch", "channel", "sample"]
+      },
+      {
+        "index": 1,
+        "tensorIndex": 1,
+        "name": "serving_default_args_1",
+        "dtype": "float32",
+        "shape": [1, 4, 2048, 336],
+        "axes": ["batch", "feature", "frequency", "frame"]
+      }
+    ],
+    "outputs": [
+      {
+        "index": 0,
+        "tensorIndex": 4292,
+        "name": "serving_default_output_0_output",
+        "dtype": "float32",
+        "shape": [1, 6, 4, 2048, 336],
+        "axes": ["batch", "stem", "feature", "frequency", "frame"]
+      },
+      {
+        "index": 1,
+        "tensorIndex": 4297,
+        "name": "serving_default_output_1_output",
+        "dtype": "float32",
+        "shape": [1, 6, 2, 343980],
+        "axes": ["batch", "stem", "channel", "sample"]
+      }
+    ],
+    "signatures": [
+      {
+        "key": "serving_default",
+        "subgraphIndex": 0,
+        "inputs": [
+          {"name": "args_0", "tensorIndex": 0},
+          {"name": "args_1", "tensorIndex": 1}
+        ],
+        "outputs": [
+          {"name": "output_0", "tensorIndex": 4292},
+          {"name": "output_1", "tensorIndex": 4297}
+        ]
+      }
+    ]
+  },
+  "modelSemantics": {
+    "workloadKind": "neural-core-segment",
+    "sampleRate": 44100,
+    "channelCount": 2,
+    "sampleCount": 343980,
+    "featureOrder": ["L.real", "L.imag", "R.real", "R.imag"],
+    "stemOrder": ["drums", "bass", "other", "vocals", "guitar", "piano"]
+  },
+  "runtime": {
+    "liteRt": {
+      "declaredCoordinate": "org.tensorflow:tensorflow-lite:2.17.0",
+      "relocatedCoordinate": "com.google.ai.edge.litert:litert:1.0.1",
+      "resolvedArtifact": {
+        "coordinate": "com.google.ai.edge.litert:litert:1.0.1",
+        "fileName": "litert-1.0.1.aar",
+        "byteSize": 6487444,
+        "sha256": "467679820f836fe70418f01c9f6689f328f79fbf2cbabe197eab70b209b43e8d"
+      }
+    },
+    "qnn": {
+      "version": "2.48.0",
+      "runtimeArtifact": {
+        "coordinate": "com.qualcomm.qti:qnn-runtime:2.48.0",
+        "fileName": "qnn-runtime-2.48.0.aar",
+        "byteSize": 68393877,
+        "sha256": "ef47797c557e124e18eeea32c8cd2e346233d2d28a69f85e22da9fb0b639de06"
+      },
+      "delegateArtifact": {
+        "coordinate": "com.qualcomm.qti:qnn-litert-delegate:2.48.0",
+        "fileName": "qnn-litert-delegate-2.48.0.aar",
+        "byteSize": 659678,
+        "sha256": "b8bd8bada3a11c36add5768804a49234bbeb0253ce50b9a603dfce23e6061acb"
+      }
+    },
+    "cpuPlan": {
+      "backend": "XNNPACK",
+      "precision": "FP32",
+      "threadCount": 4
+    },
+    "npuPlan": {
+      "backend": "Qualcomm HTP",
+      "precision": "FP16",
+      "convHmxMode": "HTP_CONV_HMX_ON",
+      "performanceMode": "HTP_PERFORMANCE_BURST",
+      "optimizationStrategy": "HTP_OPTIMIZE_FOR_PREPARE",
+      "delegatedNodeIds": [586, 867, 2639, 2645, 2777, 2784, 2923, 2929, 3157, 3164, 3303],
+      "expectedDelegatedNodeCount": 11,
+      "expectedPartitionCount": 7,
+      "remainingNodeBackend": "XNNPACK FP32"
+    }
+  },
+  "validation": {
+    "status": "throughput-only",
+    "evidenceOrigin": "third-party",
+    "officialSafetensorsParityStatus": "not-established",
+    "thirdPartyReportedSnr": {
+      "minimumDb": 55.0,
+      "maximumDb": 58.0
+    },
+    "projectSnrGateDb": 80.0,
+    "projectSnrGateStatus": "not-passed"
+  }
+}

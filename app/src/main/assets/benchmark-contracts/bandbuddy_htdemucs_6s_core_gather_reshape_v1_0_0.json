@@ -1,0 +1,45 @@
+{
+  "contractSchemaVersion": 1,
+  "contractKind": "derived-litert-model-candidate",
+  "contractId": "bandbuddy_htdemucs_6s_core_gather_reshape_v1_0_0@1",
+  "modelId": "bandbuddy_htdemucs_6s_core_gather_reshape_v1_0_0",
+  "displayName": "BandBuddy HTDemucs 6-stem identity GATHER_ND to RESHAPE derivative",
+  "baseContract": {
+    "contractId": "bandbuddy_htdemucs_6s_core_v1_0_0@4",
+    "modelId": "bandbuddy_htdemucs_6s_core_v1_0_0",
+    "sidecarFileName": "bandbuddy_htdemucs_6s_core_v1_0_0.json",
+    "sidecarByteSize": 5022,
+    "sidecarSha256": "ce0dfb4481eeb97a5d8dc32554ce90bcd6d2786bfbd63766909f836794288e09",
+    "artifactByteSize": 117784760,
+    "artifactSha256": "a9fcc89e84aa65313e0540b582e710007ed12064969a0d49a3c85e49f1ae4e3d"
+  },
+  "artifact": {
+    "fileName": "htdemucs_6s.core.gather-reshape.tflite",
+    "localPath": "external-litert/bandbuddy/htdemucs_6s.core.gather-reshape.tflite",
+    "byteSize": 117784760,
+    "sha256": "ce971b195c20f1233c407b145ce8123f4d4b0834c6d946f0786504b999fb26a6",
+    "format": "tflite-flatbuffer"
+  },
+  "rewrite": {
+    "ruleId": "identity-gather-nd-to-reshape-v1",
+    "toolPath": "tools/rewrite_tflite_identity_gather_nd.py",
+    "toolSha256": "514bd175c57bd461b80cffbab8c812a8de13daa70b0cdbc816184bf8dfdf66b1",
+    "inputByteSize": 117784760,
+    "inputSha256": "a9fcc89e84aa65313e0540b582e710007ed12064969a0d49a3c85e49f1ae4e3d",
+    "rewrittenOperatorCount": 132,
+    "rewrittenShapeTensorCount": 14,
+    "expectedEquivalence": "bitwise",
+    "flatBufferByteSizePreserved": true
+  },
+  "flatBufferDelta": {
+    "operatorCount": 3504,
+    "tensorCount": 4332,
+    "gatherNdCount": 0,
+    "reshapeDelta": 132
+  },
+  "validationPlan": {
+    "cpuParity": "required-bitwise",
+    "strictGpuPrepare": "required",
+    "hybridGpuRun": "required"
+  }
+}

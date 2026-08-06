@@ -74,6 +74,10 @@ contract's selected source format remains canonical safetensors.
 The project-owned export recipe is pinned in the contract as
 `tools/export_htdemucs_litert_candidate.py` (26003 bytes,
 SHA-256 `a1229069ebee6e48d03507e730b3a4fa428067eba4222d75b3e6e5872bcf50c5`).
+That is the historical execution path. The byte-exact source remains available
+at commit `673d565` and under
+`tools/frozen-exporters/a1229069ebee6e48d03507e730b3a4fa428067eba4222d75b3e6e5872bcf50c5/`;
+the current exporter at the historical path is a later revision.
 The recorded environment is Python `3.12.3`, torch `2.11.0+cpu`, NumPy `2.5.1`,
  safetensors `0.8.0`, LiteRT Torch `0.9.1`, and ai-edge LiteRT `2.1.5`.
 

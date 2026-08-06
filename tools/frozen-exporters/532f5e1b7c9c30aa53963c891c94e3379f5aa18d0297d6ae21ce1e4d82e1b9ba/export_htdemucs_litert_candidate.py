@@ -36,7 +36,6 @@ PROFILE_SPECS = {
         "sampleCount": 343_980,
     },
 }
-OFFICIAL_MODEL_IDS = frozenset(value["modelId"] for value in PROFILE_SPECS.values())
 SOURCE_ORDER = ("drums", "bass", "other", "vocals", "guitar", "piano")
 EXPECTED_WEIGHT_BYTES = 54_885_744
 EXPECTED_WEIGHT_SHA256 = "d2a1745f0744721f6b8ca5bf469b67c651ea5ed1b52998cab033b2158609d411"
@@ -50,8 +49,6 @@ EXPECTED_REFERENCE_EXPORTER_BYTES = 5_879
 EXPECTED_REFERENCE_EXPORTER_SHA256 = "57b73642c1ac2d399817a8dff4438db587202a14ffa90877c7b9fb0d95f9e506"
 EXPECTED_LOADER_REVISION = "eeac1d15891af95b1288d2884b95baa3e5baa96c"
 EXPECTED_DEMUCS_LITE_REVISION = "9a2a17c7a81843c2ae49674986f9e1e8b5f6915f"
-EXPECTED_STATE_TENSOR_COUNT = 525
-EXPECTED_STATE_VALUE_COUNT = 27_414_996
 MINIMUM_SNR_DB = 80.0
 MAXIMUM_ABSOLUTE_ERROR = 1e-3
 LOW_SIGNAL_REFERENCE_RMS = 1e-3
@@ -76,9 +73,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--demucs-lite-root", type=Path, required=True)
     parser.add_argument("--weights", type=Path, required=True)
     parser.add_argument("--metadata", type=Path, required=True)
-    parser.add_argument("--derived-weight-manifest", type=Path)
-    parser.add_argument("--official-architecture-weights", type=Path)
-    parser.add_argument("--model-id")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--fixtures", type=Path, required=True)
@@ -96,24 +90,7 @@ def parse_args() -> argparse.Namespace:
         parser.error(
             f"--profile {args.profile} requires --samples {profile['sampleCount']}"
         )
-    official_model_id = profile["modelId"]
-    if args.derived_weight_manifest is None:
-        if args.official_architecture_weights is not None:
-            parser.error(
-                "--official-architecture-weights requires --derived-weight-manifest"
-            )
-        if args.model_id is not None and args.model_id != official_model_id:
-            parser.error("--model-id cannot replace an official profile model ID")
-        args.model_id = official_model_id
-    else:
-        if args.official_architecture_weights is None:
-            parser.error(
-                "--derived-weight-manifest requires --official-architecture-weights"
-            )
-        if args.model_id is None:
-            parser.error("--derived-weight-manifest requires an independent --model-id")
-        if args.model_id in OFFICIAL_MODEL_IDS:
-            parser.error("A derived weight cannot use an official profile model ID")
+    args.model_id = profile["modelId"]
     return args
 
 
@@ -134,151 +111,6 @@ def verify_file(path: Path, expected_bytes: int, expected_sha256: str) -> None:
         raise RuntimeError(
             f"Unexpected source artifact {path}: bytes={actual_bytes}, sha256={actual_sha256}"
         )
-
-
-def file_identity(path: Path, *, format_name: str) -> dict[str, Any]:
-    return {
-        "fileName": path.name,
-        "byteSize": path.stat().st_size,
-        "sha256": sha256(path),
-        "format": format_name,
-    }
-
-
-def safetensors_schema(path: Path) -> tuple[dict[str, str], dict[str, tuple[tuple[int, ...], str]]]:
-    from safetensors import safe_open
-
-    with safe_open(str(path), framework="pt", device="cpu") as handle:
-        metadata_value = handle.metadata()
-        metadata = dict(metadata_value) if metadata_value is not None else {}
-        schema = {
-            key: (
-                tuple(int(value) for value in handle.get_slice(key).get_shape()),
-                str(handle.get_slice(key).get_dtype()),
-            )
-            for key in handle.keys()
-        }
-    return metadata, schema
-
-
-def validate_derived_weight_source(
-    weights: Path,
-    official_weights: Path,
-    manifest_path: Path,
-) -> dict[str, Any]:
-    if not manifest_path.is_file():
-        raise RuntimeError(f"Missing derived-weight manifest: {manifest_path}")
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise RuntimeError(f"Invalid derived-weight manifest: {manifest_path}") from error
-    if manifest.get("status") != "complete":
-        raise RuntimeError("Derived-weight manifest is not complete")
-
-    artifact = manifest.get("artifact")
-    if not isinstance(artifact, dict):
-        raise RuntimeError("Derived-weight manifest has no artifact declaration")
-    actual_weight = file_identity(weights, format_name="safetensors")
-    for key in ("fileName", "byteSize", "sha256", "format"):
-        if artifact.get(key) != actual_weight[key]:
-            raise RuntimeError(f"Derived-weight artifact {key} mismatch")
-    if artifact.get("dtype") != "float32":
-        raise RuntimeError("Derived-weight artifact must declare float32 storage")
-
-    verify_file(
-        official_weights,
-        EXPECTED_WEIGHT_BYTES,
-        EXPECTED_WEIGHT_SHA256,
-    )
-    official_reference = manifest.get("officialArchitectureReference")
-    if not isinstance(official_reference, dict):
-        raise RuntimeError("Derived-weight manifest has no official architecture reference")
-    if (
-        official_reference.get("byteSize") != EXPECTED_WEIGHT_BYTES
-        or official_reference.get("sha256") != EXPECTED_WEIGHT_SHA256
-    ):
-        raise RuntimeError("Derived-weight manifest identifies the wrong official architecture")
-
-    semantics = manifest.get("modelSemantics")
-    if not isinstance(semantics, dict):
-        raise RuntimeError("Derived-weight manifest has no model semantics")
-    expected_semantics = {
-        "family": "HTDemucs-6s",
-        "stemOrder": list(SOURCE_ORDER),
-        "sampleRate": 44_100,
-        "segmentSeconds": 7.8,
-        "stateTensorCount": EXPECTED_STATE_TENSOR_COUNT,
-        "stateValueCount": EXPECTED_STATE_VALUE_COUNT,
-    }
-    for key, expected in expected_semantics.items():
-        if semantics.get(key) != expected:
-            raise RuntimeError(f"Unexpected derived-weight model semantic {key}")
-
-    audit = manifest.get("architectureAudit")
-    if not isinstance(audit, dict):
-        raise RuntimeError("Derived-weight manifest has no architecture audit")
-    for key in (
-        "referenceOnlyKeys",
-        "candidateOnlyKeys",
-        "shapeMismatchKeys",
-        "dtypeMismatchKeys",
-    ):
-        if audit.get(key) != []:
-            raise RuntimeError(f"Derived-weight architecture audit failed: {key}")
-    if (
-        audit.get("referenceTensorCount") != EXPECTED_STATE_TENSOR_COUNT
-        or audit.get("candidateTensorCount") != EXPECTED_STATE_TENSOR_COUNT
-    ):
-        raise RuntimeError("Derived-weight architecture audit tensor count mismatch")
-
-    official_metadata, official_schema = safetensors_schema(official_weights)
-    candidate_metadata, candidate_schema = safetensors_schema(weights)
-    required_metadata = {"klass", "args", "kwargs"}
-    if not required_metadata.issubset(official_metadata):
-        raise RuntimeError("Official safetensors architecture metadata is incomplete")
-    if candidate_metadata != official_metadata:
-        raise RuntimeError("Derived-weight architecture metadata differs from the official model")
-    official_shapes = {key: shape for key, (shape, _dtype) in official_schema.items()}
-    candidate_shapes = {key: shape for key, (shape, _dtype) in candidate_schema.items()}
-    if candidate_shapes != official_shapes:
-        raise RuntimeError("Derived-weight tensor keys or shapes differ from the official model")
-    value_count = sum(
-        math.prod(shape) for shape, _dtype in candidate_schema.values()
-    )
-    if (
-        len(candidate_schema) != EXPECTED_STATE_TENSOR_COUNT
-        or value_count != EXPECTED_STATE_VALUE_COUNT
-        or any(dtype != "F32" for _shape, dtype in candidate_schema.values())
-    ):
-        raise RuntimeError("Derived-weight safetensors state contract mismatch")
-
-    return {
-        "candidateId": manifest.get("candidateId"),
-        "diagnosticOnly": manifest.get("diagnosticOnly"),
-        "researchOnly": manifest.get("researchOnly"),
-        "weight": actual_weight,
-        "manifest": {
-            **file_identity(manifest_path, format_name="json"),
-            "status": manifest["status"],
-            "candidateId": manifest.get("candidateId"),
-        },
-        "officialArchitectureReference": file_identity(
-            official_weights,
-            format_name="safetensors",
-        ),
-        "source": manifest.get("source"),
-        "modelSemantics": semantics,
-        "architectureAudit": {
-            "referenceTensorCount": audit["referenceTensorCount"],
-            "candidateTensorCount": audit["candidateTensorCount"],
-            "changedTensorCount": audit.get("changedTensorCount"),
-            "changedValueCount": audit.get("changedValueCount"),
-            "comparedValueCount": audit.get("comparedValueCount"),
-            "maximumAbsoluteError": audit.get("maximumAbsoluteError"),
-            "rootMeanSquareDelta": audit.get("rootMeanSquareDelta"),
-            "schemaMatchesOfficial": True,
-        },
-    }
 
 
 def git_revision(path: Path) -> str:
@@ -1101,19 +933,9 @@ def main() -> int:
         args.report.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
 
     try:
-        derived_weight = None
-        if args.derived_weight_manifest is None:
-            verify_file(args.weights, EXPECTED_WEIGHT_BYTES, EXPECTED_WEIGHT_SHA256)
-            canonical_weight = args.weights
-        else:
-            canonical_weight = args.official_architecture_weights
-            derived_weight = validate_derived_weight_source(
-                args.weights,
-                canonical_weight,
-                args.derived_weight_manifest,
-            )
+        verify_file(args.weights, EXPECTED_WEIGHT_BYTES, EXPECTED_WEIGHT_SHA256)
         verify_file(args.metadata, EXPECTED_METADATA_BYTES, EXPECTED_METADATA_SHA256)
-        bag_manifest = canonical_weight.parent / "htdemucs_6s.yaml"
+        bag_manifest = args.weights.parent / "htdemucs_6s.yaml"
         boundary_source = args.demucs_lite_root / "demucs-for-onnx" / "demucs" / "htdemucs.py"
         reference_exporter = args.demucs_lite_root / "scripts" / "convert-pth-to-onnx-chunked.py"
         requirements_lock = Path(__file__).resolve().parent.parent / "requirements-demucs-litert-export.txt"
@@ -1149,9 +971,9 @@ def main() -> int:
         }
         report["provenance"] = {
             "canonicalWeight": {
-                "fileName": canonical_weight.name,
-                "byteSize": canonical_weight.stat().st_size,
-                "sha256": sha256(canonical_weight),
+                "fileName": args.weights.name,
+                "byteSize": args.weights.stat().st_size,
+                "sha256": sha256(args.weights),
                 "format": "safetensors",
             },
             "metadata": {
@@ -1192,8 +1014,6 @@ def main() -> int:
                 "format": "pip-requirements",
             },
         }
-        if derived_weight is not None:
-            report["provenance"]["derivedWeight"] = derived_weight
         report["invocation"] = {
             "arguments": sys.argv[1:],
             "workingDirectory": str(Path.cwd()),
@@ -1210,11 +1030,6 @@ def main() -> int:
         original_segment = model.segment
         if args.profile == "canonical_7p8s" and original_segment != Fraction(39, 5):
             raise RuntimeError(f"Unexpected canonical segment: {original_segment}")
-        if derived_weight is not None and any(
-            not bool(torch.isfinite(value).all())
-            for value in model.state_dict().values()
-        ):
-            raise RuntimeError("Derived-weight model contains non-finite parameters")
         model.segment = Fraction(args.samples, model.samplerate)
         model.use_train_segment = True
         install_deterministic_pos_embedding(model)
@@ -1295,10 +1110,6 @@ def main() -> int:
             "liteRtConversionInput": "project-owned PyTorch neural-core module",
             "onnxRole": "diagnostic-only" if args.onnx_output is not None else "not-generated",
         }
-        if derived_weight is not None:
-            report["conversionRecipe"]["modelWeightSource"] = (
-                "manifest-verified-derived-safetensors"
-            )
         report["seconds"] = {"torchReferenceAndCore": torch_seconds}
         report["torchCoreReconstruction"] = torch_reconstruction
         report["fixtures"] = {

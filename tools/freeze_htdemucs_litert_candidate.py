@@ -45,6 +45,7 @@ SOURCE_PATHS = {
     "exportScript": "tools/export_htdemucs_litert_candidate.py",
     "requirementsLock": "requirements-demucs-litert-export.txt",
 }
+FROZEN_EXPORTER_ROOT = Path("tools/frozen-exporters")
 
 
 def parse_args() -> argparse.Namespace:
@@ -97,6 +98,30 @@ def verify_declared_file(path: Path, declaration: dict[str, Any], label: str) ->
     if "byteSize" in declaration:
         require(path.stat().st_size == declaration["byteSize"], f"{label} byte size mismatch")
     require(sha256(path) == declaration["sha256"], f"{label} SHA-256 mismatch")
+
+
+def resolve_declared_source(
+    repo_root: Path,
+    local_path: str,
+    declaration: dict[str, Any],
+    label: str,
+) -> Path:
+    path = repo_root / local_path
+    if path.is_file() and path.name == declaration["fileName"]:
+        if path.stat().st_size == declaration.get("byteSize", path.stat().st_size):
+            if sha256(path) == declaration["sha256"]:
+                return path
+    if label != "exportScript":
+        verify_declared_file(path, declaration, label)
+        return path
+    archived = (
+        repo_root
+        / FROZEN_EXPORTER_ROOT
+        / declaration["sha256"]
+        / declaration["fileName"]
+    )
+    verify_declared_file(archived, declaration, f"archived {label}")
+    return archived
 
 
 def bind_tensor(tensor: dict[str, Any], expected: tuple[str, list[int], list[str]]) -> dict[str, Any]:
@@ -190,14 +215,16 @@ def build_manifest(repo_root: Path, candidate_root: Path) -> dict[str, Any]:
 
     provenance: dict[str, Any] = {}
     for key, local_path in SOURCE_PATHS.items():
-        path = repo_root / local_path
         declared = export_report["provenance"][key]
-        verify_declared_file(path, declared, key)
-        provenance[key] = identity(
+        path = resolve_declared_source(repo_root, local_path, declared, key)
+        source_identity = identity(
             repo_root,
             path,
             format=declared.get("format"),
         )
+        # Preserve the execution path recorded by the immutable historical report.
+        source_identity["localPath"] = local_path
+        provenance[key] = source_identity
 
     fixtures = []
     for key in (

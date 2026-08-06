@@ -42,6 +42,13 @@ into the Android APK.
 | exporter `tools/export_htdemucs_litert_candidate.py` | 55,693 | `532f5e1b7c9c30aa53963c891c94e3379f5aa18d0297d6ae21ce1e4d82e1b9ba` |
 | requirements lock `requirements-demucs-litert-export.txt` | 334 | `cb6ef5b77262c7d8594735413ecef5e841f3be1a710a48602b0620d229bf1706` |
 
+The exporter row records its historical execution path. The exact source is at
+commit `ee68956` and under
+`tools/frozen-exporters/532f5e1b7c9c30aa53963c891c94e3379f5aa18d0297d6ae21ce1e4d82e1b9ba/`;
+the current exporter at `tools/export_htdemucs_litert_candidate.py` is a later
+revision. The freezer resolves the archived snapshot by its declared SHA while
+preserving the immutable report's original path.
+
 The canonical run deliberately does not persist an ONNX diagnostic. The
 LiteRT conversion input is the project-owned PyTorch neural-core module.
 
@@ -231,7 +238,8 @@ gates and the 30/180-second CPU E2E experiments, are recorded in
 This does not change the host-only scope of the evidence in this file, and no
 QNN claim is implied by this host candidate.
 
-Reproduction entry point:
+For a byte-identical rerun, check out commit `ee68956`; the reproduction entry
+point at that revision is:
 
 ```text
 tools/export_htdemucs_litert_candidate.py --profile canonical_7p8s \

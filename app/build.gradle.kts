@@ -27,7 +27,9 @@ val sourceDirty = providers.gradleProperty("benchmarkSourceDirty").orElse("unkno
 val runtimeId = providers.gradleProperty("benchmarkRuntimeId").orElse(
     if (liteRtAar == null) "com.google.ai.edge.litert:litert:2.1.5" else "local-litert-aar",
 ).get()
-val runtimeArtifactSha256 = liteRtAar?.let { sha256(file(it)) } ?: "maven-unresolved"
+val runtimeArtifactSha256 = providers.gradleProperty("benchmarkRuntimeArtifactSha256").orNull
+    ?: liteRtAar?.let { sha256(file(it)) }
+    ?: "maven-unresolved"
 
 android {
     namespace = "com.example.musicsourceseparation"
@@ -37,6 +39,7 @@ android {
         applicationId = "com.example.musicsourceseparation"
         minSdk = 26
         targetSdk = 37
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = 1
         versionName = "0.1.0"
         buildConfigField("String", "BENCHMARK_SOURCE_REVISION", buildConfigString(sourceRevision))
@@ -122,4 +125,6 @@ dependencies {
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.26.0")
 
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test.ext:junit:1.1.5")
+    androidTestImplementation("androidx.test:runner:1.5.2")
 }

@@ -22,6 +22,11 @@ data/
 outputs/
 .tmp/
 
+# Private blind-listening keys and file-level evidence
+/docs/*-blind-map-*.json
+/docs/*-blind-map-*.md
+/docs/*-audio-evidence-*.json
+
 # Android local configuration
 local.properties
 

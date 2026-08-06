@@ -1,0 +1,452 @@
+{
+  "contractSchemaVersion": 1,
+  "contractKind": "generated-litert-runtime-candidate",
+  "contractId": "htdemucs_6s_core_smoke_2s_fp32_v1_0_0@1",
+  "modelId": "htdemucs_6s_core_smoke_2s_fp32_v1_0_0",
+  "displayName": "HTDemucs 6-stem generated 2-second FP32 LiteRT neural core",
+  "sourceCandidateContract": {
+    "contractId": "htdemucs_6s_waveform_7p8s_onnx@3",
+    "sidecarPath": "benchmark-contracts/htdemucs_6s_waveform_7p8s_onnx.json",
+    "sidecarByteSize": 6604,
+    "sidecarSha256": "cc8dafb665602b6b8410ca87c6450e29ff4986990f22613e6451cf8da9f4c513",
+    "role": "upstream-model-identity-only"
+  },
+  "provenance": {
+    "artifactOrigin": "project-generated-from-official-safetensors",
+    "officialModel": {
+      "hubRepository": "adefossez/HTDemucs-6s",
+      "hubRevision": "053e1404489b3dc58bf718224fac4b7316de8c93",
+      "loaderRepository": "https://github.com/adefossez/demucs",
+      "loaderRevision": "eeac1d15891af95b1288d2884b95baa3e5baa96c",
+      "licenseSpdx": "MIT",
+      "weight": {
+        "fileName": "5c90dfd2.safetensors",
+        "localPath": "models/demucs/official-hf/htdemucs_6s/5c90dfd2.safetensors",
+        "byteSize": 54885744,
+        "sha256": "d2a1745f0744721f6b8ca5bf469b67c651ea5ed1b52998cab033b2158609d411",
+        "format": "safetensors"
+      },
+      "metadata": {
+        "fileName": "5c90dfd2.json",
+        "localPath": "models/demucs/official-hf/htdemucs_6s/5c90dfd2.json",
+        "byteSize": 10398,
+        "sha256": "72d7b4739ba40c8ff1d697404232edd335f397cedbf1bb88eec0034bdbab153e",
+        "format": "json"
+      },
+      "bagManifest": {
+        "fileName": "htdemucs_6s.yaml",
+        "localPath": "models/demucs/official-hf/htdemucs_6s/htdemucs_6s.yaml",
+        "byteSize": 21,
+        "sha256": "207405151270af8fd81c2373c25d27950916682ac91dca7884a11ce13dad6f58",
+        "format": "yaml"
+      }
+    },
+    "neuralCoreReference": {
+      "repository": "https://github.com/JBNU-CILAB/demucs-lite",
+      "revision": "9a2a17c7a81843c2ae49674986f9e1e8b5f6915f",
+      "licenseSpdx": "MIT",
+      "role": "boundary-reference-only",
+      "boundarySource": {
+        "fileName": "htdemucs.py",
+        "localPath": ".tmp/demucs-lite-reference/demucs-for-onnx/demucs/htdemucs.py",
+        "byteSize": 29284,
+        "sha256": "fc9b1debbc2d0e61f523ccd32a22b19f471bc4404d32fadbd79f38c049abcc7b",
+        "format": "python-source"
+      },
+      "referenceExporter": {
+        "fileName": "convert-pth-to-onnx-chunked.py",
+        "localPath": ".tmp/demucs-lite-reference/scripts/convert-pth-to-onnx-chunked.py",
+        "byteSize": 5879,
+        "sha256": "57b73642c1ac2d399817a8dff4438db587202a14ffa90877c7b9fb0d95f9e506",
+        "format": "python-source"
+      }
+    },
+    "exportRecipe": {
+      "script": {
+        "fileName": "export_htdemucs_litert_candidate.py",
+        "localPath": "tools/export_htdemucs_litert_candidate.py",
+        "byteSize": 26003,
+        "sha256": "a1229069ebee6e48d03507e730b3a4fa428067eba4222d75b3e6e5872bcf50c5",
+        "format": "python-source"
+      },
+      "boundaryImplementation": "project-owned-neural-core-rewrite",
+      "sourceWeightFormat": "canonical-safetensors",
+      "strictExport": true,
+      "lightweightConversion": true,
+      "enableX64": false,
+      "deterministicPositionalEmbedding": true
+    }
+  },
+  "conversion": {
+    "profile": {
+      "name": "smoke_2s",
+      "sampleRate": 44100,
+      "sampleCount": 88200,
+      "spectrumFrameCount": 87,
+      "segmentNumerator": 2,
+      "segmentDenominator": 1,
+      "originalSegment": "39/5",
+      "useTrainSegment": true
+    },
+    "versions": {
+      "python": "3.12.3",
+      "torch": "2.11.0+cpu",
+      "numpy": "2.5.1",
+      "safetensors": "0.8.0",
+      "litertTorch": "0.9.1",
+      "aiEdgeLiteRt": "2.1.5"
+    },
+    "onnxDiagnostic": {
+      "artifact": {
+        "fileName": "htdemucs_6s.core.smoke_2s.fp32.onnx",
+        "localPath": "models/demucs/generated/htdemucs_6s_core_smoke_2s_fp32_v1_0_0/htdemucs_6s.core.smoke_2s.fp32.onnx",
+        "byteSize": 111392345,
+        "sha256": "16464486d8791e673d1ee9bed9aecc7045b4042b3616c41af2b3b0276801879c",
+        "format": "onnx-model"
+      },
+      "role": "diagnostic-parity-intermediate-not-litert-input",
+      "opset": 17,
+      "producerName": "pytorch",
+      "producerVersion": "2.11.0",
+      "operatorCount": 3256,
+      "externalDataTensorCount": 0
+    },
+    "exportReport": {
+      "fileName": "export-report.json",
+      "localPath": "models/demucs/generated/htdemucs_6s_core_smoke_2s_fp32_v1_0_0/export-report.json",
+      "byteSize": 13025,
+      "sha256": "f7b8672875f4db58b8ef823bcf1f513b57ba4d878303b2bbd40dc2d38a6bc1e2",
+      "format": "json"
+    }
+  },
+  "artifact": {
+    "fileName": "htdemucs_6s.core.smoke_2s.fp32.tflite",
+    "localPath": "models/demucs/generated/htdemucs_6s_core_smoke_2s_fp32_v1_0_0/htdemucs_6s.core.smoke_2s.fp32.tflite",
+    "byteSize": 112924120,
+    "sha256": "35ec0361b8ee6b415d435dc6d35d52dbf13bf9492b3f044e3259f414dbf23e61",
+    "format": "tflite-flatbuffer"
+  },
+  "flatBuffer": {
+    "fileIdentifier": "TFL3",
+    "schemaVersion": 3,
+    "subgraphCount": 1,
+    "operatorCount": 3504,
+    "tensorCount": 4301,
+    "customOperatorCount": 0,
+    "inputs": [
+      {
+        "index": 0,
+        "tensorIndex": 0,
+        "name": "serving_default_args_0",
+        "dtype": "float32",
+        "shape": [1, 2, 88200],
+        "axes": ["batch", "channel", "sample"]
+      },
+      {
+        "index": 1,
+        "tensorIndex": 1,
+        "name": "serving_default_args_1",
+        "dtype": "float32",
+        "shape": [1, 4, 2048, 87],
+        "axes": ["batch", "feature", "frequency", "frame"]
+      }
+    ],
+    "outputs": [
+      {
+        "index": 0,
+        "tensorIndex": 4295,
+        "name": "serving_default_output_0_output",
+        "dtype": "float32",
+        "shape": [1, 6, 4, 2048, 87],
+        "axes": ["batch", "stem", "feature", "frequency", "frame"]
+      },
+      {
+        "index": 1,
+        "tensorIndex": 4300,
+        "name": "serving_default_output_1_output",
+        "dtype": "float32",
+        "shape": [1, 6, 2, 88200],
+        "axes": ["batch", "stem", "channel", "sample"]
+      }
+    ],
+    "signatures": [
+      {
+        "key": "serving_default",
+        "subgraphIndex": 0,
+        "inputs": [
+          {"name": "args_0", "tensorIndex": 0},
+          {"name": "args_1", "tensorIndex": 1}
+        ],
+        "outputs": [
+          {"name": "output_0", "tensorIndex": 4295},
+          {"name": "output_1", "tensorIndex": 4300}
+        ]
+      }
+    ]
+  },
+  "flatBufferInspection": {
+    "report": {
+      "fileName": "flatbuffer-inspection.json",
+      "localPath": "models/demucs/generated/htdemucs_6s_core_smoke_2s_fp32_v1_0_0/flatbuffer-inspection.json",
+      "byteSize": 3766,
+      "sha256": "050291ecbc0fee4480bf661cc59c0c84ba22618b581a357fd290c24ff98337b6",
+      "format": "json"
+    },
+    "description": "MLIR Converted.",
+    "operatorCodeCount": 27,
+    "bufferCount": 4304,
+    "minimumRuntimeVersion": "2.16.0",
+    "keepStablehloConstant": true,
+    "operatorHistogram": {
+      "RESHAPE": 941,
+      "MUL": 716,
+      "ADD": 422,
+      "SLICE": 282,
+      "TRANSPOSE": 269,
+      "SUM": 152,
+      "GATHER_ND": 132,
+      "SUB": 98,
+      "RSQRT": 96,
+      "CONV_2D": 88,
+      "FULLY_CONNECTED": 60,
+      "GELU": 56,
+      "LOGISTIC": 48,
+      "MEAN": 44,
+      "SQUARED_DIFFERENCE": 22,
+      "BATCH_MATMUL": 20,
+      "CONCATENATION": 16,
+      "SOFTMAX": 10,
+      "TRANSPOSE_CONV": 8,
+      "BROADCAST_TO": 5,
+      "STABLEHLO_PAD": 4,
+      "REVERSE_V2": 4,
+      "PAD": 3,
+      "SELECT": 3,
+      "SQRT": 2,
+      "DIV": 2,
+      "SELECT_V2": 1
+    }
+  },
+  "modelSemantics": {
+    "workloadKind": "neural-core-segment",
+    "sampleRate": 44100,
+    "channelCount": 2,
+    "sampleCount": 88200,
+    "featureOrder": ["L.real", "L.imag", "R.real", "R.imag"],
+    "stemOrder": ["drums", "bass", "other", "vocals", "guitar", "piano"]
+  },
+  "fixtures": {
+    "seed": 20260803,
+    "inputs": [
+      {
+        "bindingName": "args_0",
+        "fileName": "waveform_input.f32le.raw",
+        "localPath": "models/demucs/generated/htdemucs_6s_core_smoke_2s_fp32_v1_0_0/fixtures/waveform_input.f32le.raw",
+        "byteSize": 705600,
+        "sha256": "a644f187d8c6d6644838fd637463695877e5d0c3680ba7fa7364e4b0fe6aa071",
+        "dtype": "float32-le",
+        "shape": [1, 2, 88200]
+      },
+      {
+        "bindingName": "args_1",
+        "fileName": "spectrum_input.f32le.raw",
+        "localPath": "models/demucs/generated/htdemucs_6s_core_smoke_2s_fp32_v1_0_0/fixtures/spectrum_input.f32le.raw",
+        "byteSize": 2850816,
+        "sha256": "c02deb000bb84026487bf9885faba4f15b5282052c36890a53fae052f3791a6d",
+        "dtype": "float32-le",
+        "shape": [1, 4, 2048, 87]
+      }
+    ],
+    "outputs": [
+      {
+        "bindingName": "output_0",
+        "fileName": "frequency_golden.f32le.raw",
+        "localPath": "models/demucs/generated/htdemucs_6s_core_smoke_2s_fp32_v1_0_0/fixtures/frequency_golden.f32le.raw",
+        "byteSize": 17104896,
+        "sha256": "8cf015f76b00208013fcb0ba72436b0b0236d3af8de9ac0e634c6bdd0062d02f",
+        "dtype": "float32-le",
+        "shape": [1, 6, 4, 2048, 87]
+      },
+      {
+        "bindingName": "output_1",
+        "fileName": "waveform_golden.f32le.raw",
+        "localPath": "models/demucs/generated/htdemucs_6s_core_smoke_2s_fp32_v1_0_0/fixtures/waveform_golden.f32le.raw",
+        "byteSize": 4233600,
+        "sha256": "981824eb40608db997b61dfed92d0a28ed2826ab876fc287e28431a7a38903b4",
+        "dtype": "float32-le",
+        "shape": [1, 6, 2, 88200]
+      }
+    ],
+    "combinedGolden": {
+      "fileName": "combined_golden.f32le.raw",
+      "localPath": "models/demucs/generated/htdemucs_6s_core_smoke_2s_fp32_v1_0_0/fixtures/combined_golden.f32le.raw",
+      "byteSize": 4233600,
+      "sha256": "3f2a30b8cdff473b568aea32bbe4824c8a0fcde500e08185e0d548ba25928b40",
+      "dtype": "float32-le",
+      "shape": [1, 6, 2, 88200]
+    }
+  },
+  "hostValidation": {
+    "status": "passed",
+    "qualityGate": {
+      "minimumSignalToNoiseDb": 80.0,
+      "maximumAbsoluteError": 0.001,
+      "acceptedForDeviceTesting": true
+    },
+    "torchCoreReconstruction": {
+      "finite": true,
+      "bitwiseEqual": true,
+      "maxAbsoluteError": 0.0,
+      "rootMeanSquareError": 0.0,
+      "signalRootMeanSquare": 0.05226675508738282,
+      "signalToNoiseDb": 574.364510766681
+    },
+    "liteRtVsTorch": {
+      "frequencyOutput": {
+        "finite": true,
+        "bitwiseEqual": false,
+        "maxAbsoluteError": 0.0000026226043701171875,
+        "rootMeanSquareError": 0.00000004387739581600346,
+        "signalRootMeanSquare": 0.028431602458642586,
+        "signalToNoiseDb": 116.2312098868844
+      },
+      "waveformOutput": {
+        "finite": true,
+        "bitwiseEqual": false,
+        "maxAbsoluteError": 0.00000011920928955078125,
+        "rootMeanSquareError": 0.000000009719419741838232,
+        "signalRootMeanSquare": 0.03199477038315318,
+        "signalToNoiseDb": 130.34877319578212
+      },
+      "combinedOutput": {
+        "finite": true,
+        "bitwiseEqual": false,
+        "maxAbsoluteError": 0.0000005941838026046753,
+        "rootMeanSquareError": 0.00000006126908752581493,
+        "signalRootMeanSquare": 0.05226675508738282,
+        "signalToNoiseDb": 118.6196825171349
+      },
+      "perStemCombined": [
+        {
+          "stem": "drums",
+          "metrics": {
+            "finite": true,
+            "bitwiseEqual": false,
+            "maxAbsoluteError": 0.00000033527612686157227,
+            "rootMeanSquareError": 0.00000005449908020112575,
+            "signalRootMeanSquare": 0.046243224405266244,
+            "signalToNoiseDb": 118.5731787189775
+          }
+        },
+        {
+          "stem": "bass",
+          "metrics": {
+            "finite": true,
+            "bitwiseEqual": false,
+            "maxAbsoluteError": 0.00000003296008799225092,
+            "rootMeanSquareError": 0.000000007204118482598827,
+            "signalRootMeanSquare": 0.00011533150546999653,
+            "signalToNoiseDb": 84.08734228513734
+          }
+        },
+        {
+          "stem": "other",
+          "metrics": {
+            "finite": true,
+            "bitwiseEqual": false,
+            "maxAbsoluteError": 0.0000005941838026046753,
+            "rootMeanSquareError": 0.00000011601530827691058,
+            "signalRootMeanSquare": 0.0027359431910007133,
+            "signalToNoiseDb": 87.45183554185503
+          }
+        },
+        {
+          "stem": "vocals",
+          "metrics": {
+            "finite": true,
+            "bitwiseEqual": false,
+            "maxAbsoluteError": 0.00000003534660208970308,
+            "rootMeanSquareError": 0.000000007932714974085483,
+            "signalRootMeanSquare": 0.00008496338951162168,
+            "signalToNoiseDb": 80.59619959119647
+          }
+        },
+        {
+          "stem": "guitar",
+          "metrics": {
+            "finite": true,
+            "bitwiseEqual": false,
+            "maxAbsoluteError": 0.0000003725290298461914,
+            "rootMeanSquareError": 0.0000000770138634476817,
+            "signalRootMeanSquare": 0.11935212291437092,
+            "signalToNoiseDb": 123.8052247522832
+          }
+        },
+        {
+          "stem": "piano",
+          "metrics": {
+            "finite": true,
+            "bitwiseEqual": false,
+            "maxAbsoluteError": 0.000000030850060284137726,
+            "rootMeanSquareError": 0.000000006909599627397539,
+            "signalRootMeanSquare": 0.00010569458707951908,
+            "signalToNoiseDb": 83.69199726501662
+          }
+        }
+      ]
+    }
+  },
+  "runtimeTarget": {
+    "liteRt": {
+      "version": "2.1.5",
+      "coordinate": "com.google.ai.edge.litert:litert:2.1.5",
+      "resolvedArtifact": {
+        "coordinate": "com.google.ai.edge.litert:litert:2.1.5",
+        "fileName": "litert-2.1.5.aar",
+        "byteSize": 10058192,
+        "sha256": "a162d1ddbdad87c002b7ec7eb31a703f2761335e693f292f94091b3569d8aa37"
+      }
+    },
+    "targetDevice": {
+      "manufacturer": "Samsung",
+      "model": "SM-S9310",
+      "soc": "SM8750",
+      "androidApi": 35,
+      "abi": "arm64-v8a",
+      "status": "not-run"
+    },
+    "qnnV79BundleManifest": {
+      "fileName": "runtime-manifest.json",
+      "localPath": "app/src/qnnV79/assets/app-live/runtime-manifest.json",
+      "byteSize": 4270,
+      "sha256": "8e20d10a6b27107fcb80460cc27892d5c2b797107c09ecbebeb095fbfe09c297",
+      "format": "json"
+    },
+    "plans": [
+      {
+        "id": "cpu-xnnpack-fp32",
+        "backend": "CPU",
+        "accelerator": "XNNPACK",
+        "precision": "FP32",
+        "fallbackPolicy": "not-applicable",
+        "status": "not-run"
+      },
+      {
+        "id": "gpu-opencl-buffer-fp32",
+        "backend": "GPU",
+        "accelerator": "LiteRT CompiledModel OPENCL buffer",
+        "precision": "FP32",
+        "fallbackPolicy": "strict-prepare-then-explicit-cpu-remainder",
+        "status": "not-run"
+      },
+      {
+        "id": "npu-qnn-v79-fp16",
+        "backend": "NPU",
+        "accelerator": "Qualcomm HTP v79",
+        "precision": "FP16",
+        "fallbackPolicy": "strict-non-empty-ir-and-finalize",
+        "status": "not-run"
+      }
+    ]
+  }
+}

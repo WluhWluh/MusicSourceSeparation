@@ -40,10 +40,17 @@ through on LiteRT 2.1.5. The current bounded result is:
 | --- | --- | --- |
 | official HTDemucs-6s canonical | host pipeline passed; S25 CPU 180-second E2E RTF `0.555`; hybrid GPU+CPU tested | strict per-stem device gate failed; CPU offline/producer-ahead research only |
 | guitar-ft six-stem | host and S25 diagnostic completed; three-song S25 mean E2E RTF `0.6783` | EOF host gate failed at `79.245 dB`; research-only/not admitted; license review still required |
-| Batch 4A four-stem quality | five host variants and blind review completed | Psytrance clearly worse/more cross-talk; other four not stably distinguishable; official base selected |
+| Batch 4A four-stem quality | five host variants and blind review completed | Psytrance clearly worse/more cross-talk; other four not stably distinguishable; official base selected as the research baseline |
 | official HTDemucs four-stem canonical | host pipeline passed; S25 CPU 180-second E2E RTF `0.617`; hybrid GPU+CPU tested | strict per-stem device gate failed; CPU offline/producer-ahead research only |
-| S10 CPU serial matrix | all three artifacts completed three 30-second tracks | RTF `2.960` / `2.401` / `2.905`; serial iSTFT dominated |
-| S10 four-lane iSTFT | raw FP32 and output WAVs preserved bit-for-bit | RTF `1.292` / `1.382` / `1.310`; still slower than real time and offline-only |
+| S10 CPU serial matrix | three 7.8-second artifacts, including diagnostic-only guitar-ft, completed three 30-second tracks | RTF `2.960` / `2.401` / `2.905` in official-6s / official-4s / guitar-ft order; serial iSTFT dominated |
+| S10 four-lane iSTFT | official-6s and official-4s raw-FP32 checks were bit-exact; all three variants' final WAV SHA values matched serial | RTF `1.292` / `1.382` / `1.310` in the same order; still slower than real time and offline-only |
+
+The four-stem S25 report records `sourceRevision=$rev` and
+`maven-unresolved`; its APK therefore does not self-attest a complete source
+and runtime rebuild identity. The six-stem S25 report records a dirty source
+tree, and the guitar-ft diagnostic does not bind a resolved source identity.
+These numbers remain bounded experiment evidence, not cryptographically
+self-contained product qualification.
 
 The S25 hybrid OpenCL profiles delegated only 158 neural-core nodes and did not
 provide a useful product path. QNN remains outside this closure: the earlier
@@ -553,7 +560,7 @@ unknown status without retroactively changing this smoke measurement.
   LMK, timeout, or non-finite output is `FAIL`. A builtin op executing on the
   LiteRT CPU is not itself a failure; required-op no-fallback is an M3 GPU/QNN
   gate.
-- Admit the S10 canonical window only after an S25 `PASS` and when the idle S10
+- Permit S10 research execution only after an S25 `PASS` and when the idle S10
   reports at least `1.25 * S25 peak PSS + 512 MiB` as `MemAvailable`; use a
   300-second watchdog and the same PASS/RISK/FAIL rules. This is a resource
   safety ordering, not a claim that an S10 2-second smoke cannot be informative.
@@ -563,6 +570,10 @@ unknown status without retroactively changing this smoke measurement.
   dated reports above.
 
 ### Batch M2: historical protocol; expanded CPU batches complete
+
+The bullets below are the source-freeze short-test rule. The later S25 and S10
+reports used expanded 30/180-second runs and 15 warm observations where
+specified; they supersede this as the current result record.
 
 - At most one warmup and three measured windows per accepted device/backend.
 - Test 2-second and 7.8-second profiles as separate workloads.
@@ -606,8 +617,9 @@ option retries.
   S25 GPU+CPU profiles, while no canonical NPU inference was completed; those
   results supersede the then-future wording without changing the smoke result.
 
-For the external-DSP route, freeze and independently test the host reference
-before M1: periodic Hann (`n_fft=4096`, `hop=1024`), Demucs reflect padding,
+For the external-DSP route, the source-freeze rule was to freeze and
+independently test the host reference before M1: periodic Hann (`n_fft=4096`,
+`hop=1024`), Demucs reflect padding,
 normalized STFT, Nyquist-bin drop/restore, frame crop, iSTFT target length, and
 the iSTFT `window^2` envelope normalization. Treat full-song chunk
 triangular-edge weighting as a separate overlap-add contract with separate

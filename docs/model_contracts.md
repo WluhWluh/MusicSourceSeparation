@@ -152,7 +152,7 @@ inspection, fixtures, host parity, and device validation.
 
 The canonical 7.8-second research experiment is closed; its results are not a
 product-support approval.
-The following results belong to distinct immutable artifacts and dated reports;
+The following results belong to digest-pinned model artifacts and dated reports;
 none changes the schema-v1 smoke sidecar or grants product admission:
 
 | Artifact | Host status | Device result | Research decision |
@@ -172,7 +172,8 @@ The four-stem S25 report has an explicit provenance limitation: its APK/source
 revision was not fully self-attested and the recorded Maven runtime digest was
 unresolved. Its device numbers remain valid bounded observations tied to the
 artifact, input, and report evidence, but they are not a fully self-contained
-rebuild identity.
+rebuild identity. The official six-stem S25 report records `sourceDirty=true`,
+and the guitar-ft S25 diagnostic does not bind a resolved source identity.
 
 All three 7.8-second artifacts also executed on the S10 LiteRT 2.1.5 CPU
 (guitar-ft remains diagnostic-only). With the original serial iSTFT, mean

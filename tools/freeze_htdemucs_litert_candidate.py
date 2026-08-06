@@ -111,17 +111,17 @@ def resolve_declared_source(
         if path.stat().st_size == declaration.get("byteSize", path.stat().st_size):
             if sha256(path) == declaration["sha256"]:
                 return path
-    if label != "exportScript":
-        verify_declared_file(path, declaration, label)
-        return path
     archived = (
         repo_root
         / FROZEN_EXPORTER_ROOT
         / declaration["sha256"]
         / declaration["fileName"]
     )
-    verify_declared_file(archived, declaration, f"archived {label}")
-    return archived
+    if archived.is_file():
+        verify_declared_file(archived, declaration, f"archived {label}")
+        return archived
+    verify_declared_file(path, declaration, label)
+    return path
 
 
 def bind_tensor(tensor: dict[str, Any], expected: tuple[str, list[int], list[str]]) -> dict[str, Any]:

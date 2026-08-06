@@ -1,0 +1,1412 @@
+{
+  "artifact": {
+    "byteSize": 117624880,
+    "fileName": "htdemucs_6s.core.canonical_7p8s.fp32.tflite",
+    "format": "tflite-flatbuffer",
+    "localPath": "models/demucs/generated/htdemucs_6s_core_canonical_7p8s_fp32_v1_0_0/htdemucs_6s.core.canonical_7p8s.fp32.tflite",
+    "sha256": "8b19e919dd17c6a93d862ca9b1158ed72f09feb4c52745819346369506ba4ed7"
+  },
+  "candidateId": "htdemucs_6s_core_canonical_7p8s_fp32_v1_0_0@host-1",
+  "conversion": {
+    "exportReport": {
+      "byteSize": 69484,
+      "fileName": "export-report.json",
+      "format": "json",
+      "localPath": "models/demucs/generated/htdemucs_6s_core_canonical_7p8s_fp32_v1_0_0/export-report.json",
+      "sha256": "05b67b091a11b2105d07a2c8f608f2825fa35a1fa0d4cfd95bd54deb6cfebb88"
+    },
+    "recipe": {
+      "deterministicPositionalEmbedding": true,
+      "enableX64": false,
+      "lightweightConversion": false,
+      "liteRtConversionInput": "project-owned PyTorch neural-core module",
+      "onnxRole": "not-generated",
+      "runtimeConstantFolding": false,
+      "strictExport": true
+    },
+    "versions": {
+      "aiEdgeLiteRt": "2.1.5",
+      "litertTorch": "0.9.1",
+      "numpy": "2.5.1",
+      "python": "3.12.3",
+      "safetensors": "0.8.0",
+      "torch": "2.11.0+cpu"
+    }
+  },
+  "fixtures": [
+    {
+      "byteSize": 2751840,
+      "dtype": "float32-le",
+      "fileName": "waveform_input.f32le.raw",
+      "localPath": "models/demucs/generated/htdemucs_6s_core_canonical_7p8s_fp32_v1_0_0/fixtures/waveform_input.f32le.raw",
+      "role": "waveformInput",
+      "sha256": "9515d42e72e96036e34f0193d1302e8cccbf80c4e9e7084d1fcba26e17fea40e",
+      "shape": [
+        1,
+        2,
+        343980
+      ]
+    },
+    {
+      "byteSize": 11010048,
+      "dtype": "float32-le",
+      "fileName": "spectrum_input.f32le.raw",
+      "localPath": "models/demucs/generated/htdemucs_6s_core_canonical_7p8s_fp32_v1_0_0/fixtures/spectrum_input.f32le.raw",
+      "role": "spectrumInput",
+      "sha256": "9d01b6cf6943c61724f6bb7edefc8f6156f9749f1ae9bc4f84508a62738ee5e0",
+      "shape": [
+        1,
+        4,
+        2048,
+        336
+      ]
+    },
+    {
+      "byteSize": 66060288,
+      "dtype": "float32-le",
+      "fileName": "frequency_golden.f32le.raw",
+      "localPath": "models/demucs/generated/htdemucs_6s_core_canonical_7p8s_fp32_v1_0_0/fixtures/frequency_golden.f32le.raw",
+      "role": "frequencyGolden",
+      "sha256": "86e916da6041bf0038adcd770ed986ddbe54e52e264d934f11d8186b7616dcbb",
+      "shape": [
+        1,
+        6,
+        4,
+        2048,
+        336
+      ]
+    },
+    {
+      "byteSize": 16511040,
+      "dtype": "float32-le",
+      "fileName": "waveform_golden.f32le.raw",
+      "localPath": "models/demucs/generated/htdemucs_6s_core_canonical_7p8s_fp32_v1_0_0/fixtures/waveform_golden.f32le.raw",
+      "role": "waveformGolden",
+      "sha256": "be0934e5be603d5fd17a69cf92d3786e21053128cdfb4fa0f4f78166aebea474",
+      "shape": [
+        1,
+        6,
+        2,
+        343980
+      ]
+    },
+    {
+      "byteSize": 16511040,
+      "dtype": "float32-le",
+      "fileName": "frequency_waveform_golden.f32le.raw",
+      "localPath": "models/demucs/generated/htdemucs_6s_core_canonical_7p8s_fp32_v1_0_0/fixtures/frequency_waveform_golden.f32le.raw",
+      "role": "frequencyWaveformGolden",
+      "sha256": "5bb82c18f2f778b6cf66c28c663d76921f37c4bb69128351e3ce0b4229498ba8",
+      "shape": [
+        1,
+        6,
+        2,
+        343980
+      ]
+    },
+    {
+      "byteSize": 16511040,
+      "dtype": "float32-le",
+      "fileName": "combined_golden.f32le.raw",
+      "localPath": "models/demucs/generated/htdemucs_6s_core_canonical_7p8s_fp32_v1_0_0/fixtures/combined_golden.f32le.raw",
+      "role": "combinedGolden",
+      "sha256": "7d5fd3585cbdbb46551e9e05883da9aa880702a72efaa71402072957d037264a",
+      "shape": [
+        1,
+        6,
+        2,
+        343980
+      ]
+    },
+    {
+      "byteSize": 4127760,
+      "dtype": "float32-le",
+      "fileName": "ola_mix_input.f32le.raw",
+      "localPath": "models/demucs/generated/htdemucs_6s_core_canonical_7p8s_fp32_v1_0_0/fixtures/ola_mix_input.f32le.raw",
+      "role": "olaMixInput",
+      "sha256": "dc28161d585169a4ce4661a5e142fe2668ed76e32f6b89a71d24c24522ee1790",
+      "shape": [
+        1,
+        2,
+        515970
+      ]
+    },
+    {
+      "byteSize": 24766560,
+      "dtype": "float32-le",
+      "fileName": "ola_combined_golden.f32le.raw",
+      "localPath": "models/demucs/generated/htdemucs_6s_core_canonical_7p8s_fp32_v1_0_0/fixtures/ola_combined_golden.f32le.raw",
+      "role": "olaCombinedGolden",
+      "sha256": "65f9cba1bb9b16213f5e3cc0dda5ec919de640a65088eadb69f0d079ec79d48a",
+      "shape": [
+        1,
+        6,
+        2,
+        515970
+      ]
+    }
+  ],
+  "flatBuffer": {
+    "bufferCount": 4179,
+    "customOperatorCount": 0,
+    "description": "MLIR Converted.",
+    "fileIdentifier": "TFL3",
+    "inputs": [
+      {
+        "axes": [
+          "batch",
+          "channel",
+          "sample"
+        ],
+        "dtype": "float32",
+        "index": 0,
+        "name": "serving_default_args_0",
+        "shape": [
+          1,
+          2,
+          343980
+        ],
+        "tensorIndex": 0
+      },
+      {
+        "axes": [
+          "batch",
+          "feature",
+          "frequency",
+          "frame"
+        ],
+        "dtype": "float32",
+        "index": 1,
+        "name": "serving_default_args_1",
+        "shape": [
+          1,
+          4,
+          2048,
+          336
+        ],
+        "tensorIndex": 1
+      }
+    ],
+    "inspectionReport": {
+      "byteSize": 3844,
+      "fileName": "flatbuffer-inspection.json",
+      "format": "json",
+      "localPath": "models/demucs/generated/htdemucs_6s_core_canonical_7p8s_fp32_v1_0_0/flatbuffer-inspection.json",
+      "sha256": "6b4763cfe62844983dd3d183a53c9ecad6ee5865f2cf1f795363e7b698b0475e"
+    },
+    "keepStablehloConstant": "true",
+    "minimumRuntimeVersion": "2.16.0",
+    "operatorCodeCount": 26,
+    "operatorCount": 3432,
+    "operatorHistogram": {
+      "ADD": 414,
+      "BATCH_MATMUL": 20,
+      "BROADCAST_TO": 5,
+      "CONCATENATION": 16,
+      "CONV_2D": 88,
+      "DIV": 2,
+      "FULLY_CONNECTED": 44,
+      "GATHER_ND": 132,
+      "GELU": 56,
+      "LOGISTIC": 48,
+      "MEAN": 44,
+      "MUL": 688,
+      "PAD": 3,
+      "RESHAPE": 940,
+      "RSQRT": 96,
+      "SELECT": 3,
+      "SELECT_V2": 1,
+      "SLICE": 274,
+      "SOFTMAX": 10,
+      "SQRT": 2,
+      "SQUARED_DIFFERENCE": 22,
+      "STABLEHLO_PAD": 4,
+      "SUB": 98,
+      "SUM": 152,
+      "TRANSPOSE": 262,
+      "TRANSPOSE_CONV": 8
+    },
+    "outputs": [
+      {
+        "axes": [
+          "batch",
+          "stem",
+          "feature",
+          "frequency",
+          "frame"
+        ],
+        "dtype": "float32",
+        "index": 0,
+        "name": "serving_default_output_0_output",
+        "shape": [
+          1,
+          6,
+          4,
+          2048,
+          336
+        ],
+        "tensorIndex": 4170
+      },
+      {
+        "axes": [
+          "batch",
+          "stem",
+          "channel",
+          "sample"
+        ],
+        "dtype": "float32",
+        "index": 1,
+        "name": "serving_default_output_1_output",
+        "shape": [
+          1,
+          6,
+          2,
+          343980
+        ],
+        "tensorIndex": 4175
+      }
+    ],
+    "schemaVersion": 3,
+    "signature": {
+      "inputs": [
+        {
+          "name": "args_0",
+          "tensorIndex": 0
+        },
+        {
+          "name": "args_1",
+          "tensorIndex": 1
+        }
+      ],
+      "key": "serving_default",
+      "outputs": [
+        {
+          "name": "output_0",
+          "tensorIndex": 4170
+        },
+        {
+          "name": "output_1",
+          "tensorIndex": 4175
+        }
+      ],
+      "subgraphIndex": 0
+    },
+    "subgraphCount": 1,
+    "tensorCount": 4176
+  },
+  "hostDspContract": {
+    "branchCombination": "frequency-istft-plus-time-waveform",
+    "globalNormalization": {
+      "epsilon": 1e-08,
+      "reference": "mean-across-stereo-channels",
+      "standardDeviationCorrection": 1
+    },
+    "istft": {
+      "center": true,
+      "cropEnd": 345516,
+      "cropStart": 1536,
+      "framePadLeft": 2,
+      "framePadRight": 2,
+      "normalized": true,
+      "reconstructionLength": 347136,
+      "restoreZeroNyquistBin": true
+    },
+    "ola": {
+      "accumulationDtype": "float32",
+      "overlap": 0.25,
+      "overlapSamples": 85995,
+      "sampleRate": 44100,
+      "shifts": 0,
+      "strideSamples": 257985,
+      "tailWeightRule": "triangle-prefix",
+      "trackSamples": 515970,
+      "transitionPower": 1.0,
+      "windowOrder": "ascending-offset",
+      "windowSamples": 343980
+    },
+    "stft": {
+      "center": true,
+      "dropNyquistBin": true,
+      "frameCropLeft": 2,
+      "frameCropRight": 2,
+      "hopLength": 1024,
+      "nFft": 4096,
+      "normalized": true,
+      "outerPadLeft": 1536,
+      "outerPadRight": 1620,
+      "padMode": "reflect",
+      "window": "periodic-hann"
+    },
+    "tailWindowPlans": [
+      {
+        "actualSamples": 343980,
+        "contextEnd": 343980,
+        "contextStart": 0,
+        "cropLeft": 0,
+        "cropRight": 0,
+        "offset": 0,
+        "padLeft": 0,
+        "padRight": 0,
+        "sourceEnd": 343980,
+        "sourceStart": 0
+      },
+      {
+        "actualSamples": 257985,
+        "contextEnd": 558968,
+        "contextStart": 214988,
+        "cropLeft": 42997,
+        "cropRight": 42998,
+        "offset": 257985,
+        "padLeft": 0,
+        "padRight": 42998,
+        "sourceEnd": 515970,
+        "sourceStart": 214988
+      }
+    ]
+  },
+  "hostValidation": {
+    "canonicalOla": {
+      "liteRtVsTorchOla": {
+        "eof": {
+          "endSample": 515970,
+          "gateEvaluation": {
+            "accepted": true,
+            "aggregate": {
+              "accepted": true,
+              "basis": "snr-and-absolute",
+              "lowSignal": false,
+              "maximumAbsoluteError": 0.001,
+              "requireAbsoluteGate": true
+            },
+            "perStem": {
+              "bass": {
+                "accepted": true,
+                "basis": "low-signal-absolute",
+                "lowSignal": true,
+                "maximumAbsoluteError": 1e-06,
+                "requireAbsoluteGate": true
+              },
+              "drums": {
+                "accepted": true,
+                "basis": "low-signal-absolute",
+                "lowSignal": true,
+                "maximumAbsoluteError": 1e-06,
+                "requireAbsoluteGate": true
+              },
+              "guitar": {
+                "accepted": true,
+                "basis": "low-signal-absolute",
+                "lowSignal": true,
+                "maximumAbsoluteError": 1e-06,
+                "requireAbsoluteGate": true
+              },
+              "other": {
+                "accepted": true,
+                "basis": "snr-and-absolute",
+                "lowSignal": false,
+                "maximumAbsoluteError": 0.001,
+                "requireAbsoluteGate": true
+              },
+              "piano": {
+                "accepted": true,
+                "basis": "low-signal-absolute",
+                "lowSignal": true,
+                "maximumAbsoluteError": 1e-06,
+                "requireAbsoluteGate": true
+              },
+              "vocals": {
+                "accepted": true,
+                "basis": "low-signal-absolute",
+                "lowSignal": true,
+                "maximumAbsoluteError": 1e-06,
+                "requireAbsoluteGate": true
+              }
+            }
+          },
+          "metrics": {
+            "aggregate": {
+              "bitwiseEqual": false,
+              "finite": true,
+              "maxAbsoluteError": 8.195638656616211e-07,
+              "meanAbsoluteError": 1.9656209673580003e-08,
+              "rootMeanSquareError": 4.4148214995603805e-08,
+              "signalRootMeanSquare": 0.03413715328354016,
+              "signalToNoiseDb": 117.766283067799
+            },
+            "perStem": {
+              "bass": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 2.2767380869481713e-08,
+                "meanAbsoluteError": 3.96856591818318e-09,
+                "rootMeanSquareError": 4.984545904490257e-09,
+                "signalRootMeanSquare": 3.129464695478003e-05,
+                "signalToNoiseDb": 75.95688913139438
+              },
+              "drums": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 1.2631062418222427e-07,
+                "meanAbsoluteError": 1.7045769440983602e-08,
+                "rootMeanSquareError": 2.1828242346968683e-08,
+                "signalRootMeanSquare": 0.0009875197098766788,
+                "signalToNoiseDb": 93.11054011170171
+              },
+              "guitar": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 3.6612618714571e-08,
+                "meanAbsoluteError": 5.824009052845566e-09,
+                "rootMeanSquareError": 7.369559786409631e-09,
+                "signalRootMeanSquare": 0.00018079940784983427,
+                "signalToNoiseDb": 87.79510914561823
+              },
+              "other": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 8.195638656616211e-07,
+                "meanAbsoluteError": 8.260026010134101e-08,
+                "rootMeanSquareError": 1.0525753601054054e-07,
+                "signalRootMeanSquare": 0.08361253266988285,
+                "signalToNoiseDb": 118.00036358633702
+              },
+              "piano": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 2.2817403078079224e-08,
+                "meanAbsoluteError": 3.6129631933935335e-09,
+                "rootMeanSquareError": 4.531362716996011e-09,
+                "signalRootMeanSquare": 6.182827422924384e-05,
+                "signalToNoiseDb": 82.69916594876011
+              },
+              "vocals": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 3.498280420899391e-08,
+                "meanAbsoluteError": 4.885690334733139e-09,
+                "rootMeanSquareError": 6.251313096276851e-09,
+                "signalRootMeanSquare": 5.5683548572779814e-05,
+                "signalToNoiseDb": 78.99511305892706
+              }
+            }
+          },
+          "startSample": 429975
+        },
+        "full": {
+          "gateEvaluation": {
+            "accepted": true,
+            "aggregate": {
+              "accepted": true,
+              "basis": "snr-and-absolute",
+              "lowSignal": false,
+              "maximumAbsoluteError": 0.001,
+              "requireAbsoluteGate": true
+            },
+            "perStem": {
+              "bass": {
+                "accepted": true,
+                "basis": "low-signal-absolute",
+                "lowSignal": true,
+                "maximumAbsoluteError": 1e-06,
+                "requireAbsoluteGate": true
+              },
+              "drums": {
+                "accepted": true,
+                "basis": "snr-and-absolute",
+                "lowSignal": false,
+                "maximumAbsoluteError": 0.001,
+                "requireAbsoluteGate": true
+              },
+              "guitar": {
+                "accepted": true,
+                "basis": "snr-and-absolute",
+                "lowSignal": false,
+                "maximumAbsoluteError": 0.001,
+                "requireAbsoluteGate": true
+              },
+              "other": {
+                "accepted": true,
+                "basis": "snr-and-absolute",
+                "lowSignal": false,
+                "maximumAbsoluteError": 0.001,
+                "requireAbsoluteGate": true
+              },
+              "piano": {
+                "accepted": true,
+                "basis": "low-signal-absolute",
+                "lowSignal": true,
+                "maximumAbsoluteError": 1e-06,
+                "requireAbsoluteGate": true
+              },
+              "vocals": {
+                "accepted": true,
+                "basis": "snr-and-absolute",
+                "lowSignal": false,
+                "maximumAbsoluteError": 0.001,
+                "requireAbsoluteGate": true
+              }
+            }
+          },
+          "metrics": {
+            "aggregate": {
+              "bitwiseEqual": false,
+              "finite": true,
+              "maxAbsoluteError": 5.550682544708252e-06,
+              "meanAbsoluteError": 1.069518951803816e-07,
+              "rootMeanSquareError": 3.390653760131514e-07,
+              "signalRootMeanSquare": 0.028289810049869805,
+              "signalToNoiseDb": 98.42693175560767
+            },
+            "perStem": {
+              "bass": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 4.102475941181183e-07,
+                "meanAbsoluteError": 4.714859113747146e-09,
+                "rootMeanSquareError": 7.818167193213802e-09,
+                "signalRootMeanSquare": 0.00017027040907735883,
+                "signalToNoiseDb": 86.76068451504845
+              },
+              "drums": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 3.293156623840332e-06,
+                "meanAbsoluteError": 1.222735740057344e-07,
+                "rootMeanSquareError": 3.7496983825092363e-07,
+                "signalRootMeanSquare": 0.006947144960241764,
+                "signalToNoiseDb": 85.35620051175121
+              },
+              "guitar": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 1.5087425708770752e-06,
+                "meanAbsoluteError": 8.410516370987967e-08,
+                "rootMeanSquareError": 1.8472957161594078e-07,
+                "signalRootMeanSquare": 0.04029197897274808,
+                "signalToNoiseDb": 106.77364351034498
+              },
+              "other": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 5.550682544708252e-06,
+                "meanAbsoluteError": 3.815729923420828e-07,
+                "rootMeanSquareError": 6.957851528540558e-07,
+                "signalRootMeanSquare": 0.05566034527411007,
+                "signalToNoiseDb": 98.06141477605357
+              },
+              "piano": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 5.657784640789032e-08,
+                "meanAbsoluteError": 5.711666929004932e-09,
+                "rootMeanSquareError": 7.90033675045549e-09,
+                "signalRootMeanSquare": 0.0002960402462091192,
+                "signalToNoiseDb": 91.4741030663751
+              },
+              "vocals": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 2.1029263734817505e-06,
+                "meanAbsoluteError": 4.333311498184066e-08,
+                "rootMeanSquareError": 1.7556783033099275e-07,
+                "signalRootMeanSquare": 0.005655356349035167,
+                "signalToNoiseDb": 90.16030066504669
+              }
+            }
+          }
+        },
+        "overlap": {
+          "endSample": 343980,
+          "gateEvaluation": {
+            "accepted": true,
+            "aggregate": {
+              "accepted": true,
+              "basis": "snr-and-absolute",
+              "lowSignal": false,
+              "maximumAbsoluteError": 0.001,
+              "requireAbsoluteGate": true
+            },
+            "perStem": {
+              "bass": {
+                "accepted": true,
+                "basis": "low-signal-absolute",
+                "lowSignal": true,
+                "maximumAbsoluteError": 1e-06,
+                "requireAbsoluteGate": true
+              },
+              "drums": {
+                "accepted": true,
+                "basis": "snr-and-absolute",
+                "lowSignal": false,
+                "maximumAbsoluteError": 0.001,
+                "requireAbsoluteGate": true
+              },
+              "guitar": {
+                "accepted": true,
+                "basis": "snr-and-absolute",
+                "lowSignal": false,
+                "maximumAbsoluteError": 0.001,
+                "requireAbsoluteGate": true
+              },
+              "other": {
+                "accepted": true,
+                "basis": "snr-and-absolute",
+                "lowSignal": false,
+                "maximumAbsoluteError": 0.001,
+                "requireAbsoluteGate": true
+              },
+              "piano": {
+                "accepted": true,
+                "basis": "low-signal-absolute",
+                "lowSignal": true,
+                "maximumAbsoluteError": 1e-06,
+                "requireAbsoluteGate": true
+              },
+              "vocals": {
+                "accepted": true,
+                "basis": "low-signal-absolute",
+                "lowSignal": true,
+                "maximumAbsoluteError": 1e-06,
+                "requireAbsoluteGate": true
+              }
+            }
+          },
+          "metrics": {
+            "aggregate": {
+              "bitwiseEqual": false,
+              "finite": true,
+              "maxAbsoluteError": 1.9297003746032715e-06,
+              "meanAbsoluteError": 5.109445178337403e-08,
+              "rootMeanSquareError": 1.375588999250472e-07,
+              "signalRootMeanSquare": 0.025637044318369943,
+              "signalToNoiseDb": 105.40758520173476
+            },
+            "perStem": {
+              "bass": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 2.1085725165903568e-08,
+                "meanAbsoluteError": 3.359905113121539e-09,
+                "rootMeanSquareError": 4.238341907409746e-09,
+                "signalRootMeanSquare": 4.9468601317328695e-05,
+                "signalToNoiseDb": 81.34267285737499
+              },
+              "drums": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 2.682209014892578e-07,
+                "meanAbsoluteError": 3.3240997149250715e-08,
+                "rootMeanSquareError": 4.235365795199743e-08,
+                "signalRootMeanSquare": 0.001556028058795992,
+                "signalToNoiseDb": 91.30252998257403
+              },
+              "guitar": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 3.650784492492676e-07,
+                "meanAbsoluteError": 3.07833280392177e-08,
+                "rootMeanSquareError": 4.850769072411349e-08,
+                "signalRootMeanSquare": 0.045772075941884885,
+                "signalToNoiseDb": 119.49580019785635
+              },
+              "other": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 1.9297003746032715e-06,
+                "meanAbsoluteError": 2.3053614883037996e-07,
+                "rootMeanSquareError": 3.3061360721267306e-07,
+                "signalRootMeanSquare": 0.04296535179612034,
+                "signalToNoiseDb": 102.27595296095524
+              },
+              "piano": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 2.427259460091591e-08,
+                "meanAbsoluteError": 3.6156649330982812e-09,
+                "rootMeanSquareError": 4.571642007069662e-09,
+                "signalRootMeanSquare": 0.0001108584818838965,
+                "signalToNoiseDb": 87.6939342472481
+              },
+              "vocals": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 4.062894731760025e-08,
+                "meanAbsoluteError": 5.030666635175973e-09,
+                "rootMeanSquareError": 6.6073113513216634e-09,
+                "signalRootMeanSquare": 8.886637748047118e-05,
+                "signalToNoiseDb": 82.57425409745822
+              }
+            }
+          },
+          "startSample": 257985
+        }
+      },
+      "paddingVsOfficialTensorChunkBitwiseEqual": true,
+      "qualityGatePolicy": {
+        "frequencyLatentAbsoluteError": "reported-not-gated",
+        "lowSignalLatentMaximumAbsoluteError": 0.001,
+        "lowSignalMaximumAbsoluteError": 1e-06,
+        "lowSignalReferenceRms": 0.001,
+        "maximumWaveformAbsoluteError": 0.001,
+        "minimumSignalToNoiseDb": 80.0,
+        "windowPerStemMetrics": "reported-not-gated-before-ola"
+      },
+      "status": "passed",
+      "torchCoreOlaVsOfficialApplyModel": {
+        "aggregate": {
+          "bitwiseEqual": true,
+          "finite": true,
+          "maxAbsoluteError": 0.0,
+          "meanAbsoluteError": 0.0,
+          "rootMeanSquareError": 0.0,
+          "signalRootMeanSquare": 0.48718737215159114,
+          "signalToNoiseDb": 593.7539204580154
+        },
+        "perStem": {
+          "bass": {
+            "bitwiseEqual": true,
+            "finite": true,
+            "maxAbsoluteError": 0.0,
+            "meanAbsoluteError": 0.0,
+            "rootMeanSquareError": 0.0,
+            "signalRootMeanSquare": 0.0029330168726499394,
+            "signalToNoiseDb": 549.3462912267279
+          },
+          "drums": {
+            "bitwiseEqual": true,
+            "finite": true,
+            "maxAbsoluteError": 0.0,
+            "meanAbsoluteError": 0.0,
+            "rootMeanSquareError": 0.0,
+            "signalRootMeanSquare": 0.11963891117768494,
+            "signalToNoiseDb": 581.5574490380925
+          },
+          "guitar": {
+            "bitwiseEqual": true,
+            "finite": true,
+            "maxAbsoluteError": 0.0,
+            "meanAbsoluteError": 0.0,
+            "rootMeanSquareError": 0.0,
+            "signalRootMeanSquare": 0.6938803554838604,
+            "signalToNoiseDb": 596.8256918461963
+          },
+          "other": {
+            "bitwiseEqual": true,
+            "finite": true,
+            "maxAbsoluteError": 0.0,
+            "meanAbsoluteError": 0.0,
+            "rootMeanSquareError": 0.0,
+            "signalRootMeanSquare": 0.9585436032464336,
+            "signalToNoiseDb": 599.632237466214
+          },
+          "piano": {
+            "bitwiseEqual": true,
+            "finite": true,
+            "maxAbsoluteError": 0.0,
+            "meanAbsoluteError": 0.0,
+            "rootMeanSquareError": 0.0,
+            "signalRootMeanSquare": 0.005099181589408545,
+            "signalToNoiseDb": 554.1500095622515
+          },
+          "vocals": {
+            "bitwiseEqual": true,
+            "finite": true,
+            "maxAbsoluteError": 0.0,
+            "meanAbsoluteError": 0.0,
+            "rootMeanSquareError": 0.0,
+            "signalRootMeanSquare": 0.09739277767952863,
+            "signalToNoiseDb": 579.7705350451237
+          }
+        }
+      },
+      "uniformTensorGatePassed": false
+    },
+    "qualityGate": {
+      "acceptedForDeviceTesting": true,
+      "hostPipelineGatePassed": true,
+      "lowSignalLatentMaximumAbsoluteError": 0.001,
+      "lowSignalMaximumAbsoluteError": 1e-06,
+      "lowSignalReferenceRms": 0.001,
+      "maximumAbsoluteError": 0.001,
+      "minimumSignalToNoiseDb": 80.0,
+      "uniformTensorGatePassed": false
+    },
+    "singleWindowGateEvaluation": {
+      "combinedOutput": {
+        "accepted": true,
+        "aggregate": {
+          "accepted": true,
+          "basis": "snr-and-absolute",
+          "lowSignal": false,
+          "maximumAbsoluteError": 0.001,
+          "requireAbsoluteGate": true
+        },
+        "perStem": {
+          "bass": {
+            "accepted": true,
+            "basis": "low-signal-absolute",
+            "lowSignal": true,
+            "maximumAbsoluteError": 1e-06,
+            "requireAbsoluteGate": true
+          },
+          "drums": {
+            "accepted": true,
+            "basis": "snr-and-absolute",
+            "lowSignal": false,
+            "maximumAbsoluteError": 0.001,
+            "requireAbsoluteGate": true
+          },
+          "guitar": {
+            "accepted": true,
+            "basis": "snr-and-absolute",
+            "lowSignal": false,
+            "maximumAbsoluteError": 0.001,
+            "requireAbsoluteGate": true
+          },
+          "other": {
+            "accepted": true,
+            "basis": "low-signal-absolute",
+            "lowSignal": true,
+            "maximumAbsoluteError": 1e-06,
+            "requireAbsoluteGate": true
+          },
+          "piano": {
+            "accepted": true,
+            "basis": "low-signal-absolute",
+            "lowSignal": true,
+            "maximumAbsoluteError": 1e-06,
+            "requireAbsoluteGate": true
+          },
+          "vocals": {
+            "accepted": true,
+            "basis": "low-signal-absolute",
+            "lowSignal": true,
+            "maximumAbsoluteError": 1e-06,
+            "requireAbsoluteGate": true
+          }
+        }
+      },
+      "frequencyOutput": {
+        "accepted": true,
+        "aggregate": {
+          "accepted": true,
+          "basis": "snr-only",
+          "lowSignal": false,
+          "maximumAbsoluteError": null,
+          "requireAbsoluteGate": false
+        },
+        "perStem": {
+          "bass": {
+            "accepted": true,
+            "basis": "low-signal-absolute",
+            "lowSignal": true,
+            "maximumAbsoluteError": 0.001,
+            "requireAbsoluteGate": false
+          },
+          "drums": {
+            "accepted": true,
+            "basis": "snr-only",
+            "lowSignal": false,
+            "maximumAbsoluteError": null,
+            "requireAbsoluteGate": false
+          },
+          "guitar": {
+            "accepted": true,
+            "basis": "snr-only",
+            "lowSignal": false,
+            "maximumAbsoluteError": null,
+            "requireAbsoluteGate": false
+          },
+          "other": {
+            "accepted": true,
+            "basis": "low-signal-absolute",
+            "lowSignal": true,
+            "maximumAbsoluteError": 0.001,
+            "requireAbsoluteGate": false
+          },
+          "piano": {
+            "accepted": true,
+            "basis": "low-signal-absolute",
+            "lowSignal": true,
+            "maximumAbsoluteError": 0.001,
+            "requireAbsoluteGate": false
+          },
+          "vocals": {
+            "accepted": true,
+            "basis": "low-signal-absolute",
+            "lowSignal": true,
+            "maximumAbsoluteError": 0.001,
+            "requireAbsoluteGate": false
+          }
+        }
+      },
+      "frequencyWaveformOutput": {
+        "accepted": true,
+        "aggregate": {
+          "accepted": true,
+          "basis": "snr-and-absolute",
+          "lowSignal": false,
+          "maximumAbsoluteError": 0.001,
+          "requireAbsoluteGate": true
+        },
+        "perStem": {
+          "bass": {
+            "accepted": true,
+            "basis": "low-signal-absolute",
+            "lowSignal": true,
+            "maximumAbsoluteError": 1e-06,
+            "requireAbsoluteGate": true
+          },
+          "drums": {
+            "accepted": true,
+            "basis": "snr-and-absolute",
+            "lowSignal": false,
+            "maximumAbsoluteError": 0.001,
+            "requireAbsoluteGate": true
+          },
+          "guitar": {
+            "accepted": true,
+            "basis": "snr-and-absolute",
+            "lowSignal": false,
+            "maximumAbsoluteError": 0.001,
+            "requireAbsoluteGate": true
+          },
+          "other": {
+            "accepted": true,
+            "basis": "low-signal-absolute",
+            "lowSignal": true,
+            "maximumAbsoluteError": 1e-06,
+            "requireAbsoluteGate": true
+          },
+          "piano": {
+            "accepted": true,
+            "basis": "low-signal-absolute",
+            "lowSignal": true,
+            "maximumAbsoluteError": 1e-06,
+            "requireAbsoluteGate": true
+          },
+          "vocals": {
+            "accepted": true,
+            "basis": "low-signal-absolute",
+            "lowSignal": true,
+            "maximumAbsoluteError": 1e-06,
+            "requireAbsoluteGate": true
+          }
+        }
+      },
+      "waveformOutput": {
+        "accepted": true,
+        "aggregate": {
+          "accepted": true,
+          "basis": "snr-and-absolute",
+          "lowSignal": false,
+          "maximumAbsoluteError": 0.001,
+          "requireAbsoluteGate": true
+        },
+        "perStem": {
+          "bass": {
+            "accepted": true,
+            "basis": "low-signal-absolute",
+            "lowSignal": true,
+            "maximumAbsoluteError": 1e-06,
+            "requireAbsoluteGate": true
+          },
+          "drums": {
+            "accepted": true,
+            "basis": "low-signal-absolute",
+            "lowSignal": true,
+            "maximumAbsoluteError": 1e-06,
+            "requireAbsoluteGate": true
+          },
+          "guitar": {
+            "accepted": true,
+            "basis": "snr-and-absolute",
+            "lowSignal": false,
+            "maximumAbsoluteError": 0.001,
+            "requireAbsoluteGate": true
+          },
+          "other": {
+            "accepted": true,
+            "basis": "low-signal-absolute",
+            "lowSignal": true,
+            "maximumAbsoluteError": 1e-06,
+            "requireAbsoluteGate": true
+          },
+          "piano": {
+            "accepted": true,
+            "basis": "low-signal-absolute",
+            "lowSignal": true,
+            "maximumAbsoluteError": 1e-06,
+            "requireAbsoluteGate": true
+          },
+          "vocals": {
+            "accepted": true,
+            "basis": "low-signal-absolute",
+            "lowSignal": true,
+            "maximumAbsoluteError": 1e-06,
+            "requireAbsoluteGate": true
+          }
+        }
+      }
+    },
+    "singleWindowMetrics": {
+      "combinedOutput": {
+        "bitwiseEqual": false,
+        "finite": true,
+        "maxAbsoluteError": 5.237758159637451e-06,
+        "meanAbsoluteError": 1.726917539497257e-07,
+        "rootMeanSquareError": 4.7423972473876704e-07,
+        "signalRootMeanSquare": 0.05175703344353116,
+        "signalToNoiseDb": 100.75942892083481
+      },
+      "frequencyOutput": {
+        "bitwiseEqual": false,
+        "finite": true,
+        "maxAbsoluteError": 0.00011587142944335938,
+        "meanAbsoluteError": 4.4017707874222023e-08,
+        "rootMeanSquareError": 2.969983876809854e-07,
+        "signalRootMeanSquare": 0.028707646303500377,
+        "signalToNoiseDb": 99.70486990289835
+      },
+      "frequencyWaveformOutput": {
+        "bitwiseEqual": false,
+        "finite": true,
+        "maxAbsoluteError": 5.152076482772827e-06,
+        "meanAbsoluteError": 1.7113563425860427e-07,
+        "rootMeanSquareError": 4.7320677977369657e-07,
+        "signalRootMeanSquare": 0.0377762880041685,
+        "signalToNoiseDb": 98.04336645032751
+      },
+      "perStemCombined": {
+        "bass": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 7.28759914636612e-08,
+          "meanAbsoluteError": 1.1215917002008137e-08,
+          "rootMeanSquareError": 1.4302729667297291e-08,
+          "signalRootMeanSquare": 7.229727391917759e-05,
+          "signalToNoiseDb": 74.07405983284237
+        },
+        "drums": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 1.30385160446167e-06,
+          "meanAbsoluteError": 9.12664194146041e-08,
+          "rootMeanSquareError": 1.5248441217770324e-07,
+          "signalRootMeanSquare": 0.02163165347386278,
+          "signalToNoiseDb": 103.03728534550693
+        },
+        "guitar": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 5.237758159637451e-06,
+          "meanAbsoluteError": 8.25393453613612e-07,
+          "rootMeanSquareError": 1.1452079466803255e-06,
+          "signalRootMeanSquare": 0.12491690973211325,
+          "signalToNoiseDb": 100.75473757796787
+        },
+        "other": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 6.756745278835297e-07,
+          "meanAbsoluteError": 9.187263237430631e-08,
+          "rootMeanSquareError": 1.1933983814366026e-07,
+          "signalRootMeanSquare": 0.0007513540132798836,
+          "signalToNoiseDb": 75.98118332000132
+        },
+        "piano": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 5.98374754190445e-08,
+          "meanAbsoluteError": 9.42568950095624e-09,
+          "rootMeanSquareError": 1.199987252375165e-08,
+          "signalRootMeanSquare": 9.433660200467458e-05,
+          "signalToNoiseDb": 77.91007192884234
+        },
+        "vocals": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 1.1664815247058868e-07,
+          "meanAbsoluteError": 6.976411792867526e-09,
+          "rootMeanSquareError": 8.752144890533726e-09,
+          "signalRootMeanSquare": 4.046073447106605e-05,
+          "signalToNoiseDb": 73.29838526770182
+        }
+      },
+      "perStemFrequencyOutput": {
+        "bass": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 3.5902485251426697e-07,
+          "meanAbsoluteError": 1.0554233679138316e-08,
+          "rootMeanSquareError": 1.608461117332697e-08,
+          "signalRootMeanSquare": 0.0003685884941000502,
+          "signalToNoiseDb": 87.20262414611466
+        },
+        "drums": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 2.205371856689453e-05,
+          "meanAbsoluteError": 4.4192852126390124e-08,
+          "rootMeanSquareError": 1.0249214792307571e-07,
+          "signalRootMeanSquare": 0.012382372526853676,
+          "signalToNoiseDb": 101.64226542037362
+        },
+        "guitar": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 0.00011587142944335938,
+          "meanAbsoluteError": 1.3826028134544744e-07,
+          "rootMeanSquareError": 7.135151518616336e-07,
+          "signalRootMeanSquare": 0.06920668027455432,
+          "signalToNoiseDb": 99.7348963473074
+        },
+        "other": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 3.997236490249634e-06,
+          "meanAbsoluteError": 2.999391791574346e-08,
+          "rootMeanSquareError": 8.728782275137186e-08,
+          "signalRootMeanSquare": 0.0006592262974025047,
+          "signalToNoiseDb": 77.56161725465357
+        },
+        "piano": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 1.014210283756256e-06,
+          "meanAbsoluteError": 1.0411584596711283e-08,
+          "rootMeanSquareError": 1.6445828189121244e-08,
+          "signalRootMeanSquare": 0.0006286925242629475,
+          "signalToNoiseDb": 91.64765094758123
+        },
+        "vocals": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 6.183981895446777e-07,
+          "meanAbsoluteError": 3.069337758190152e-08,
+          "rootMeanSquareError": 3.8618614766920054e-08,
+          "signalRootMeanSquare": 0.0009593240452909243,
+          "signalToNoiseDb": 87.90337276711176
+        }
+      },
+      "perStemFrequencyWaveform": {
+        "bass": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 4.441244527697563e-08,
+          "meanAbsoluteError": 6.987880482346938e-09,
+          "rootMeanSquareError": 8.758054572921472e-09,
+          "signalRootMeanSquare": 0.00023011532970013265,
+          "signalToNoiseDb": 88.3907580840638
+        },
+        "drums": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 1.3113021850585938e-06,
+          "meanAbsoluteError": 9.146485123594518e-08,
+          "rootMeanSquareError": 1.5275216377498726e-07,
+          "signalRootMeanSquare": 0.02152283178432511,
+          "signalToNoiseDb": 102.9782408107053
+        },
+        "guitar": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 5.152076482772827e-06,
+          "meanAbsoluteError": 8.203048292901308e-07,
+          "rootMeanSquareError": 1.1426643506950165e-06,
+          "signalRootMeanSquare": 0.08998790946943458,
+          "signalToNoiseDb": 97.92530968875126
+        },
+        "other": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 6.752088665962219e-07,
+          "meanAbsoluteError": 9.187138113190349e-08,
+          "rootMeanSquareError": 1.1933745607881215e-07,
+          "signalRootMeanSquare": 0.0007722882281207407,
+          "signalToNoiseDb": 76.22005278531199
+        },
+        "piano": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 5.98374754190445e-08,
+          "meanAbsoluteError": 9.198356919907017e-09,
+          "rootMeanSquareError": 1.1746667946542099e-08,
+          "signalRootMeanSquare": 0.0007495384934945219,
+          "signalToNoiseDb": 96.09758498316538
+        },
+        "vocals": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 1.1670636013150215e-07,
+          "meanAbsoluteError": 6.986506491392399e-09,
+          "rootMeanSquareError": 8.762448541108272e-09,
+          "signalRootMeanSquare": 0.00014241988032669576,
+          "signalToNoiseDb": 84.21890271969812
+        }
+      },
+      "perStemWaveformOutput": {
+        "bass": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 7.636845111846924e-08,
+          "meanAbsoluteError": 8.2455848168563e-09,
+          "rootMeanSquareError": 1.1132187783031275e-08,
+          "signalRootMeanSquare": 0.00025817558253275123,
+          "signalToNoiseDb": 87.30669284004219
+        },
+        "drums": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 1.3224780559539795e-07,
+          "meanAbsoluteError": 3.561693141037613e-09,
+          "rootMeanSquareError": 5.118133400565809e-09,
+          "signalRootMeanSquare": 0.00047755813008494195,
+          "signalToNoiseDb": 99.39829283471546
+        },
+        "guitar": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 5.736947059631348e-07,
+          "meanAbsoluteError": 3.512953989769431e-08,
+          "rootMeanSquareError": 4.44696302242064e-08,
+          "signalRootMeanSquare": 0.07877687339831806,
+          "signalToNoiseDb": 124.96670443513031
+        },
+        "other": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 6.170012056827545e-09,
+          "meanAbsoluteError": 2.779822659299025e-10,
+          "rootMeanSquareError": 3.4910210373039003e-10,
+          "signalRootMeanSquare": 0.0002017014880071978,
+          "signalToNoiseDb": 115.23513272404665
+        },
+        "piano": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 1.6472768038511276e-08,
+          "meanAbsoluteError": 1.2231948265715469e-09,
+          "rootMeanSquareError": 1.5126492959554031e-09,
+          "signalRootMeanSquare": 0.0007754233314204678,
+          "signalToNoiseDb": 114.19601229223841
+        },
+        "vocals": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 1.7171259969472885e-08,
+          "meanAbsoluteError": 2.1348031100304457e-10,
+          "rootMeanSquareError": 2.8261346968995044e-10,
+          "signalRootMeanSquare": 0.00014687747761005324,
+          "signalToNoiseDb": 114.31524697209447
+        }
+      },
+      "waveformOutput": {
+        "bitwiseEqual": false,
+        "finite": true,
+        "maxAbsoluteError": 5.736947059631348e-07,
+        "meanAbsoluteError": 8.108579209848786e-09,
+        "rootMeanSquareError": 1.884214583128712e-08,
+        "signalRootMeanSquare": 0.03216300679517868,
+        "signalToNoiseDb": 124.64452563471585
+      }
+    },
+    "torchCoreReconstruction": {
+      "bitwiseEqual": true,
+      "finite": true,
+      "maxAbsoluteError": 0.0,
+      "meanAbsoluteError": 0.0,
+      "rootMeanSquareError": 0.0,
+      "signalRootMeanSquare": 0.05175703344353116,
+      "signalToNoiseDb": 574.2793875185814
+    }
+  },
+  "manifestKind": "generated-litert-host-candidate",
+  "manifestSchemaVersion": 1,
+  "modelId": "htdemucs_6s_core_canonical_7p8s_fp32_v1_0_0",
+  "modelSemantics": {
+    "channelCount": 2,
+    "featureOrder": [
+      "L.real",
+      "L.imag",
+      "R.real",
+      "R.imag"
+    ],
+    "sampleRate": 44100,
+    "spectrumFrameCount": 336,
+    "stemOrder": [
+      "drums",
+      "bass",
+      "other",
+      "vocals",
+      "guitar",
+      "piano"
+    ],
+    "windowSamples": 343980
+  },
+  "provenance": {
+    "bagManifest": {
+      "byteSize": 21,
+      "fileName": "htdemucs_6s.yaml",
+      "format": "yaml",
+      "localPath": "models/demucs/official-hf/htdemucs_6s/htdemucs_6s.yaml",
+      "sha256": "207405151270af8fd81c2373c25d27950916682ac91dca7884a11ce13dad6f58"
+    },
+    "boundarySource": {
+      "byteSize": 29284,
+      "fileName": "htdemucs.py",
+      "format": "python-source",
+      "localPath": ".tmp/demucs-lite-reference/demucs-for-onnx/demucs/htdemucs.py",
+      "sha256": "fc9b1debbc2d0e61f523ccd32a22b19f471bc4404d32fadbd79f38c049abcc7b"
+    },
+    "canonicalWeight": {
+      "byteSize": 54885744,
+      "fileName": "5c90dfd2.safetensors",
+      "format": "safetensors",
+      "localPath": "models/demucs/official-hf/htdemucs_6s/5c90dfd2.safetensors",
+      "sha256": "d2a1745f0744721f6b8ca5bf469b67c651ea5ed1b52998cab033b2158609d411"
+    },
+    "demucsLiteReferenceCheckout": {
+      "revision": "9a2a17c7a81843c2ae49674986f9e1e8b5f6915f",
+      "statusEntryCount": 125,
+      "workingTreeState": "line-endings-only"
+    },
+    "demucsLiteReferenceRevision": "9a2a17c7a81843c2ae49674986f9e1e8b5f6915f",
+    "exportScript": {
+      "byteSize": 55693,
+      "fileName": "export_htdemucs_litert_candidate.py",
+      "format": null,
+      "localPath": "tools/export_htdemucs_litert_candidate.py",
+      "sha256": "532f5e1b7c9c30aa53963c891c94e3379f5aa18d0297d6ae21ce1e4d82e1b9ba"
+    },
+    "loaderCheckout": {
+      "revision": "eeac1d15891af95b1288d2884b95baa3e5baa96c",
+      "statusEntryCount": 95,
+      "workingTreeState": "line-endings-only"
+    },
+    "loaderRevision": "eeac1d15891af95b1288d2884b95baa3e5baa96c",
+    "metadata": {
+      "byteSize": 10398,
+      "fileName": "5c90dfd2.json",
+      "format": null,
+      "localPath": "models/demucs/official-hf/htdemucs_6s/5c90dfd2.json",
+      "sha256": "72d7b4739ba40c8ff1d697404232edd335f397cedbf1bb88eec0034bdbab153e"
+    },
+    "referenceExporter": {
+      "byteSize": 5879,
+      "fileName": "convert-pth-to-onnx-chunked.py",
+      "format": "python-source",
+      "localPath": ".tmp/demucs-lite-reference/scripts/convert-pth-to-onnx-chunked.py",
+      "sha256": "57b73642c1ac2d399817a8dff4438db587202a14ffa90877c7b9fb0d95f9e506"
+    },
+    "requirementsLock": {
+      "byteSize": 334,
+      "fileName": "requirements-demucs-litert-export.txt",
+      "format": "pip-requirements",
+      "localPath": "requirements-demucs-litert-export.txt",
+      "sha256": "cb6ef5b77262c7d8594735413ecef5e841f3be1a710a48602b0620d229bf1706"
+    }
+  },
+  "scope": "host-only-not-a-device-result",
+  "status": "host-pipeline-passed"
+}

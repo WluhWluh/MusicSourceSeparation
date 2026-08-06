@@ -1,0 +1,17 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+torch==2.11.0+cpu
+torchaudio==2.11.0+cpu
+numpy==2.5.1
+safetensors==0.8.0
+litert-torch==0.9.1
+ai-edge-litert[model-utils]==2.1.5
+einops==0.8.2
+julius==0.2.8
+lameenc==1.8.4
+sphn==0.2.1
+onnx==1.17.0
+onnxruntime==1.21.1
+onnxscript==0.2.2
+onnxconverter-common==1.16.0
+tflite==2.10.0

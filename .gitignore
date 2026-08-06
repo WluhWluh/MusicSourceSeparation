@@ -9,6 +9,13 @@ build/
 __pycache__/
 *.pyc
 
+# Accidental in-place WSL virtual environment
+/bin/
+/include/
+/lib/
+/lib64
+/pyvenv.cfg
+
 # Local model and audio artifacts
 models/
 data/

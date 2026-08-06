@@ -156,6 +156,23 @@ hybrid rows beats the 2.19-second Compiled CPU baseline.
 The first exact graph rewrite was isolated behind a derived-model contract. It
 is the in-place FlatBuffer patch, not the earlier append-shape-tensor prototype.
 
+Two rewrite artifacts exist and must not be merged in provenance. The ignored
+legacy manifest at
+`outputs/bandbuddy-s25-20260803/litert215-gather-rewrite/manifest.json`
+explicitly records `rewrite_identity_gather_nd.py` at SHA-256
+`57735d1ed36d5b5fa61160233e873e84115febef19ac50e3680ab7cc6601521f`.
+That archived prototype produced
+`htdemucs_6s.core.gather_nd_reshape_v1.tflite` (117,789,992 bytes, SHA-256
+`199fd2c3a63fcbc840ab0be4b003730522b4b1503222f03a5f6d7e4a8a0c47e9`),
+increasing the tensor count from 4,332 to 4,346. It was not used by the S25
+gates below. Its byte-identical tool snapshot is under
+`tools/frozen-tools/57735d1ed36d5b5fa61160233e873e84115febef19ac50e3680ab7cc6601521f/`.
+
+The device-tested artifact below is the later byte-size-preserving in-place
+rewrite. Its derived-model contract pins the successor tool and SHA in the
+table. Replaying that successor with the pinned project `.venv`, pinned base
+artifact and 132-rewrite gate reproduced the exact `ce971b19...` output SHA.
+
 | Item | Value |
 | --- | --- |
 | rewrite tool | `tools/rewrite_tflite_identity_gather_nd.py` |

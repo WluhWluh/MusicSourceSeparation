@@ -9,6 +9,31 @@ import org.junit.Test
 
 class GeneratedLiteRtHostCandidateManifestLoaderTest {
     @Test
+    fun loadsOfficialFourStemCanonicalManifest() {
+        val loaded = GeneratedLiteRtHostCandidateManifestLoader.load(
+            fourStemManifestFile(),
+            FOUR_STEM_MANIFEST_BYTES,
+            FOUR_STEM_MANIFEST_SHA256,
+        )
+        val manifest = loaded.manifest
+
+        assertEquals(FOUR_STEM_MODEL_ID + "@host-1", manifest.candidateId)
+        assertEquals(
+            listOf(
+                BenchmarkStemSemantic.DRUMS,
+                BenchmarkStemSemantic.BASS,
+                BenchmarkStemSemantic.OTHER,
+                BenchmarkStemSemantic.VOCALS,
+            ),
+            manifest.stemOrder,
+        )
+        assertEquals(listOf(1, 4, 4, 2_048, 336), manifest.flatBuffer.outputs[0].shape)
+        assertEquals(listOf(1, 4, 2, 343_980), manifest.flatBuffer.outputs[1].shape)
+        assertTrue(manifest.qualityGate.hostPipelineGatePassed)
+        assertTrue(manifest.qualityGate.acceptedForDeviceTesting)
+    }
+
+    @Test
     fun loadsCanonicalManifestAndBindsProbeAbi() {
         val loaded = GeneratedLiteRtHostCandidateManifestLoader.load(
             manifestFile(),
@@ -87,6 +112,10 @@ class GeneratedLiteRtHostCandidateManifestLoaderTest {
         "/benchmark-contracts/$MODEL_ID.candidate-manifest.json",
     )
 
+    private fun fourStemManifestFile(): File = resourceFile(
+        "/benchmark-contracts/$FOUR_STEM_MODEL_ID.candidate-manifest.json",
+    )
+
     private fun resourceFile(name: String): File = File(
         requireNotNull(javaClass.getResource(name)) { "Missing test resource $name" }.toURI(),
     )
@@ -96,5 +125,10 @@ class GeneratedLiteRtHostCandidateManifestLoaderTest {
         private const val MANIFEST_BYTES = 47_505L
         private const val MANIFEST_SHA256 =
             "e22708ecbb1e43f528a3f1ff2ab33a8062c42fc36ffed1134f837426865f33e2"
+        private const val FOUR_STEM_MODEL_ID =
+            "htdemucs_4s_core_canonical_7p8s_fp32_v1_0_0"
+        private const val FOUR_STEM_MANIFEST_BYTES = 38_207L
+        private const val FOUR_STEM_MANIFEST_SHA256 =
+            "134642ea71cfbb8174cb8f27a6696f3620b03d6556afcfade1457a4245b8a879"
     }
 }

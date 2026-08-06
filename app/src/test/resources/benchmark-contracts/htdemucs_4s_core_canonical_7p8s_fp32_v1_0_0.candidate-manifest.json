@@ -1,0 +1,1168 @@
+{
+  "artifact": {
+    "byteSize": 178042000,
+    "fileName": "htdemucs_4s.core.canonical_7p8s.fp32.tflite",
+    "format": "tflite-flatbuffer",
+    "localPath": "models/demucs/generated/htdemucs_4s_core_canonical_7p8s_fp32_v1_0_0/htdemucs_4s.core.canonical_7p8s.fp32.tflite",
+    "sha256": "9855718072ee819bacacdb6b670bd6257feca172bf27ac1d72dff994cdbeed81"
+  },
+  "candidateId": "htdemucs_4s_core_canonical_7p8s_fp32_v1_0_0@host-1",
+  "conversion": {
+    "exportReport": {
+      "byteSize": 54203,
+      "fileName": "export-report.json",
+      "format": "json",
+      "localPath": "models/demucs/generated/htdemucs_4s_core_canonical_7p8s_fp32_v1_0_0/export-report.json",
+      "sha256": "0f2e1b65702aa132f72a9741c1ab2f03ec78afd8ad41fff801e267e318344ba5"
+    },
+    "recipe": {
+      "deterministicPositionalEmbedding": true,
+      "enableX64": false,
+      "lightweightConversion": false,
+      "liteRtConversionInput": "project-owned PyTorch neural-core module",
+      "onnxRole": "not-generated",
+      "runtimeConstantFolding": false,
+      "strictExport": true
+    },
+    "versions": {
+      "aiEdgeLiteRt": "2.1.5",
+      "litertTorch": "0.9.1",
+      "numpy": "2.5.1",
+      "python": "3.12.3",
+      "safetensors": "0.8.0",
+      "torch": "2.11.0+cpu"
+    }
+  },
+  "fixtures": [
+    {
+      "byteSize": 2751840,
+      "dtype": "float32-le",
+      "fileName": "waveform_input.f32le.raw",
+      "localPath": "models/demucs/generated/htdemucs_4s_core_canonical_7p8s_fp32_v1_0_0/fixtures/waveform_input.f32le.raw",
+      "role": "waveformInput",
+      "sha256": "9515d42e72e96036e34f0193d1302e8cccbf80c4e9e7084d1fcba26e17fea40e",
+      "shape": [
+        1,
+        2,
+        343980
+      ]
+    },
+    {
+      "byteSize": 11010048,
+      "dtype": "float32-le",
+      "fileName": "spectrum_input.f32le.raw",
+      "localPath": "models/demucs/generated/htdemucs_4s_core_canonical_7p8s_fp32_v1_0_0/fixtures/spectrum_input.f32le.raw",
+      "role": "spectrumInput",
+      "sha256": "9d01b6cf6943c61724f6bb7edefc8f6156f9749f1ae9bc4f84508a62738ee5e0",
+      "shape": [
+        1,
+        4,
+        2048,
+        336
+      ]
+    },
+    {
+      "byteSize": 44040192,
+      "dtype": "float32-le",
+      "fileName": "frequency_golden.f32le.raw",
+      "localPath": "models/demucs/generated/htdemucs_4s_core_canonical_7p8s_fp32_v1_0_0/fixtures/frequency_golden.f32le.raw",
+      "role": "frequencyGolden",
+      "sha256": "0bf5d2ce76c9955d8582fb744e795ace685685c59e2b89e2ec1968d94e74d82a",
+      "shape": [
+        1,
+        4,
+        4,
+        2048,
+        336
+      ]
+    },
+    {
+      "byteSize": 11007360,
+      "dtype": "float32-le",
+      "fileName": "waveform_golden.f32le.raw",
+      "localPath": "models/demucs/generated/htdemucs_4s_core_canonical_7p8s_fp32_v1_0_0/fixtures/waveform_golden.f32le.raw",
+      "role": "waveformGolden",
+      "sha256": "90c1fe5f2b9f65548d3e1f557ecf25067a42dc1b9143e0f03d1c59b7cb647023",
+      "shape": [
+        1,
+        4,
+        2,
+        343980
+      ]
+    },
+    {
+      "byteSize": 11007360,
+      "dtype": "float32-le",
+      "fileName": "frequency_waveform_golden.f32le.raw",
+      "localPath": "models/demucs/generated/htdemucs_4s_core_canonical_7p8s_fp32_v1_0_0/fixtures/frequency_waveform_golden.f32le.raw",
+      "role": "frequencyWaveformGolden",
+      "sha256": "c2ae20089ce6d0dcea0603d89988600966bc11ae248de3f9a437d1fbaecccd09",
+      "shape": [
+        1,
+        4,
+        2,
+        343980
+      ]
+    },
+    {
+      "byteSize": 11007360,
+      "dtype": "float32-le",
+      "fileName": "combined_golden.f32le.raw",
+      "localPath": "models/demucs/generated/htdemucs_4s_core_canonical_7p8s_fp32_v1_0_0/fixtures/combined_golden.f32le.raw",
+      "role": "combinedGolden",
+      "sha256": "0ba33935d1a21e2b970b3f9231dd43c9de5e85d73afd649b3a8e9f3385f69426",
+      "shape": [
+        1,
+        4,
+        2,
+        343980
+      ]
+    },
+    {
+      "byteSize": 4127760,
+      "dtype": "float32-le",
+      "fileName": "ola_mix_input.f32le.raw",
+      "localPath": "models/demucs/generated/htdemucs_4s_core_canonical_7p8s_fp32_v1_0_0/fixtures/ola_mix_input.f32le.raw",
+      "role": "olaMixInput",
+      "sha256": "dc28161d585169a4ce4661a5e142fe2668ed76e32f6b89a71d24c24522ee1790",
+      "shape": [
+        1,
+        2,
+        515970
+      ]
+    },
+    {
+      "byteSize": 16511040,
+      "dtype": "float32-le",
+      "fileName": "ola_combined_golden.f32le.raw",
+      "localPath": "models/demucs/generated/htdemucs_4s_core_canonical_7p8s_fp32_v1_0_0/fixtures/ola_combined_golden.f32le.raw",
+      "role": "olaCombinedGolden",
+      "sha256": "aacf04a8dbeacc1dbf2bee95cdf99b2dbe53279b74d2dd5a053ff30ee3f3b642",
+      "shape": [
+        1,
+        4,
+        2,
+        515970
+      ]
+    }
+  ],
+  "flatBuffer": {
+    "bufferCount": 4224,
+    "customOperatorCount": 0,
+    "description": "MLIR Converted.",
+    "fileIdentifier": "TFL3",
+    "inputs": [
+      {
+        "axes": [
+          "batch",
+          "channel",
+          "sample"
+        ],
+        "dtype": "float32",
+        "index": 0,
+        "name": "serving_default_args_0",
+        "shape": [
+          1,
+          2,
+          343980
+        ],
+        "tensorIndex": 0
+      },
+      {
+        "axes": [
+          "batch",
+          "feature",
+          "frequency",
+          "frame"
+        ],
+        "dtype": "float32",
+        "index": 1,
+        "name": "serving_default_args_1",
+        "shape": [
+          1,
+          4,
+          2048,
+          336
+        ],
+        "tensorIndex": 1
+      }
+    ],
+    "inspectionReport": {
+      "byteSize": 3844,
+      "fileName": "flatbuffer-inspection.json",
+      "format": "json",
+      "localPath": "models/demucs/generated/htdemucs_4s_core_canonical_7p8s_fp32_v1_0_0/flatbuffer-inspection.json",
+      "sha256": "72367afc8dd056c8dd3d0db6e18fa2fd4e7c7424763dcfc5fd0114eb039b38c2"
+    },
+    "keepStablehloConstant": "true",
+    "minimumRuntimeVersion": "2.16.0",
+    "operatorCodeCount": 26,
+    "operatorCount": 3458,
+    "operatorHistogram": {
+      "ADD": 418,
+      "BATCH_MATMUL": 20,
+      "BROADCAST_TO": 5,
+      "CONCATENATION": 16,
+      "CONV_2D": 92,
+      "DIV": 2,
+      "FULLY_CONNECTED": 44,
+      "GATHER_ND": 132,
+      "GELU": 56,
+      "LOGISTIC": 48,
+      "MEAN": 44,
+      "MUL": 688,
+      "PAD": 3,
+      "RESHAPE": 950,
+      "RSQRT": 96,
+      "SELECT": 3,
+      "SELECT_V2": 1,
+      "SLICE": 274,
+      "SOFTMAX": 10,
+      "SQRT": 2,
+      "SQUARED_DIFFERENCE": 22,
+      "STABLEHLO_PAD": 4,
+      "SUB": 98,
+      "SUM": 152,
+      "TRANSPOSE": 270,
+      "TRANSPOSE_CONV": 8
+    },
+    "outputs": [
+      {
+        "axes": [
+          "batch",
+          "stem",
+          "feature",
+          "frequency",
+          "frame"
+        ],
+        "dtype": "float32",
+        "index": 0,
+        "name": "serving_default_output_0_output",
+        "shape": [
+          1,
+          4,
+          4,
+          2048,
+          336
+        ],
+        "tensorIndex": 4215
+      },
+      {
+        "axes": [
+          "batch",
+          "stem",
+          "channel",
+          "sample"
+        ],
+        "dtype": "float32",
+        "index": 1,
+        "name": "serving_default_output_1_output",
+        "shape": [
+          1,
+          4,
+          2,
+          343980
+        ],
+        "tensorIndex": 4220
+      }
+    ],
+    "schemaVersion": 3,
+    "signature": {
+      "inputs": [
+        {
+          "name": "args_0",
+          "tensorIndex": 0
+        },
+        {
+          "name": "args_1",
+          "tensorIndex": 1
+        }
+      ],
+      "key": "serving_default",
+      "outputs": [
+        {
+          "name": "output_0",
+          "tensorIndex": 4215
+        },
+        {
+          "name": "output_1",
+          "tensorIndex": 4220
+        }
+      ],
+      "subgraphIndex": 0
+    },
+    "subgraphCount": 1,
+    "tensorCount": 4221
+  },
+  "hostDspContract": {
+    "branchCombination": "frequency-istft-plus-time-waveform",
+    "globalNormalization": {
+      "epsilon": 1e-08,
+      "reference": "mean-across-stereo-channels",
+      "standardDeviationCorrection": 1
+    },
+    "istft": {
+      "center": true,
+      "cropEnd": 345516,
+      "cropStart": 1536,
+      "framePadLeft": 2,
+      "framePadRight": 2,
+      "normalized": true,
+      "reconstructionLength": 347136,
+      "restoreZeroNyquistBin": true
+    },
+    "ola": {
+      "accumulationDtype": "float32",
+      "overlap": 0.25,
+      "overlapSamples": 85995,
+      "sampleRate": 44100,
+      "shifts": 0,
+      "strideSamples": 257985,
+      "tailWeightRule": "triangle-prefix",
+      "trackSamples": 515970,
+      "transitionPower": 1.0,
+      "windowOrder": "ascending-offset",
+      "windowSamples": 343980
+    },
+    "stft": {
+      "center": true,
+      "dropNyquistBin": true,
+      "frameCropLeft": 2,
+      "frameCropRight": 2,
+      "hopLength": 1024,
+      "nFft": 4096,
+      "normalized": true,
+      "outerPadLeft": 1536,
+      "outerPadRight": 1620,
+      "padMode": "reflect",
+      "window": "periodic-hann"
+    },
+    "tailWindowPlans": [
+      {
+        "actualSamples": 343980,
+        "contextEnd": 343980,
+        "contextStart": 0,
+        "cropLeft": 0,
+        "cropRight": 0,
+        "offset": 0,
+        "padLeft": 0,
+        "padRight": 0,
+        "sourceEnd": 343980,
+        "sourceStart": 0
+      },
+      {
+        "actualSamples": 257985,
+        "contextEnd": 558968,
+        "contextStart": 214988,
+        "cropLeft": 42997,
+        "cropRight": 42998,
+        "offset": 257985,
+        "padLeft": 0,
+        "padRight": 42998,
+        "sourceEnd": 515970,
+        "sourceStart": 214988
+      }
+    ]
+  },
+  "hostValidation": {
+    "canonicalOla": {
+      "liteRtVsTorchOla": {
+        "eof": {
+          "endSample": 515970,
+          "gateEvaluation": {
+            "accepted": true,
+            "aggregate": {
+              "accepted": true,
+              "basis": "snr-and-absolute",
+              "lowSignal": false,
+              "maximumAbsoluteError": 0.001,
+              "requireAbsoluteGate": true
+            },
+            "perStem": {
+              "bass": {
+                "accepted": true,
+                "basis": "low-signal-absolute",
+                "lowSignal": true,
+                "maximumAbsoluteError": 1e-06,
+                "requireAbsoluteGate": true
+              },
+              "drums": {
+                "accepted": true,
+                "basis": "low-signal-absolute",
+                "lowSignal": true,
+                "maximumAbsoluteError": 1e-06,
+                "requireAbsoluteGate": true
+              },
+              "other": {
+                "accepted": true,
+                "basis": "snr-and-absolute",
+                "lowSignal": false,
+                "maximumAbsoluteError": 0.001,
+                "requireAbsoluteGate": true
+              },
+              "vocals": {
+                "accepted": true,
+                "basis": "low-signal-absolute",
+                "lowSignal": true,
+                "maximumAbsoluteError": 1e-06,
+                "requireAbsoluteGate": true
+              }
+            }
+          },
+          "metrics": {
+            "aggregate": {
+              "bitwiseEqual": false,
+              "finite": true,
+              "maxAbsoluteError": 2.384185791015625e-07,
+              "meanAbsoluteError": 1.3032907394143495e-08,
+              "rootMeanSquareError": 2.2155864388350153e-08,
+              "signalRootMeanSquare": 0.04198052862341541,
+              "signalToNoiseDb": 125.55118409424155
+            },
+            "perStem": {
+              "bass": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 3.569311957107857e-08,
+                "meanAbsoluteError": 6.626448559200161e-09,
+                "rootMeanSquareError": 8.211025454711214e-09,
+                "signalRootMeanSquare": 9.761927484355704e-05,
+                "signalToNoiseDb": 81.50276357480217
+              },
+              "drums": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 4.2404280975461006e-08,
+                "meanAbsoluteError": 6.833893663727112e-09,
+                "rootMeanSquareError": 8.625531251417573e-09,
+                "signalRootMeanSquare": 0.00021442709062491954,
+                "signalToNoiseDb": 87.90987600093545
+              },
+              "other": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 2.384185791015625e-07,
+                "meanAbsoluteError": 3.261918630354459e-08,
+                "rootMeanSquareError": 4.200053770846842e-08,
+                "signalRootMeanSquare": 0.08396069378662262,
+                "signalToNoiseDb": 126.0164233629523
+              },
+              "vocals": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 3.504101186990738e-08,
+                "meanAbsoluteError": 6.052101050102119e-09,
+                "rootMeanSquareError": 7.593642801203907e-09,
+                "signalRootMeanSquare": 7.432613656756285e-05,
+                "signalToNoiseDb": 79.81382789145651
+              }
+            }
+          },
+          "startSample": 429975
+        },
+        "full": {
+          "gateEvaluation": {
+            "accepted": true,
+            "aggregate": {
+              "accepted": true,
+              "basis": "snr-and-absolute",
+              "lowSignal": false,
+              "maximumAbsoluteError": 0.001,
+              "requireAbsoluteGate": true
+            },
+            "perStem": {
+              "bass": {
+                "accepted": true,
+                "basis": "low-signal-absolute",
+                "lowSignal": true,
+                "maximumAbsoluteError": 1e-06,
+                "requireAbsoluteGate": true
+              },
+              "drums": {
+                "accepted": true,
+                "basis": "low-signal-absolute",
+                "lowSignal": true,
+                "maximumAbsoluteError": 1e-06,
+                "requireAbsoluteGate": true
+              },
+              "other": {
+                "accepted": true,
+                "basis": "snr-and-absolute",
+                "lowSignal": false,
+                "maximumAbsoluteError": 0.001,
+                "requireAbsoluteGate": true
+              },
+              "vocals": {
+                "accepted": true,
+                "basis": "snr-and-absolute",
+                "lowSignal": false,
+                "maximumAbsoluteError": 0.001,
+                "requireAbsoluteGate": true
+              }
+            }
+          },
+          "metrics": {
+            "aggregate": {
+              "bitwiseEqual": false,
+              "finite": true,
+              "maxAbsoluteError": 2.008676528930664e-05,
+              "meanAbsoluteError": 2.2406393989445017e-07,
+              "rootMeanSquareError": 1.1585892465141896e-06,
+              "signalRootMeanSquare": 0.040086593221730075,
+              "signalToNoiseDb": 90.78139311664407
+            },
+            "perStem": {
+              "bass": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 1.798616722226143e-07,
+                "meanAbsoluteError": 9.33103874002102e-09,
+                "rootMeanSquareError": 1.3095627751563512e-08,
+                "signalRootMeanSquare": 0.00010820985183634303,
+                "signalToNoiseDb": 78.34280961611651
+              },
+              "drums": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 5.131587386131287e-07,
+                "meanAbsoluteError": 1.0997555363186664e-08,
+                "rootMeanSquareError": 2.4834502238724226e-08,
+                "signalRootMeanSquare": 0.0002459599355145304,
+                "signalToNoiseDb": 79.91617821428406
+              },
+              "other": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 1.8862541764974594e-05,
+                "meanAbsoluteError": 4.3871431234869256e-07,
+                "rootMeanSquareError": 1.588840482774111e-06,
+                "signalRootMeanSquare": 0.06903544153586454,
+                "signalToNoiseDb": 92.75983619950429
+              },
+              "vocals": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 2.008676528930664e-05,
+                "meanAbsoluteError": 4.372128531259004e-07,
+                "rootMeanSquareError": 1.6864500706761961e-06,
+                "signalRootMeanSquare": 0.04076487986961498,
+                "signalToNoiseDb": 87.66625357830893
+              }
+            }
+          }
+        },
+        "overlap": {
+          "endSample": 343980,
+          "gateEvaluation": {
+            "accepted": true,
+            "aggregate": {
+              "accepted": true,
+              "basis": "snr-and-absolute",
+              "lowSignal": false,
+              "maximumAbsoluteError": 0.001,
+              "requireAbsoluteGate": true
+            },
+            "perStem": {
+              "bass": {
+                "accepted": true,
+                "basis": "low-signal-absolute",
+                "lowSignal": true,
+                "maximumAbsoluteError": 1e-06,
+                "requireAbsoluteGate": true
+              },
+              "drums": {
+                "accepted": true,
+                "basis": "low-signal-absolute",
+                "lowSignal": true,
+                "maximumAbsoluteError": 1e-06,
+                "requireAbsoluteGate": true
+              },
+              "other": {
+                "accepted": true,
+                "basis": "snr-and-absolute",
+                "lowSignal": false,
+                "maximumAbsoluteError": 0.001,
+                "requireAbsoluteGate": true
+              },
+              "vocals": {
+                "accepted": true,
+                "basis": "snr-and-absolute",
+                "lowSignal": false,
+                "maximumAbsoluteError": 0.001,
+                "requireAbsoluteGate": true
+              }
+            }
+          },
+          "metrics": {
+            "aggregate": {
+              "bitwiseEqual": false,
+              "finite": true,
+              "maxAbsoluteError": 4.991888999938965e-07,
+              "meanAbsoluteError": 1.744316552189463e-08,
+              "rootMeanSquareError": 3.865228857107419e-08,
+              "signalRootMeanSquare": 0.033677928750208794,
+              "signalToNoiseDb": 118.8034032111332
+            },
+            "perStem": {
+              "bass": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 3.664172254502773e-08,
+                "meanAbsoluteError": 5.7317116675235255e-09,
+                "rootMeanSquareError": 7.298937474931231e-09,
+                "signalRootMeanSquare": 9.101935750436441e-05,
+                "signalToNoiseDb": 81.91748244370717
+              },
+              "drums": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 3.978493623435497e-08,
+                "meanAbsoluteError": 5.426998248953266e-09,
+                "rootMeanSquareError": 6.9019617347715526e-09,
+                "signalRootMeanSquare": 0.0002049318534363841,
+                "signalToNoiseDb": 89.45273841429292
+              },
+              "other": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 4.991888999938965e-07,
+                "meanAbsoluteError": 3.54957546704119e-08,
+                "rootMeanSquareError": 5.777051188943268e-08,
+                "signalRootMeanSquare": 0.04858742282018535,
+                "signalToNoiseDb": 118.49635296092424
+              },
+              "vocals": {
+                "bitwiseEqual": false,
+                "finite": true,
+                "maxAbsoluteError": 4.172325134277344e-07,
+                "meanAbsoluteError": 2.3118197500689836e-08,
+                "rootMeanSquareError": 5.0375133142336044e-08,
+                "signalRootMeanSquare": 0.046647868136937394,
+                "signalToNoiseDb": 119.33231187526414
+              }
+            }
+          },
+          "startSample": 257985
+        }
+      },
+      "paddingVsOfficialTensorChunkBitwiseEqual": true,
+      "qualityGatePolicy": {
+        "frequencyLatentAbsoluteError": "reported-not-gated",
+        "lowSignalLatentMaximumAbsoluteError": 0.001,
+        "lowSignalMaximumAbsoluteError": 1e-06,
+        "lowSignalReferenceRms": 0.001,
+        "maximumWaveformAbsoluteError": 0.001,
+        "minimumSignalToNoiseDb": 80.0,
+        "windowPerStemMetrics": "reported-not-gated-before-ola"
+      },
+      "status": "passed",
+      "torchCoreOlaVsOfficialApplyModel": {
+        "aggregate": {
+          "bitwiseEqual": true,
+          "finite": true,
+          "maxAbsoluteError": 0.0,
+          "meanAbsoluteError": 0.0,
+          "rootMeanSquareError": 0.0,
+          "signalRootMeanSquare": 0.690343297203053,
+          "signalToNoiseDb": 596.781302249649
+        },
+        "perStem": {
+          "bass": {
+            "bitwiseEqual": true,
+            "finite": true,
+            "maxAbsoluteError": 0.0,
+            "meanAbsoluteError": 0.0,
+            "rootMeanSquareError": 0.0,
+            "signalRootMeanSquare": 0.0018576190860109963,
+            "signalToNoiseDb": 545.3791332910712
+          },
+          "drums": {
+            "bitwiseEqual": true,
+            "finite": true,
+            "maxAbsoluteError": 0.0,
+            "meanAbsoluteError": 0.0,
+            "rootMeanSquareError": 0.0,
+            "signalRootMeanSquare": 0.004233886962661953,
+            "signalToNoiseDb": 552.5347851787812
+          },
+          "other": {
+            "bitwiseEqual": true,
+            "finite": true,
+            "maxAbsoluteError": 0.0,
+            "meanAbsoluteError": 0.0,
+            "rootMeanSquareError": 0.0,
+            "signalRootMeanSquare": 1.1888801524500192,
+            "signalToNoiseDb": 601.5027615372351
+          },
+          "vocals": {
+            "bitwiseEqual": true,
+            "finite": true,
+            "maxAbsoluteError": 0.0,
+            "meanAbsoluteError": 0.0,
+            "rootMeanSquareError": 0.0,
+            "signalRootMeanSquare": 0.7020242720416926,
+            "signalToNoiseDb": 596.927042556885
+          }
+        }
+      },
+      "uniformTensorGatePassed": false
+    },
+    "qualityGate": {
+      "acceptedForDeviceTesting": true,
+      "hostPipelineGatePassed": true,
+      "lowSignalLatentMaximumAbsoluteError": 0.001,
+      "lowSignalMaximumAbsoluteError": 1e-06,
+      "lowSignalReferenceRms": 0.001,
+      "maximumAbsoluteError": 0.001,
+      "minimumSignalToNoiseDb": 80.0,
+      "uniformTensorGatePassed": false
+    },
+    "singleWindowGateEvaluation": {
+      "combinedOutput": {
+        "accepted": true,
+        "aggregate": {
+          "accepted": true,
+          "basis": "snr-and-absolute",
+          "lowSignal": false,
+          "maximumAbsoluteError": 0.001,
+          "requireAbsoluteGate": true
+        },
+        "perStem": {
+          "bass": {
+            "accepted": true,
+            "basis": "low-signal-absolute",
+            "lowSignal": true,
+            "maximumAbsoluteError": 1e-06,
+            "requireAbsoluteGate": true
+          },
+          "drums": {
+            "accepted": true,
+            "basis": "low-signal-absolute",
+            "lowSignal": true,
+            "maximumAbsoluteError": 1e-06,
+            "requireAbsoluteGate": true
+          },
+          "other": {
+            "accepted": true,
+            "basis": "snr-and-absolute",
+            "lowSignal": false,
+            "maximumAbsoluteError": 0.001,
+            "requireAbsoluteGate": true
+          },
+          "vocals": {
+            "accepted": true,
+            "basis": "low-signal-absolute",
+            "lowSignal": true,
+            "maximumAbsoluteError": 1e-06,
+            "requireAbsoluteGate": true
+          }
+        }
+      },
+      "frequencyOutput": {
+        "accepted": true,
+        "aggregate": {
+          "accepted": true,
+          "basis": "snr-only",
+          "lowSignal": false,
+          "maximumAbsoluteError": null,
+          "requireAbsoluteGate": false
+        },
+        "perStem": {
+          "bass": {
+            "accepted": true,
+            "basis": "snr-only",
+            "lowSignal": false,
+            "maximumAbsoluteError": null,
+            "requireAbsoluteGate": false
+          },
+          "drums": {
+            "accepted": true,
+            "basis": "snr-only",
+            "lowSignal": false,
+            "maximumAbsoluteError": null,
+            "requireAbsoluteGate": false
+          },
+          "other": {
+            "accepted": true,
+            "basis": "snr-only",
+            "lowSignal": false,
+            "maximumAbsoluteError": null,
+            "requireAbsoluteGate": false
+          },
+          "vocals": {
+            "accepted": true,
+            "basis": "snr-only",
+            "lowSignal": false,
+            "maximumAbsoluteError": null,
+            "requireAbsoluteGate": false
+          }
+        }
+      },
+      "frequencyWaveformOutput": {
+        "accepted": true,
+        "aggregate": {
+          "accepted": true,
+          "basis": "snr-and-absolute",
+          "lowSignal": false,
+          "maximumAbsoluteError": 0.001,
+          "requireAbsoluteGate": true
+        },
+        "perStem": {
+          "bass": {
+            "accepted": true,
+            "basis": "snr-and-absolute",
+            "lowSignal": false,
+            "maximumAbsoluteError": 0.001,
+            "requireAbsoluteGate": true
+          },
+          "drums": {
+            "accepted": true,
+            "basis": "snr-and-absolute",
+            "lowSignal": false,
+            "maximumAbsoluteError": 0.001,
+            "requireAbsoluteGate": true
+          },
+          "other": {
+            "accepted": true,
+            "basis": "snr-and-absolute",
+            "lowSignal": false,
+            "maximumAbsoluteError": 0.001,
+            "requireAbsoluteGate": true
+          },
+          "vocals": {
+            "accepted": true,
+            "basis": "low-signal-absolute",
+            "lowSignal": true,
+            "maximumAbsoluteError": 1e-06,
+            "requireAbsoluteGate": true
+          }
+        }
+      },
+      "waveformOutput": {
+        "accepted": true,
+        "aggregate": {
+          "accepted": true,
+          "basis": "snr-and-absolute",
+          "lowSignal": false,
+          "maximumAbsoluteError": 0.001,
+          "requireAbsoluteGate": true
+        },
+        "perStem": {
+          "bass": {
+            "accepted": true,
+            "basis": "snr-and-absolute",
+            "lowSignal": false,
+            "maximumAbsoluteError": 0.001,
+            "requireAbsoluteGate": true
+          },
+          "drums": {
+            "accepted": true,
+            "basis": "snr-and-absolute",
+            "lowSignal": false,
+            "maximumAbsoluteError": 0.001,
+            "requireAbsoluteGate": true
+          },
+          "other": {
+            "accepted": true,
+            "basis": "snr-and-absolute",
+            "lowSignal": false,
+            "maximumAbsoluteError": 0.001,
+            "requireAbsoluteGate": true
+          },
+          "vocals": {
+            "accepted": true,
+            "basis": "low-signal-absolute",
+            "lowSignal": true,
+            "maximumAbsoluteError": 1e-06,
+            "requireAbsoluteGate": true
+          }
+        }
+      }
+    },
+    "singleWindowMetrics": {
+      "combinedOutput": {
+        "bitwiseEqual": false,
+        "finite": true,
+        "maxAbsoluteError": 9.57399606704712e-07,
+        "meanAbsoluteError": 3.203715173499971e-08,
+        "rootMeanSquareError": 5.627464742202141e-08,
+        "signalRootMeanSquare": 0.06503235255852949,
+        "signalToNoiseDb": 121.25633364580801
+      },
+      "frequencyOutput": {
+        "bitwiseEqual": false,
+        "finite": true,
+        "maxAbsoluteError": 4.649162292480469e-06,
+        "meanAbsoluteError": 6.318521832459634e-08,
+        "rootMeanSquareError": 8.640820872710619e-08,
+        "signalRootMeanSquare": 0.020524706056534094,
+        "signalToNoiseDb": 107.51443887923165
+      },
+      "frequencyWaveformOutput": {
+        "bitwiseEqual": false,
+        "finite": true,
+        "maxAbsoluteError": 9.834766387939453e-07,
+        "meanAbsoluteError": 2.6311626637185862e-08,
+        "rootMeanSquareError": 4.811356893890078e-08,
+        "signalRootMeanSquare": 0.03309711919210118,
+        "signalToNoiseDb": 116.75045242092949
+      },
+      "perStemCombined": {
+        "bass": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 1.157168298959732e-07,
+          "meanAbsoluteError": 1.9536818826658357e-08,
+          "rootMeanSquareError": 2.3795108736587147e-08,
+          "signalRootMeanSquare": 0.00014814590928778233,
+          "signalToNoiseDb": 75.88403940382794
+        },
+        "drums": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 1.5320256352424622e-07,
+          "meanAbsoluteError": 1.1013284528237142e-08,
+          "rootMeanSquareError": 1.3894060121932963e-08,
+          "signalRootMeanSquare": 0.00034430079185818804,
+          "signalToNoiseDb": 87.882176954662
+        },
+        "other": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 9.57399606704712e-07,
+          "meanAbsoluteError": 8.712957901930775e-08,
+          "rootMeanSquareError": 1.083284273294725e-07,
+          "signalRootMeanSquare": 0.13006412659260416,
+          "signalToNoiseDb": 121.58830181280618
+        },
+        "vocals": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 2.5331974029541016e-07,
+          "meanAbsoluteError": 1.0468924565795585e-08,
+          "rootMeanSquareError": 1.3154599794618797e-08,
+          "signalRootMeanSquare": 0.00010000322412407441,
+          "signalToNoiseDb": 77.61872723968628
+        }
+      },
+      "perStemFrequencyOutput": {
+        "bass": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 9.424984455108643e-07,
+          "meanAbsoluteError": 3.743358433798226e-08,
+          "rootMeanSquareError": 4.752019488317689e-08,
+          "signalRootMeanSquare": 0.0023231965238638703,
+          "signalToNoiseDb": 93.78415472305642
+        },
+        "drums": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 6.854534149169922e-07,
+          "meanAbsoluteError": 5.1317315175206654e-08,
+          "rootMeanSquareError": 6.080109725155675e-08,
+          "signalRootMeanSquare": 0.005177323457247253,
+          "signalToNoiseDb": 98.60387763676798
+        },
+        "other": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 4.649162292480469e-06,
+          "meanAbsoluteError": 7.266999249705783e-08,
+          "rootMeanSquareError": 1.0840961008528915e-07,
+          "signalRootMeanSquare": 0.04050112188064158,
+          "signalToNoiseDb": 111.44798541856557
+        },
+        "vocals": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 3.2549723982810974e-07,
+          "meanAbsoluteError": 9.131998128813861e-08,
+          "rootMeanSquareError": 1.1026299576075286e-07,
+          "signalRootMeanSquare": 0.0035371515331505485,
+          "signalToNoiseDb": 90.1244775566461
+        }
+      },
+      "perStemFrequencyWaveform": {
+        "bass": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 9.499490261077881e-08,
+          "meanAbsoluteError": 8.02940695847917e-09,
+          "rootMeanSquareError": 1.0121055590222136e-08,
+          "signalRootMeanSquare": 0.0025318764427494033,
+          "signalToNoiseDb": 107.96433395524944
+        },
+        "drums": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 1.5168916434049606e-07,
+          "meanAbsoluteError": 1.0315057646714345e-08,
+          "rootMeanSquareError": 1.2986287715835304e-08,
+          "signalRootMeanSquare": 0.006874333763974744,
+          "signalToNoiseDb": 114.47491187339713
+        },
+        "other": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 9.834766387939453e-07,
+          "meanAbsoluteError": 7.652944906951647e-08,
+          "rootMeanSquareError": 9.39092328378204e-08,
+          "signalRootMeanSquare": 0.06578540880146719,
+          "signalToNoiseDb": 116.90842570169082
+        },
+        "vocals": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 2.523884177207947e-07,
+          "meanAbsoluteError": 1.0372592874033463e-08,
+          "rootMeanSquareError": 1.3024539034708521e-08,
+          "signalRootMeanSquare": 0.0005388145029427102,
+          "signalToNoiseDb": 92.33353830365367
+        }
+      },
+      "perStemWaveformOutput": {
+        "bass": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 1.150183379650116e-07,
+          "meanAbsoluteError": 1.6690643307890013e-08,
+          "rootMeanSquareError": 2.0139423809164733e-08,
+          "signalRootMeanSquare": 0.002537886040286888,
+          "signalToNoiseDb": 102.00850151417357
+        },
+        "drums": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 1.9418075680732727e-07,
+          "meanAbsoluteError": 3.873447946486963e-09,
+          "rootMeanSquareError": 5.105460841821972e-09,
+          "signalRootMeanSquare": 0.006916937943487112,
+          "signalToNoiseDb": 122.63757859570333
+        },
+        "other": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 4.0046870708465576e-07,
+          "meanAbsoluteError": 3.194552223080623e-08,
+          "rootMeanSquareError": 4.0338225121943643e-08,
+          "signalRootMeanSquare": 0.07477723481397408,
+          "signalToNoiseDb": 125.36105231931806
+        },
+        "vocals": {
+          "bitwiseEqual": false,
+          "finite": true,
+          "maxAbsoluteError": 1.4319084584712982e-07,
+          "meanAbsoluteError": 1.2608932563684354e-09,
+          "rootMeanSquareError": 1.778146565446044e-09,
+          "signalRootMeanSquare": 0.0005459986615569285,
+          "signalToNoiseDb": 109.74448045679368
+        }
+      },
+      "waveformOutput": {
+        "bitwiseEqual": false,
+        "finite": true,
+        "maxAbsoluteError": 4.0046870708465576e-07,
+        "meanAbsoluteError": 1.344262668538791e-08,
+        "rootMeanSquareError": 2.2704604890689806e-08,
+        "signalRootMeanSquare": 0.03757065961967588,
+        "signalToNoiseDb": 124.37469742607101
+      }
+    },
+    "torchCoreReconstruction": {
+      "bitwiseEqual": true,
+      "finite": true,
+      "maxAbsoluteError": 0.0,
+      "meanAbsoluteError": 0.0,
+      "rootMeanSquareError": 0.0,
+      "signalRootMeanSquare": 0.06503235255852949,
+      "signalToNoiseDb": 576.2625892996589
+    }
+  },
+  "manifestKind": "generated-litert-host-candidate",
+  "manifestSchemaVersion": 1,
+  "modelId": "htdemucs_4s_core_canonical_7p8s_fp32_v1_0_0",
+  "modelSemantics": {
+    "channelCount": 2,
+    "featureOrder": [
+      "L.real",
+      "L.imag",
+      "R.real",
+      "R.imag"
+    ],
+    "sampleRate": 44100,
+    "spectrumFrameCount": 336,
+    "stemOrder": [
+      "drums",
+      "bass",
+      "other",
+      "vocals"
+    ],
+    "windowSamples": 343980
+  },
+  "provenance": {
+    "bagManifest": {
+      "byteSize": 21,
+      "fileName": "htdemucs.yaml",
+      "format": "yaml",
+      "localPath": "models/demucs/official-hf/htdemucs/htdemucs.yaml",
+      "sha256": "239c445d0b14454d541ad8bd9bb271c9e536d267e8a4625208744cbb2e7bb66c"
+    },
+    "boundarySource": {
+      "byteSize": 29284,
+      "fileName": "htdemucs.py",
+      "format": "python-source",
+      "localPath": ".tmp/demucs-lite-reference/demucs-for-onnx/demucs/htdemucs.py",
+      "sha256": "fc9b1debbc2d0e61f523ccd32a22b19f471bc4404d32fadbd79f38c049abcc7b"
+    },
+    "canonicalWeight": {
+      "byteSize": 84025440,
+      "fileName": "955717e8.safetensors",
+      "format": "safetensors",
+      "localPath": "models/demucs/official-hf/htdemucs/955717e8.safetensors",
+      "sha256": "d9fa14133cfcc034a6758923bb3a8ca9f8dfd0b582134643bbf83f72c17576dd"
+    },
+    "demucsLiteReferenceCheckout": {
+      "revision": "9a2a17c7a81843c2ae49674986f9e1e8b5f6915f",
+      "statusEntryCount": 125,
+      "workingTreeState": "line-endings-only"
+    },
+    "demucsLiteReferenceRevision": "9a2a17c7a81843c2ae49674986f9e1e8b5f6915f",
+    "exportScript": {
+      "byteSize": 67392,
+      "fileName": "export_htdemucs_4s_litert_candidate.py",
+      "format": null,
+      "localPath": "tools/export_htdemucs_4s_litert_candidate.py",
+      "sha256": "1ab1a42727ed036bb0fa5ca9c6950000d9d5b4ff3faae37410ef96ad889db3ad"
+    },
+    "loaderCheckout": {
+      "revision": "eeac1d15891af95b1288d2884b95baa3e5baa96c",
+      "statusEntryCount": 95,
+      "workingTreeState": "line-endings-only"
+    },
+    "loaderRevision": "eeac1d15891af95b1288d2884b95baa3e5baa96c",
+    "metadata": {
+      "byteSize": 12087,
+      "fileName": "955717e8.json",
+      "format": null,
+      "localPath": "models/demucs/official-hf/htdemucs/955717e8.json",
+      "sha256": "12540373de858920b60002ebfbe17738860dbf2e89df625dc3b7875af2d28491"
+    },
+    "referenceExporter": {
+      "byteSize": 5879,
+      "fileName": "convert-pth-to-onnx-chunked.py",
+      "format": "python-source",
+      "localPath": ".tmp/demucs-lite-reference/scripts/convert-pth-to-onnx-chunked.py",
+      "sha256": "57b73642c1ac2d399817a8dff4438db587202a14ffa90877c7b9fb0d95f9e506"
+    },
+    "requirementsLock": {
+      "byteSize": 334,
+      "fileName": "requirements-demucs-litert-export.txt",
+      "format": "pip-requirements",
+      "localPath": "requirements-demucs-litert-export.txt",
+      "sha256": "cb6ef5b77262c7d8594735413ecef5e841f3be1a710a48602b0620d229bf1706"
+    }
+  },
+  "scope": "host-only-not-a-device-result",
+  "status": "host-pipeline-passed"
+}

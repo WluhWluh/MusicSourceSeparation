@@ -161,6 +161,9 @@ none changes the schema-v1 smoke sidecar or grants product admission:
 | HTDemucs-6s guitar-ft | deterministic EOF gate miss: `79.245 dB` versus `80 dB` | S25 CPU three-song mean E2E RTF `0.6783`; same-weight PCM16 comparison differs by at most 1-2 LSB | diagnostic-only, research-only, not admitted |
 | official HTDemucs four-stem base | layered host pipeline passed | S25 CPU 180-second E2E RTF `0.617`; CPU and GPU+CPU neural-core strict per-stem device gates failed | CPU offline/producer-ahead feasibility only |
 
+The GPU+CPU observations above are neural-core profiles. Neither official
+candidate ran a GPU E2E audio batch.
+
 Batch 4A selected official four-stem base as that batch's research export
 baseline. Psytrance ONNX sounded clearly worse with more cross-stem leakage.
 Official base, the complete fine-tuned bag, and the two base/specialist hybrids

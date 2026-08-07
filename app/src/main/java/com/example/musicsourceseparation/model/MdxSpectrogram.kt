@@ -1,13 +1,32 @@
 package com.example.musicsourceseparation.model
 
 import org.jtransforms.fft.FloatFFT_1D
+import java.util.concurrent.Callable
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import java.util.concurrent.ThreadFactory
 import kotlin.math.PI
 import kotlin.math.cos
 
 class MdxSpectrogram(
     private val config: MdxDspConfig = MdxDspConfig(),
-) {
-    private val fft = FloatFFT_1D(config.nFft.toLong())
+    val workerCount: Int = 1,
+) : AutoCloseable {
+    init {
+        require(workerCount in 1..MAX_WORKER_COUNT) {
+            "DSP worker count must be from 1 through $MAX_WORKER_COUNT."
+        }
+    }
+
+    private val lanes = Array(maxOf(workerCount, MdxDspConfig.STEREO_CHANNELS)) {
+        FftLane(config.nFft)
+    }
+    private val executor: ExecutorService? = if (workerCount > 1) {
+        Executors.newFixedThreadPool(workerCount, DspThreadFactory())
+    } else {
+        null
+    }
     private val window = FloatArray(config.nFft) { index ->
         (0.5 - 0.5 * cos(2.0 * PI * index / config.nFft)).toFloat()
     }
@@ -16,24 +35,31 @@ class MdxSpectrogram(
         requireStereoChunk(waveform)
 
         val tensor = FloatArray(config.tensorElementCount)
-        for (channel in 0 until MdxDspConfig.STEREO_CHANNELS) {
-            val padded = reflectPad(waveform[channel], config.trim)
-            val fftBuffer = FloatArray(config.nFft * 2)
-            for (frameIndex in 0 until config.dimT) {
-                val start = frameIndex * config.hopLength
-                fftBuffer.fill(0f)
-                for (sampleIndex in 0 until config.nFft) {
-                    fftBuffer[sampleIndex] = padded[start + sampleIndex] * window[sampleIndex]
-                }
-                fft.realForwardFull(fftBuffer)
+        val padded = Array(MdxDspConfig.STEREO_CHANNELS) { channel ->
+            reflectPad(waveform[channel], config.trim)
+        }
+        runLanes(workerCount) { laneIndex ->
+            val lane = lanes[laneIndex]
+            val firstFrame = laneIndex * config.dimT / workerCount
+            val lastFrame = (laneIndex + 1) * config.dimT / workerCount
+            for (channel in 0 until MdxDspConfig.STEREO_CHANNELS) {
+                for (frameIndex in firstFrame until lastFrame) {
+                    val start = frameIndex * config.hopLength
+                    lane.buffer.fill(0f)
+                    for (sampleIndex in 0 until config.nFft) {
+                        lane.buffer[sampleIndex] =
+                            padded[channel][start + sampleIndex] * window[sampleIndex]
+                    }
+                    lane.fft.realForwardFull(lane.buffer)
 
-                val realChannel = channel * 2
-                val imaginaryChannel = realChannel + 1
-                for (frequencyIndex in 0 until config.dimF) {
-                    tensor[tensorIndex(realChannel, frequencyIndex, frameIndex)] =
-                        fftBuffer[frequencyIndex * 2]
-                    tensor[tensorIndex(imaginaryChannel, frequencyIndex, frameIndex)] =
-                        fftBuffer[frequencyIndex * 2 + 1]
+                    val realChannel = channel * 2
+                    val imaginaryChannel = realChannel + 1
+                    for (frequencyIndex in 0 until config.dimF) {
+                        tensor[tensorIndex(realChannel, frequencyIndex, frameIndex)] =
+                            lane.buffer[frequencyIndex * 2]
+                        tensor[tensorIndex(imaginaryChannel, frequencyIndex, frameIndex)] =
+                            lane.buffer[frequencyIndex * 2 + 1]
+                    }
                 }
             }
         }
@@ -48,30 +74,35 @@ class MdxSpectrogram(
         val outputLength = config.chunkSize + config.nFft
         val output = Array(MdxDspConfig.STEREO_CHANNELS) { FloatArray(outputLength) }
         val windowSum = FloatArray(outputLength)
-        val fftBuffer = FloatArray(config.nFft * 2)
 
-        for (channel in 0 until MdxDspConfig.STEREO_CHANNELS) {
-            for (frameIndex in 0 until config.dimT) {
-                fftBuffer.fill(0f)
-                val realChannel = channel * 2
-                val imaginaryChannel = realChannel + 1
+        val inverseLaneCount = if (workerCount > 1) MdxDspConfig.STEREO_CHANNELS else 1
+        runLanes(inverseLaneCount) { laneIndex ->
+            val firstChannel = if (workerCount > 1) laneIndex else 0
+            val lastChannel = if (workerCount > 1) firstChannel + 1 else MdxDspConfig.STEREO_CHANNELS
+            val lane = lanes[laneIndex]
+            for (channel in firstChannel until lastChannel) {
+                for (frameIndex in 0 until config.dimT) {
+                    lane.buffer.fill(0f)
+                    val realChannel = channel * 2
+                    val imaginaryChannel = realChannel + 1
 
-                for (frequencyIndex in 0 until config.dimF) {
-                    val real = tensor[tensorIndex(realChannel, frequencyIndex, frameIndex)]
-                    val imaginary = tensor[tensorIndex(imaginaryChannel, frequencyIndex, frameIndex)]
-                    setComplexBin(fftBuffer, frequencyIndex, real, imaginary)
-                    if (frequencyIndex in 1 until config.nBins - 1) {
-                        setComplexBin(fftBuffer, config.nFft - frequencyIndex, real, -imaginary)
+                    for (frequencyIndex in 0 until config.dimF) {
+                        val real = tensor[tensorIndex(realChannel, frequencyIndex, frameIndex)]
+                        val imaginary = tensor[tensorIndex(imaginaryChannel, frequencyIndex, frameIndex)]
+                        setComplexBin(lane.buffer, frequencyIndex, real, imaginary)
+                        if (frequencyIndex in 1 until config.nBins - 1) {
+                            setComplexBin(lane.buffer, config.nFft - frequencyIndex, real, -imaginary)
+                        }
                     }
-                }
 
-                fft.complexInverse(fftBuffer, true)
-                val start = frameIndex * config.hopLength
-                for (sampleIndex in 0 until config.nFft) {
-                    val value = fftBuffer[sampleIndex * 2] * window[sampleIndex]
-                    output[channel][start + sampleIndex] += value
-                    if (channel == 0) {
-                        windowSum[start + sampleIndex] += window[sampleIndex] * window[sampleIndex]
+                    lane.fft.complexInverse(lane.buffer, true)
+                    val start = frameIndex * config.hopLength
+                    for (sampleIndex in 0 until config.nFft) {
+                        val value = lane.buffer[sampleIndex * 2] * window[sampleIndex]
+                        output[channel][start + sampleIndex] += value
+                        if (channel == 0) {
+                            windowSum[start + sampleIndex] += window[sampleIndex] * window[sampleIndex]
+                        }
                     }
                 }
             }
@@ -94,6 +125,22 @@ class MdxSpectrogram(
             config.dimF,
             config.dimT,
         )
+    }
+
+    override fun close() {
+        executor?.shutdown()
+    }
+
+    private fun runLanes(count: Int, action: (Int) -> Unit) {
+        val laneExecutor = executor
+        if (laneExecutor == null) {
+            action(0)
+            return
+        }
+        val futures = laneExecutor.invokeAll(
+            (0 until count).map { laneIndex -> Callable { action(laneIndex) } },
+        )
+        futures.forEach(Future<Unit>::get)
     }
 
     private fun requireStereoChunk(waveform: Array<FloatArray>) {
@@ -140,5 +187,25 @@ class MdxSpectrogram(
 
     private fun Array<FloatArray>.indicesForNormalization(windowSum: FloatArray): IntRange {
         return 0 until minOf(first().size, windowSum.size)
+    }
+
+    private class FftLane(nFft: Int) {
+        val fft = FloatFFT_1D(nFft.toLong())
+        val buffer = FloatArray(nFft * 2)
+    }
+
+    private class DspThreadFactory : ThreadFactory {
+        override fun newThread(runnable: Runnable): Thread = Thread(runnable).apply {
+            name = "mdx-dsp-${nextThreadId()}"
+            isDaemon = true
+        }
+    }
+
+    companion object {
+        private const val MAX_WORKER_COUNT = 8
+        private var threadId = 0
+
+        @Synchronized
+        private fun nextThreadId(): Int = ++threadId
     }
 }

@@ -34,6 +34,34 @@ class MdxSpectrogramTest {
         assertEquals(0.0, stats.maxAbsError, 2e-3)
     }
 
+    @Test
+    fun parallelStftAndIstftAreBitExactWithSerialExecution() {
+        val config = MdxDspConfig()
+        val waveform = Array(2) { channel ->
+            FloatArray(config.chunkSize) { index ->
+                (((index * 37 + channel * 17) % 101) - 50) / 101f
+            }
+        }
+
+        val serialTensor = MdxSpectrogram(config, workerCount = 1).use { serial ->
+            serial.waveformToTensor(waveform)
+        }
+        val parallelTensor = MdxSpectrogram(config, workerCount = 4).use { parallel ->
+            parallel.waveformToTensor(waveform)
+        }
+        assertArrayEquals(serialTensor, parallelTensor, 0f)
+
+        val serialWaveform = MdxSpectrogram(config, workerCount = 1).use { serial ->
+            serial.tensorToWaveform(serialTensor)
+        }
+        val parallelWaveform = MdxSpectrogram(config, workerCount = 4).use { parallel ->
+            parallel.tensorToWaveform(serialTensor)
+        }
+        for (channel in serialWaveform.indices) {
+            assertArrayEquals(serialWaveform[channel], parallelWaveform[channel], 0f)
+        }
+    }
+
     private fun stereoSineChunk(config: MdxDspConfig): Array<FloatArray> {
         return Array(2) { channel ->
             FloatArray(config.chunkSize) { index ->

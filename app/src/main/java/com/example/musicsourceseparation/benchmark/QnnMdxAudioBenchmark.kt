@@ -110,7 +110,7 @@ internal class QnnMdxAudioBenchmark(
         val instrumentalFile = File(outputDir, "instrumental.wav")
         val vocalsPartialFile = File(stagingDir, "vocals.wav.partial")
         val instrumentalPartialFile = File(stagingDir, "instrumental.wav.partial")
-        val spectrogram = MdxSpectrogram(config)
+        val spectrogram = MdxSpectrogram(config, workerCount = DSP_WORKER_COUNT)
         val inferenceWallMs = mutableListOf<Double>()
         val inferenceCpuMs = mutableListOf<Long>()
         val vocalsPcmStats = PcmStats()
@@ -261,6 +261,7 @@ internal class QnnMdxAudioBenchmark(
             primaryFailure = error
             throw error
         } finally {
+            spectrogram.close()
             closeLiteRtResources(
                 primaryFailure = primaryFailure,
                 inputBuffers = inputBuffers,
@@ -348,6 +349,7 @@ internal class QnnMdxAudioBenchmark(
                 .put("dimT", config.dimT)
                 .put("trim", config.trim)
                 .put("generationSize", config.generationSize)
+                .put("spectrogramWorkerCount", spectrogram.workerCount)
                 .put("modelOutputStem", "vocals")
                 .put("modelOutputScale", modelOutputScale.toDouble()))
             .put("availableAccelerators", JSONArray(availableAccelerators))
@@ -610,6 +612,7 @@ internal class QnnMdxAudioBenchmark(
     )
 
     private companion object {
+        const val DSP_WORKER_COUNT = 4
         const val LOG_TAG = "MSS-QNN"
         const val MAX_DECODED_PCM_BYTES = 128L * 1024 * 1024
         const val WAV_HEADER_BYTES = 44L

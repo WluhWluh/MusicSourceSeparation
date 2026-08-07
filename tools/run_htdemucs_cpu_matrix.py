@@ -429,6 +429,21 @@ def validate_run(
     ):
         raise ValueError(f"{model.variant} attempt/window contract mismatch")
 
+    core_benchmark = attempt.get("coreBenchmark")
+    if args.core_warmup_runs or args.core_measured_runs:
+        if (
+            not isinstance(core_benchmark, dict)
+            or core_benchmark.get("warmupRuns") != args.core_warmup_runs
+            or core_benchmark.get("measuredRuns") != args.core_measured_runs
+            or len(core_benchmark.get("samples", [])) != args.core_measured_runs
+            or core_benchmark.get("summary", {}).get("count") != args.core_measured_runs
+            or core_benchmark.get("perOpProfiling", {}).get("status")
+            != "unsupported-by-litert-2.1.5-java-api"
+        ):
+            raise ValueError(f"{model.variant} core benchmark contract mismatch")
+    elif core_benchmark is not None:
+        raise ValueError(f"{model.variant} contains an unrequested core benchmark")
+
     windows = attempt["windows"]
     if len(windows) != expected_windows:
         raise ValueError(f"{model.variant} window evidence inventory mismatch")
@@ -496,7 +511,9 @@ def validate_run(
     performance = {
         "prepareWallMs": attempt["prepare"]["total"]["wallMs"],
         "attemptWallMs": attempt["total"]["wallMs"],
+        "e2eWallMs": attempt["e2eTotal"]["wallMs"],
         "realtimeFactor": attempt["realtimeFactor"],
+        "coreBenchmark": core_benchmark,
         "windowCount": len(windows),
         "firstWindowInferenceMs": inference_ms[0],
         "allWindowInference": timing_summary(inference_ms),
@@ -551,6 +568,7 @@ def run_variant(
         / (
             f"{args.device_label}-cpu-{duration_seconds}s-t{args.threads}"
             f"-istft-{args.istft_mode}-w{args.istft_workers}"
+            f"-core-w{args.core_warmup_runs}-m{args.core_measured_runs}"
             f"{'-float-parity' if args.validate_istft_float_parity else ''}"
         )
     )
@@ -635,6 +653,12 @@ def run_variant(
         "canonicalE2eValidateIstftFloatParity",
         str(args.validate_istft_float_parity).lower(),
         "-e",
+        "canonicalE2eCoreWarmupRuns",
+        str(args.core_warmup_runs),
+        "-e",
+        "canonicalE2eCoreMeasuredRuns",
+        str(args.core_measured_runs),
+        "-e",
         "canonicalE2eRunId",
         run_id,
         "-e",
@@ -654,6 +678,7 @@ def run_variant(
     log_stem = (
         f"instrumentation-{args.device_label}-{duration_seconds}s"
         f"-istft-{args.istft_mode}-w{args.istft_workers}"
+        f"-core-w{args.core_warmup_runs}-m{args.core_measured_runs}"
         f"{'-float-parity' if args.validate_istft_float_parity else ''}"
     )
     (log_root / f"{log_stem}.stdout.txt").write_text(
@@ -750,6 +775,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--istft-workers", type=int, default=1)
     parser.add_argument("--validate-istft-float-parity", action="store_true")
+    parser.add_argument("--core-warmup-runs", type=int, default=0)
+    parser.add_argument("--core-measured-runs", type=int, default=0)
     parser.add_argument("--duration-seconds", type=int, default=DEFAULT_DURATION_SECONDS)
     parser.add_argument("--track-timeout", type=int, default=1200)
     parser.add_argument("--cooldown-seconds", type=int, default=10)
@@ -798,7 +825,7 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--expected-source-revision")
-    parser.add_argument("--expected-source-dirty", choices=("true", "false"), default="true")
+    parser.add_argument("--expected-source-dirty", choices=("true", "false"), default="false")
     parser.add_argument("--expected-runtime-sha256", default=DEFAULT_RUNTIME_SHA256)
     parser.add_argument("--keep-remote-models", action="store_true")
     return parser.parse_args()
@@ -818,6 +845,12 @@ def main() -> int:
         raise ValueError("--istft-mode parallel-lanes requires at least 2 workers")
     if args.validate_istft_float_parity and args.istft_mode != "parallel-lanes":
         raise ValueError("--validate-istft-float-parity requires parallel-lanes mode")
+    if not 0 <= args.core_warmup_runs <= 100:
+        raise ValueError("--core-warmup-runs must be in [0, 100]")
+    if not 0 <= args.core_measured_runs <= 100:
+        raise ValueError("--core-measured-runs must be in [0, 100]")
+    if (args.core_warmup_runs == 0) != (args.core_measured_runs == 0):
+        raise ValueError("core warmup and measured counts must both be zero or both positive")
     if args.cooldown_seconds < 0:
         raise ValueError("--cooldown-seconds must be non-negative")
     if args.expected_hardware_serial_sha256 is not None:
@@ -928,16 +961,20 @@ def main() -> int:
             "istftMode": args.istft_mode,
             "istftWorkers": args.istft_workers,
             "validateIstftFloatParity": args.validate_istft_float_parity,
+            "coreWarmupRuns": args.core_warmup_runs,
+            "coreMeasuredRuns": args.core_measured_runs,
             "baseVariantOrder": [model.variant for model in variants],
             "trackOrder": [common.slugify(file_name) for _, file_name in selected_tracks],
             "runs": [],
         }
         progress_path = args.output_root / (
-            f"matrix-{args.duration_seconds}s-istft-{args.istft_mode}"
-            f"-w{args.istft_workers}.json"
+            f"matrix-{args.duration_seconds}s-t{args.threads}-istft-{args.istft_mode}"
+            f"-w{args.istft_workers}-core-w{args.core_warmup_runs}"
+            f"-m{args.core_measured_runs}.json"
             if not args.validate_istft_float_parity
-            else f"matrix-{args.duration_seconds}s-istft-{args.istft_mode}"
-            f"-w{args.istft_workers}-float-parity.json"
+            else f"matrix-{args.duration_seconds}s-t{args.threads}-istft-{args.istft_mode}"
+            f"-w{args.istft_workers}-core-w{args.core_warmup_runs}"
+            f"-m{args.core_measured_runs}-float-parity.json"
         )
         common.write_json(progress_path, progress)
 

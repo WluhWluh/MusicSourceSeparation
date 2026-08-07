@@ -44,6 +44,8 @@ internal class HtdemucsCanonicalE2eBenchmark(
         val istftMode: HtdemucsDsp.IstftMode = HtdemucsDsp.IstftMode.SERIAL,
         val istftWorkers: Int = 1,
         val validateIstftFloatParity: Boolean = false,
+        val coreWarmupRuns: Int = 0,
+        val coreMeasuredRuns: Int = 0,
         val runId: String,
         val modelVariant: String = MODEL_VARIANT_OFFICIAL,
         val expectedAudioSha256: String? = null,
@@ -585,6 +587,8 @@ internal class HtdemucsCanonicalE2eBenchmark(
         var carryLength = 0
         var outputFrames = 0
         var prepareEvidence = JSONObject()
+        var coreBenchmarkEvidence: Any = JSONObject.NULL
+        var e2eStarted: StageStart? = null
         var failure: Throwable? = null
         var cancelled = false
 
@@ -669,6 +673,56 @@ internal class HtdemucsCanonicalE2eBenchmark(
                 .put("total", sessionPrepare.timing.evidence())
 
             RandomAccessFile(wav.file, "r").use { audio ->
+                if (config.coreWarmupRuns > 0 || config.coreMeasuredRuns > 0) {
+                    val calibrationPlan = windowPlans(selectedFrames).first()
+                    val calibrationSetup = timed {
+                        val waveform = readNormalizedWindow(
+                            audio,
+                            wav,
+                            calibrationPlan,
+                            normalization,
+                        )
+                        val spectrum = requireNotNull(dsp).waveformToSpectrum(waveform)
+                        inputBuffers.getValue(WAVEFORM_INPUT_NAME).writeFloat(waveform)
+                        inputBuffers.getValue(SPECTRUM_INPUT_NAME).writeFloat(spectrum)
+                    }
+                    repeat(config.coreWarmupRuns) {
+                        requireNotNull(model).run(inputBuffers, outputBuffers, SIGNATURE_KEY)
+                    }
+                    val samples = JSONArray()
+                    val before = processSnapshot()
+                    repeat(config.coreMeasuredRuns) { sampleIndex ->
+                        val sample = timed {
+                            requireNotNull(model).run(inputBuffers, outputBuffers, SIGNATURE_KEY)
+                        }
+                        samples.put(
+                            JSONObject()
+                                .put("index", sampleIndex)
+                                .put("timing", sample.timing.evidence())
+                                .put("thermalStatus", thermalStatus()),
+                        )
+                    }
+                    coreBenchmarkEvidence = JSONObject()
+                        .put("fixedCanonicalWindowIndex", 0)
+                        .put("warmupRuns", config.coreWarmupRuns)
+                        .put("measuredRuns", config.coreMeasuredRuns)
+                        .put("setup", calibrationSetup.timing.evidence())
+                        .put("samples", samples)
+                        .put("summary", summarizeTimings(samples))
+                        .put("before", before)
+                        .put("after", processSnapshot())
+                        .put(
+                            "perOpProfiling",
+                            JSONObject()
+                                .put("status", "unsupported-by-litert-2.1.5-java-api")
+                                .put(
+                                    "detail",
+                                    "CompiledModel CPU options expose threads and XNNPACK flags, " +
+                                        "but no per-op profiler callback or result API.",
+                                ),
+                        )
+                }
+                e2eStarted = StageStart()
                 windowPlans(selectedFrames).forEachIndexed { windowIndex, plan ->
                     val stage = JSONObject()
                     val windowStarted = StageStart()
@@ -857,6 +911,8 @@ internal class HtdemucsCanonicalE2eBenchmark(
                 prepare = prepareEvidence,
                 windows = windows,
                 total = totalStarted.elapsed(),
+                e2eTotal = e2eStarted?.elapsed(),
+                coreBenchmark = coreBenchmarkEvidence,
                 outputs = JSONObject.NULL,
                 failure = terminalFailure,
                 stagingCleanupComplete = !stagingDir.exists(),
@@ -905,6 +961,8 @@ internal class HtdemucsCanonicalE2eBenchmark(
                 .put("outputHashAndValidation", outputEvidence.timing.evidence()),
             windows = windows,
             total = totalStarted.elapsed(),
+            e2eTotal = requireNotNull(e2eStarted).elapsed(),
+            coreBenchmark = coreBenchmarkEvidence,
             outputs = outputEvidence.value,
             failure = null,
             stagingCleanupComplete = !stagingDir.exists(),
@@ -923,6 +981,8 @@ internal class HtdemucsCanonicalE2eBenchmark(
         prepare: JSONObject,
         windows: JSONArray,
         total: StageTiming,
+        e2eTotal: StageTiming?,
+        coreBenchmark: Any,
         outputs: Any,
         failure: Throwable?,
         stagingCleanupComplete: Boolean,
@@ -946,10 +1006,16 @@ internal class HtdemucsCanonicalE2eBenchmark(
             .put("prepare", prepare)
             .put("windows", windows)
             .put("stageSummary", summarizeWindowStages(windows))
+            .put("coreBenchmark", coreBenchmark)
             .put("total", total.evidence())
+            .put("e2eTotal", e2eTotal?.evidence() ?: JSONObject.NULL)
             .put(
                 "realtimeFactor",
-                if (status == "complete") total.wallMs / 1000.0 / duration else JSONObject.NULL,
+                if (status == "complete") {
+                    requireNotNull(e2eTotal).wallMs / 1000.0 / duration
+                } else {
+                    JSONObject.NULL
+                },
             )
             .put("outputs", outputs)
             .put("stagingCleanupComplete", stagingCleanupComplete)
@@ -1274,6 +1340,32 @@ internal class HtdemucsCanonicalE2eBenchmark(
         }
     }
 
+    private fun summarizeTimings(samples: JSONArray): JSONObject {
+        if (samples.length() == 0) return JSONObject().put("count", 0)
+        val wall = mutableListOf<Double>()
+        val processCpu = mutableListOf<Long>()
+        val threadCpu = mutableListOf<Double>()
+        repeat(samples.length()) { index ->
+            val timing = samples.getJSONObject(index).getJSONObject("timing")
+            wall += timing.getDouble("wallMs")
+            processCpu += timing.getLong("processCpuMs")
+            threadCpu += timing.getDouble("threadCpuMs")
+        }
+        fun summary(values: List<Double>): JSONObject {
+            val sorted = values.sorted()
+            return JSONObject()
+                .put("minimum", sorted.first())
+                .put("median", sorted[sorted.size / 2])
+                .put("mean", sorted.sum() / sorted.size)
+                .put("maximum", sorted.last())
+        }
+        return JSONObject()
+            .put("count", samples.length())
+            .put("wallMs", summary(wall))
+            .put("processCpuMs", summary(processCpu.map(Long::toDouble)))
+            .put("threadCpuMs", summary(threadCpu))
+    }
+
     private fun closeResources(
         writers: List<WavFileWriter>,
         inputBuffers: Collection<TensorBuffer>,
@@ -1333,6 +1425,11 @@ internal class HtdemucsCanonicalE2eBenchmark(
             "durationSeconds and frameLimit are mutually exclusive."
         }
         require(config.threads in 1..16)
+        require(config.coreWarmupRuns in 0..100)
+        require(config.coreMeasuredRuns in 0..100)
+        require((config.coreWarmupRuns == 0) == (config.coreMeasuredRuns == 0)) {
+            "Core warmup and measured run counts must both be zero or both be positive."
+        }
         require(RUN_ID.matches(config.runId)) { "runId contains unsupported characters." }
         require(config.modelVariant in MODEL_IDENTITIES) {
             "Unsupported model variant '${config.modelVariant}'; expected one of " +
@@ -1400,26 +1497,42 @@ internal class HtdemucsCanonicalE2eBenchmark(
 
     private class StageStart {
         private val wallNanos = SystemClock.elapsedRealtimeNanos()
-        private val cpuMs = android.os.Process.getElapsedCpuTime()
+        private val processCpuMs = android.os.Process.getElapsedCpuTime()
+        private val threadCpuNanos = Debug.threadCpuTimeNanos()
+        private val allocatedBytes = runtimeCounter("art.gc.bytes-allocated")
+        private val gcCount = runtimeCounter("art.gc.gc-count")
 
         fun elapsed(): StageTiming = StageTiming(
             wallMs = (SystemClock.elapsedRealtimeNanos() - wallNanos) / 1_000_000.0,
-            cpuMs = android.os.Process.getElapsedCpuTime() - cpuMs,
+            processCpuMs = android.os.Process.getElapsedCpuTime() - processCpuMs,
+            threadCpuMs = (Debug.threadCpuTimeNanos() - threadCpuNanos) / 1_000_000.0,
+            allocatedBytesDelta = counterDelta(allocatedBytes, runtimeCounter("art.gc.bytes-allocated")),
+            gcCountDelta = counterDelta(gcCount, runtimeCounter("art.gc.gc-count")),
         )
     }
 
     private data class StageTiming(
         val wallMs: Double,
-        val cpuMs: Long,
+        val processCpuMs: Long,
+        val threadCpuMs: Double,
+        val allocatedBytesDelta: Long?,
+        val gcCountDelta: Long?,
     ) {
         operator fun plus(other: StageTiming): StageTiming = StageTiming(
             wallMs = wallMs + other.wallMs,
-            cpuMs = cpuMs + other.cpuMs,
+            processCpuMs = processCpuMs + other.processCpuMs,
+            threadCpuMs = threadCpuMs + other.threadCpuMs,
+            allocatedBytesDelta = nullableSum(allocatedBytesDelta, other.allocatedBytesDelta),
+            gcCountDelta = nullableSum(gcCountDelta, other.gcCountDelta),
         )
 
         fun evidence(): JSONObject = JSONObject()
             .put("wallMs", wallMs)
-            .put("cpuMs", cpuMs)
+            .put("cpuMs", processCpuMs)
+            .put("processCpuMs", processCpuMs)
+            .put("threadCpuMs", threadCpuMs)
+            .put("allocatedBytesDelta", allocatedBytesDelta ?: JSONObject.NULL)
+            .put("gcCountDelta", gcCountDelta ?: JSONObject.NULL)
     }
 
     private data class TimedValue<T>(
@@ -1721,6 +1834,8 @@ internal class HtdemucsCanonicalE2eBenchmark(
         const val ARG_ISTFT_WORKERS = "canonicalE2eIstftWorkers"
         const val ARG_VALIDATE_ISTFT_FLOAT_PARITY =
             "canonicalE2eValidateIstftFloatParity"
+        const val ARG_CORE_WARMUP_RUNS = "canonicalE2eCoreWarmupRuns"
+        const val ARG_CORE_MEASURED_RUNS = "canonicalE2eCoreMeasuredRuns"
         const val ARG_RUN_ID = "canonicalE2eRunId"
         const val ARG_CANCEL_AFTER_WINDOWS = "canonicalE2eCancelAfterWindows"
         const val ARG_RESUME_AFTER_CANCEL = "canonicalE2eResumeAfterCancel"
@@ -1755,6 +1870,16 @@ internal class HtdemucsCanonicalE2eBenchmark(
 
         private val FOUR_STEM_ORDER = listOf("drums", "bass", "other", "vocals")
         private val SIX_STEM_ORDER = FOUR_STEM_ORDER + listOf("guitar", "piano")
+
+        private fun runtimeCounter(name: String): Long? = runCatching {
+            Debug.getRuntimeStat(name)?.toLongOrNull()
+        }.getOrNull()
+
+        private fun counterDelta(before: Long?, after: Long?): Long? =
+            if (before != null && after != null && after >= before) after - before else null
+
+        private fun nullableSum(left: Long?, right: Long?): Long? =
+            if (left != null && right != null) left + right else null
 
         private val MODEL_IDENTITIES = listOf(
             ModelIdentity(

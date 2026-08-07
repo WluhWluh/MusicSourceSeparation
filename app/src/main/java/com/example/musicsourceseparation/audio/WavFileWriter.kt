@@ -3,6 +3,7 @@ package com.example.musicsourceseparation.audio
 import java.io.Closeable
 import java.io.File
 import java.io.RandomAccessFile
+import java.nio.ByteBuffer
 
 class WavFileWriter(
     file: File,
@@ -27,6 +28,17 @@ class WavFileWriter(
         require(offset >= 0 && length >= 0 && offset <= bytes.size - length)
         output.seek(HEADER_SIZE + dataSize)
         output.write(bytes, offset, length)
+        dataSize += length
+    }
+
+    fun writePcm16(buffer: ByteBuffer, length: Int) {
+        require(buffer.isDirect && length >= 0 && length <= buffer.capacity())
+        val source = buffer.duplicate().apply {
+            position(0)
+            limit(length)
+        }
+        output.channel.position(HEADER_SIZE + dataSize)
+        while (source.hasRemaining()) output.channel.write(source)
         dataSize += length
     }
 

@@ -11,6 +11,7 @@ import android.os.SystemClock
 import com.example.musicsourceseparation.BuildConfig
 import com.example.musicsourceseparation.audio.AudioPcmDecoder
 import com.example.musicsourceseparation.audio.DecodedPcmAudio
+import com.example.musicsourceseparation.audio.NativePcm16
 import com.example.musicsourceseparation.audio.WavFileWriter
 import com.example.musicsourceseparation.model.HtdemucsDsp
 import com.google.ai.edge.litert.Accelerator
@@ -75,6 +76,8 @@ internal class HtdemucsCanonicalE2eBenchmark(
     enum class PostprocessMode(val wireValue: String) {
         LEGACY("legacy"),
         FUSED_REUSE("fused-reuse"),
+        FUSED_DIRECT("fused-direct"),
+        FUSED_JNI_NEON("fused-jni-neon"),
         ;
 
         companion object {
@@ -591,14 +594,30 @@ internal class HtdemucsCanonicalE2eBenchmark(
         val triangleWeight = triangleWeight()
         val carry = FloatArray(planeCount * OVERLAP_SAMPLES)
         val carryWeight = FloatArray(OVERLAP_SAMPLES)
-        val reuseWorkspaces = config.postprocessMode == PostprocessMode.FUSED_REUSE
+        val reuseWorkspaces = config.postprocessMode != PostprocessMode.LEGACY
         val waveformWorkspace = if (reuseWorkspaces) {
             FloatArray(CHANNEL_COUNT * WINDOW_SAMPLES)
         } else {
             null
         }
-        val pcmWorkspaces = if (reuseWorkspaces) {
+        val pcmWorkspaces = if (
+            config.postprocessMode == PostprocessMode.FUSED_REUSE ||
+            config.postprocessMode == PostprocessMode.FUSED_JNI_NEON
+        ) {
             Array(stemCount) { ByteArray(WINDOW_SAMPLES * BYTES_PER_FRAME) }
+        } else {
+            emptyArray()
+        }
+        val directPcmWorkspaces = if (config.postprocessMode == PostprocessMode.FUSED_DIRECT) {
+            Array(stemCount) {
+                ByteBuffer.allocateDirect(WINDOW_SAMPLES * BYTES_PER_FRAME)
+                    .order(ByteOrder.LITTLE_ENDIAN)
+            }
+        } else {
+            emptyArray()
+        }
+        val floatPcmWorkspaces = if (config.postprocessMode == PostprocessMode.FUSED_JNI_NEON) {
+            Array(stemCount) { FloatArray(WINDOW_SAMPLES * CHANNEL_COUNT) }
         } else {
             emptyArray()
         }
@@ -841,7 +860,7 @@ internal class HtdemucsCanonicalE2eBenchmark(
                             .put("time", timeRead.evidence()),
                     )
 
-                    val finalized = if (config.postprocessMode == PostprocessMode.FUSED_REUSE) {
+                    val finalized = if (config.postprocessMode != PostprocessMode.LEGACY) {
                         val fused = timed {
                             fusedPostprocessAndWrite(
                                 frequencyWaveform = combined,
@@ -857,6 +876,9 @@ internal class HtdemucsCanonicalE2eBenchmark(
                                 stats = stemStats,
                                 writers = writers,
                                 pcmWorkspaces = pcmWorkspaces,
+                                directPcmWorkspaces = directPcmWorkspaces,
+                                floatPcmWorkspaces = floatPcmWorkspaces,
+                                mode = config.postprocessMode,
                             )
                         }
                         stage.put("fusedPostprocessWrite", fused.timing.evidence())
@@ -1252,11 +1274,24 @@ internal class HtdemucsCanonicalE2eBenchmark(
         stats: Array<StemStats>,
         writers: List<WavFileWriter>,
         pcmWorkspaces: Array<ByteArray>,
+        directPcmWorkspaces: Array<ByteBuffer>,
+        floatPcmWorkspaces: Array<FloatArray>,
+        mode: PostprocessMode,
     ): FinalizedChunk {
         val planeCount = stemCount * CHANNEL_COUNT
         require(frequencyWaveform.size == planeCount * WINDOW_SAMPLES)
         require(timeWaveform.size == frequencyWaveform.size)
-        require(pcmWorkspaces.size == stemCount && writers.size == stemCount)
+        require(writers.size == stemCount)
+        require(mode != PostprocessMode.LEGACY)
+        require(
+            (mode == PostprocessMode.FUSED_DIRECT) == (directPcmWorkspaces.size == stemCount),
+        )
+        require(
+            (mode == PostprocessMode.FUSED_JNI_NEON) == (floatPcmWorkspaces.size == stemCount),
+        )
+        require(
+            (mode != PostprocessMode.FUSED_DIRECT) == (pcmWorkspaces.size == stemCount),
+        )
         if (plan.offset == 0) require(carryLength == 0) else require(carryLength in 1..OVERLAP_SAMPLES)
         val hasNext = plan.offset + STRIDE_SAMPLES < trackFrames
         val finalizedFrames = if (hasNext) STRIDE_SAMPLES else plan.actualSamples
@@ -1271,7 +1306,9 @@ internal class HtdemucsCanonicalE2eBenchmark(
             val rightSource = rightPlane * WINDOW_SAMPLES + plan.cropLeft
             val leftCarry = leftPlane * OVERLAP_SAMPLES
             val rightCarry = rightPlane * OVERLAP_SAMPLES
-            val bytes = pcmWorkspaces[stem]
+            val bytes = pcmWorkspaces.getOrNull(stem)
+            val directBytes = directPcmWorkspaces.getOrNull(stem)?.apply { clear() }
+            val floatSamples = floatPcmWorkspaces.getOrNull(stem)
             var byteIndex = 0
             repeat(finalizedFrames) { frame ->
                 val weight = triangleWeight[frame]
@@ -1286,8 +1323,27 @@ internal class HtdemucsCanonicalE2eBenchmark(
                 require(denominator > 0f)
                 val leftOutput = (left / denominator) * normalization.scale + normalization.mean
                 val rightOutput = (right / denominator) * normalization.scale + normalization.mean
-                byteIndex = encodeSample(leftOutput, bytes, byteIndex, stats[stem])
-                byteIndex = encodeSample(rightOutput, bytes, byteIndex, stats[stem])
+                when (mode) {
+                    PostprocessMode.FUSED_REUSE -> {
+                        byteIndex = encodeSample(leftOutput, requireNotNull(bytes), byteIndex, stats[stem])
+                        byteIndex = encodeSample(rightOutput, bytes, byteIndex, stats[stem])
+                    }
+                    PostprocessMode.FUSED_DIRECT -> {
+                        byteIndex = encodeSample(leftOutput, requireNotNull(directBytes), byteIndex, stats[stem])
+                        byteIndex = encodeSample(rightOutput, directBytes, byteIndex, stats[stem])
+                    }
+                    PostprocessMode.FUSED_JNI_NEON -> {
+                        stats[stem].add(leftOutput)
+                        stats[stem].add(rightOutput)
+                        require(leftOutput.isFinite() && rightOutput.isFinite()) {
+                            "Separated PCM contains NaN or infinity."
+                        }
+                        requireNotNull(floatSamples)[frame * CHANNEL_COUNT] = leftOutput
+                        floatSamples[frame * CHANNEL_COUNT + 1] = rightOutput
+                        byteIndex += BYTES_PER_FRAME
+                    }
+                    PostprocessMode.LEGACY -> error("Legacy mode cannot use fused postprocess.")
+                }
             }
             if (hasNext) {
                 repeat(nextCarryLength) { frame ->
@@ -1303,7 +1359,22 @@ internal class HtdemucsCanonicalE2eBenchmark(
                 carry.fill(0f, leftCarry + nextCarryLength, leftCarry + OVERLAP_SAMPLES)
                 carry.fill(0f, rightCarry + nextCarryLength, rightCarry + OVERLAP_SAMPLES)
             }
-            writers[stem].writePcm16(bytes, 0, byteIndex)
+            when (mode) {
+                PostprocessMode.FUSED_REUSE ->
+                    writers[stem].writePcm16(requireNotNull(bytes), 0, byteIndex)
+                PostprocessMode.FUSED_DIRECT ->
+                    writers[stem].writePcm16(requireNotNull(directBytes), byteIndex)
+                PostprocessMode.FUSED_JNI_NEON -> {
+                    val encodedBytes = NativePcm16.encode(
+                        requireNotNull(floatSamples),
+                        finalizedFrames * CHANNEL_COUNT,
+                        requireNotNull(bytes),
+                    )
+                    require(encodedBytes == byteIndex)
+                    writers[stem].writePcm16(bytes, 0, encodedBytes)
+                }
+                PostprocessMode.LEGACY -> error("Legacy mode cannot use fused postprocess.")
+            }
         }
         if (hasNext) {
             repeat(nextCarryLength) { frame ->
@@ -1330,6 +1401,22 @@ internal class HtdemucsCanonicalE2eBenchmark(
             .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
         destination[offset] = (pcm and 0xff).toByte()
         destination[offset + 1] = ((pcm ushr 8) and 0xff).toByte()
+        return offset + Short.SIZE_BYTES
+    }
+
+    private fun encodeSample(
+        value: Float,
+        destination: ByteBuffer,
+        offset: Int,
+        stats: StemStats,
+    ): Int {
+        require(destination.position() == offset)
+        stats.add(value)
+        require(value.isFinite()) { "Separated PCM contains NaN or infinity." }
+        val clipped = value.coerceIn(-1f, 1f)
+        val pcm = (clipped * Short.MAX_VALUE).roundToInt()
+            .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+        destination.putShort(pcm.toShort())
         return offset + Short.SIZE_BYTES
     }
 
@@ -1543,10 +1630,24 @@ internal class HtdemucsCanonicalE2eBenchmark(
         .put("executorOwned", config.istftMode == HtdemucsDsp.IstftMode.PARALLEL_LANES)
         .put("floatParityCheckRequested", config.validateIstftFloatParity)
         .put("postprocessMode", config.postprocessMode.wireValue)
-        .put("reuseWaveformWorkspace", config.postprocessMode == PostprocessMode.FUSED_REUSE)
-        .put("reuseDspIoWorkspaces", config.postprocessMode == PostprocessMode.FUSED_REUSE)
-        .put("reusePcmByteBuffers", config.postprocessMode == PostprocessMode.FUSED_REUSE)
-        .put("fusedBranchOlaPcmWrite", config.postprocessMode == PostprocessMode.FUSED_REUSE)
+        .put("reuseWaveformWorkspace", config.postprocessMode != PostprocessMode.LEGACY)
+        .put("reuseDspIoWorkspaces", config.postprocessMode != PostprocessMode.LEGACY)
+        .put(
+            "reusePcmByteBuffers",
+            config.postprocessMode == PostprocessMode.FUSED_REUSE ||
+                config.postprocessMode == PostprocessMode.FUSED_JNI_NEON,
+        )
+        .put("directPcmByteBuffer", config.postprocessMode == PostprocessMode.FUSED_DIRECT)
+        .put("nativePcm16", config.postprocessMode == PostprocessMode.FUSED_JNI_NEON)
+        .put("fusedBranchOlaPcmWrite", config.postprocessMode != PostprocessMode.LEGACY)
+        .put(
+            "pcmEncoderImplementation",
+            when (config.postprocessMode) {
+                PostprocessMode.LEGACY, PostprocessMode.FUSED_REUSE -> "kotlin-byte-array"
+                PostprocessMode.FUSED_DIRECT -> "kotlin-direct-byte-buffer"
+                PostprocessMode.FUSED_JNI_NEON -> NativePcm16.implementation()
+            },
+        )
         .put("tensorBufferReadIntoAvailable", false)
 
     private fun stemCountFor(modelVariant: String): Int =

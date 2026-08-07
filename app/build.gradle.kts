@@ -52,6 +52,19 @@ android {
             buildConfigString(runtimeArtifactSha256),
         )
         buildConfigField("String", "BENCHMARK_ACCELERATOR_BUNDLE_SHA256", buildConfigString("none"))
+        externalNativeBuild {
+            cmake {
+                cppFlags += listOf("-std=c++17", "-O3")
+            }
+        }
+    }
+
+    ndkVersion = "27.2.12479018"
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     buildFeatures {

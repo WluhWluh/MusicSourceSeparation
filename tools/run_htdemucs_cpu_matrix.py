@@ -354,6 +354,13 @@ def validate_run(
     report_path = target / "report.json"
     report = json.loads(report_path.read_text(encoding="utf-8"))
     lane_count = len(model.stems) * 2
+    optimized_postprocess = args.postprocess_mode != "legacy"
+    pcm_encoder = {
+        "legacy": "kotlin-byte-array",
+        "fused-reuse": "kotlin-byte-array",
+        "fused-direct": "kotlin-direct-byte-buffer",
+        "fused-jni-neon": "neon-aarch64",
+    }[args.postprocess_mode]
     expected_istft_fields = {
         "mode": args.istft_mode,
         "requestedWorkers": args.istft_workers,
@@ -365,10 +372,13 @@ def validate_run(
         "executorOwned": args.istft_mode == "parallel-lanes",
         "floatParityCheckRequested": args.validate_istft_float_parity,
         "postprocessMode": args.postprocess_mode,
-        "reuseWaveformWorkspace": args.postprocess_mode == "fused-reuse",
-        "reuseDspIoWorkspaces": args.postprocess_mode == "fused-reuse",
-        "reusePcmByteBuffers": args.postprocess_mode == "fused-reuse",
-        "fusedBranchOlaPcmWrite": args.postprocess_mode == "fused-reuse",
+        "reuseWaveformWorkspace": optimized_postprocess,
+        "reuseDspIoWorkspaces": optimized_postprocess,
+        "reusePcmByteBuffers": args.postprocess_mode in ("fused-reuse", "fused-jni-neon"),
+        "directPcmByteBuffer": args.postprocess_mode == "fused-direct",
+        "nativePcm16": args.postprocess_mode == "fused-jni-neon",
+        "fusedBranchOlaPcmWrite": optimized_postprocess,
+        "pcmEncoderImplementation": pcm_encoder,
         "tensorBufferReadIntoAvailable": False,
     }
     execution = report.get("execution", {})
@@ -793,7 +803,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--core-measured-runs", type=int, default=0)
     parser.add_argument(
         "--postprocess-mode",
-        choices=("legacy", "fused-reuse"),
+        choices=("legacy", "fused-reuse", "fused-direct", "fused-jni-neon"),
         default="legacy",
     )
     parser.add_argument("--duration-seconds", type=int, default=DEFAULT_DURATION_SECONDS)

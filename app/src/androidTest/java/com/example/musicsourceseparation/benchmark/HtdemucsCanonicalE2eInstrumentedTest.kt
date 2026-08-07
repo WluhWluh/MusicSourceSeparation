@@ -49,6 +49,9 @@ class HtdemucsCanonicalE2eInstrumentedTest {
             .getString(HtdemucsCanonicalE2eBenchmark.ARG_CORE_MEASURED_RUNS)
             ?.toIntOrNull()
             ?: 0
+        val postprocessMode = HtdemucsCanonicalE2eBenchmark.PostprocessMode.fromWireValue(
+            arguments.getString(HtdemucsCanonicalE2eBenchmark.ARG_POSTPROCESS_MODE) ?: "legacy",
+        )
         val cancelAfterWindows = arguments
             .getString(HtdemucsCanonicalE2eBenchmark.ARG_CANCEL_AFTER_WINDOWS)
             ?.toIntOrNull()
@@ -78,6 +81,7 @@ class HtdemucsCanonicalE2eInstrumentedTest {
                 validateIstftFloatParity = validateIstftFloatParity,
                 coreWarmupRuns = coreWarmupRuns,
                 coreMeasuredRuns = coreMeasuredRuns,
+                postprocessMode = postprocessMode,
                 runId = runId,
                 modelVariant = modelVariant,
                 expectedAudioSha256 = arguments.getString(

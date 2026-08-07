@@ -107,6 +107,41 @@ class HtdemucsDspFixtureTest {
     }
 
     @Test
+    fun reusableIoWorkspacesPreserveRawFloatBitsAcrossCalls() {
+        val waveform = FloatArray(HtdemucsDsp.CHANNEL_COUNT * SYNTHETIC_WINDOW_SAMPLES) { index ->
+            (((index * 19L + 7L) % 251L).toInt() - 125) * 1e-4f
+        }
+        val referenceDsp = HtdemucsDsp(SYNTHETIC_WINDOW_SAMPLES)
+        val expectedSpectrum = referenceDsp.waveformToSpectrum(waveform)
+        val stemCount = 4
+        val frequency = FloatArray(
+            stemCount * HtdemucsDsp.FEATURE_COUNT * HtdemucsDsp.FREQUENCY_BINS *
+                SYNTHETIC_FRAME_COUNT,
+        ) { index -> (((index * 31L + 13L) % 263L).toInt() - 131) * 1e-5f }
+        val expectedWaveform = referenceDsp.frequencyToWaveform(frequency, stemCount)
+
+        HtdemucsDsp(
+            windowSamples = SYNTHETIC_WINDOW_SAMPLES,
+            istftMode = HtdemucsDsp.IstftMode.PARALLEL_LANES,
+            istftWorkers = 4,
+            reuseIoWorkspaces = true,
+        ).use { reused ->
+            repeat(3) { repetition ->
+                assertFloatBitsEqual(
+                    expectedSpectrum,
+                    reused.waveformToSpectrum(waveform),
+                    "reused STFT repetition $repetition",
+                )
+                assertFloatBitsEqual(
+                    expectedWaveform,
+                    reused.frequencyToWaveform(frequency, stemCount),
+                    "reused iSTFT output repetition $repetition",
+                )
+            }
+        }
+    }
+
+    @Test
     fun closedParallelDspRejectsReuseAndPreservesInterruptStatus() {
         val dsp = HtdemucsDsp(
             windowSamples = SYNTHETIC_WINDOW_SAMPLES,

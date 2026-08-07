@@ -330,12 +330,14 @@ def remote_run_path(
     run_id: str,
     istft_mode: str,
     istft_workers: int,
+    postprocess_mode: str,
 ) -> str:
     family = f"{common.REMOTE_ROOT}/htdemucs-canonical-e2e/cpu"
     if model.variant != "official":
         family += f"/{model.variant}"
     if istft_mode != "serial":
         family += f"/istft-{istft_mode}-w{istft_workers}"
+    family += f"/postprocess-{postprocess_mode}"
     return f"{family}/{duration_seconds}s/{run_id}"
 
 
@@ -362,6 +364,12 @@ def validate_run(
         "complexTransformArrayLength": 8192,
         "executorOwned": args.istft_mode == "parallel-lanes",
         "floatParityCheckRequested": args.validate_istft_float_parity,
+        "postprocessMode": args.postprocess_mode,
+        "reuseWaveformWorkspace": args.postprocess_mode == "fused-reuse",
+        "reuseDspIoWorkspaces": args.postprocess_mode == "fused-reuse",
+        "reusePcmByteBuffers": args.postprocess_mode == "fused-reuse",
+        "fusedBranchOlaPcmWrite": args.postprocess_mode == "fused-reuse",
+        "tensorBufferReadIntoAvailable": False,
     }
     execution = report.get("execution", {})
     if (
@@ -569,6 +577,7 @@ def run_variant(
             f"{args.device_label}-cpu-{duration_seconds}s-t{args.threads}"
             f"-istft-{args.istft_mode}-w{args.istft_workers}"
             f"-core-w{args.core_warmup_runs}-m{args.core_measured_runs}"
+            f"-postprocess-{args.postprocess_mode}"
             f"{'-float-parity' if args.validate_istft_float_parity else ''}"
         )
     )
@@ -610,6 +619,7 @@ def run_variant(
         run_id,
         args.istft_mode,
         args.istft_workers,
+        args.postprocess_mode,
     )
     common.adb(args, "shell", "rm", "-rf", remote_run)
     available_before = mem_available_kib(args)
@@ -659,6 +669,9 @@ def run_variant(
         "canonicalE2eCoreMeasuredRuns",
         str(args.core_measured_runs),
         "-e",
+        "canonicalE2ePostprocessMode",
+        args.postprocess_mode,
+        "-e",
         "canonicalE2eRunId",
         run_id,
         "-e",
@@ -679,6 +692,7 @@ def run_variant(
         f"instrumentation-{args.device_label}-{duration_seconds}s"
         f"-istft-{args.istft_mode}-w{args.istft_workers}"
         f"-core-w{args.core_warmup_runs}-m{args.core_measured_runs}"
+        f"-postprocess-{args.postprocess_mode}"
         f"{'-float-parity' if args.validate_istft_float_parity else ''}"
     )
     (log_root / f"{log_stem}.stdout.txt").write_text(
@@ -777,6 +791,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--validate-istft-float-parity", action="store_true")
     parser.add_argument("--core-warmup-runs", type=int, default=0)
     parser.add_argument("--core-measured-runs", type=int, default=0)
+    parser.add_argument(
+        "--postprocess-mode",
+        choices=("legacy", "fused-reuse"),
+        default="legacy",
+    )
     parser.add_argument("--duration-seconds", type=int, default=DEFAULT_DURATION_SECONDS)
     parser.add_argument("--track-timeout", type=int, default=1200)
     parser.add_argument("--cooldown-seconds", type=int, default=10)
@@ -963,19 +982,18 @@ def main() -> int:
             "validateIstftFloatParity": args.validate_istft_float_parity,
             "coreWarmupRuns": args.core_warmup_runs,
             "coreMeasuredRuns": args.core_measured_runs,
+            "postprocessMode": args.postprocess_mode,
             "baseVariantOrder": [model.variant for model in variants],
             "trackOrder": [common.slugify(file_name) for _, file_name in selected_tracks],
             "runs": [],
         }
-        progress_path = args.output_root / (
+        progress_name = (
             f"matrix-{args.duration_seconds}s-t{args.threads}-istft-{args.istft_mode}"
             f"-w{args.istft_workers}-core-w{args.core_warmup_runs}"
-            f"-m{args.core_measured_runs}.json"
-            if not args.validate_istft_float_parity
-            else f"matrix-{args.duration_seconds}s-t{args.threads}-istft-{args.istft_mode}"
-            f"-w{args.istft_workers}-core-w{args.core_warmup_runs}"
-            f"-m{args.core_measured_runs}-float-parity.json"
+            f"-m{args.core_measured_runs}-postprocess-{args.postprocess_mode}"
+            f"{'-float-parity' if args.validate_istft_float_parity else ''}.json"
         )
+        progress_path = args.output_root / progress_name
         common.write_json(progress_path, progress)
 
         run_index = 0

@@ -18,6 +18,7 @@ class HtdemucsDsp(
     val windowSamples: Int = 343_980,
     val istftMode: IstftMode = IstftMode.SERIAL,
     val istftWorkers: Int = 1,
+    val reuseIoWorkspaces: Boolean = false,
 ) : AutoCloseable {
     val frameCount: Int = ceil(windowSamples.toDouble() / HOP_LENGTH).toInt()
 
@@ -58,6 +59,14 @@ class HtdemucsDsp(
         }
     }
     private val closed = AtomicBoolean(false)
+    private val reusableForwardOutput = if (reuseIoWorkspaces) {
+        FloatArray(FEATURE_COUNT * FREQUENCY_BINS * frameCount)
+    } else {
+        null
+    }
+    private val reusableForwardPadded = if (reuseIoWorkspaces) FloatArray(outerLength) else null
+    private val reusableForwardFftBuffer = if (reuseIoWorkspaces) FloatArray(N_FFT * 2) else null
+    private var reusableInverseOutput = FloatArray(0)
 
     init {
         require(windowSamples > 0)
@@ -70,9 +79,10 @@ class HtdemucsDsp(
         require(planarStereoWaveform.size == CHANNEL_COUNT * windowSamples) {
             "Expected planar stereo waveform with " + (CHANNEL_COUNT * windowSamples) + " values."
         }
-        val output = FloatArray(FEATURE_COUNT * FREQUENCY_BINS * frameCount)
-        val padded = FloatArray(outerLength)
-        val fftBuffer = FloatArray(N_FFT * 2)
+        val output = reusableForwardOutput
+            ?: FloatArray(FEATURE_COUNT * FREQUENCY_BINS * frameCount)
+        val padded = reusableForwardPadded ?: FloatArray(outerLength)
+        val fftBuffer = reusableForwardFftBuffer ?: FloatArray(N_FFT * 2)
         repeat(CHANNEL_COUNT) { channel ->
             val channelOffset = channel * windowSamples
             padded.indices.forEach { index ->
@@ -109,7 +119,15 @@ class HtdemucsDsp(
         require(packedFrequency.size == expected) {
             "Expected packed frequency tensor with $expected values."
         }
-        val output = FloatArray(stemCount * CHANNEL_COUNT * windowSamples)
+        val outputSize = stemCount * CHANNEL_COUNT * windowSamples
+        val output = if (reuseIoWorkspaces) {
+            if (reusableInverseOutput.size != outputSize) {
+                reusableInverseOutput = FloatArray(outputSize)
+            }
+            reusableInverseOutput
+        } else {
+            FloatArray(outputSize)
+        }
         val planeCount = stemCount * CHANNEL_COUNT
         val executor = inverseExecutor
         if (executor == null) {

@@ -46,6 +46,7 @@ internal class HtdemucsCanonicalE2eBenchmark(
         val validateIstftFloatParity: Boolean = false,
         val coreWarmupRuns: Int = 0,
         val coreMeasuredRuns: Int = 0,
+        val postprocessMode: PostprocessMode = PostprocessMode.LEGACY,
         val runId: String,
         val modelVariant: String = MODEL_VARIANT_OFFICIAL,
         val expectedAudioSha256: String? = null,
@@ -70,6 +71,18 @@ internal class HtdemucsCanonicalE2eBenchmark(
         val report: JSONObject,
         val reportFile: File,
     )
+
+    enum class PostprocessMode(val wireValue: String) {
+        LEGACY("legacy"),
+        FUSED_REUSE("fused-reuse"),
+        ;
+
+        companion object {
+            fun fromWireValue(value: String): PostprocessMode = entries.firstOrNull {
+                it.wireValue == value
+            } ?: error("Unknown postprocess mode '$value'.")
+        }
+    }
 
     fun run(config: Config): Result {
         validateConfig(config)
@@ -116,7 +129,8 @@ internal class HtdemucsCanonicalE2eBenchmark(
         } else {
             "$runFamily/istft-${config.istftMode.wireValue}-w${config.istftWorkers}"
         }
-        val runRoot = File(benchmarkRoot, "$executionFamily/$selectionLabel/${config.runId}")
+        val profileFamily = "$executionFamily/postprocess-${config.postprocessMode.wireValue}"
+        val runRoot = File(benchmarkRoot, "$profileFamily/$selectionLabel/${config.runId}")
         require(runRoot.deleteRecursively() && runRoot.mkdirs()) {
             "Could not prepare E2E run directory: ${runRoot.absolutePath}"
         }
@@ -577,6 +591,17 @@ internal class HtdemucsCanonicalE2eBenchmark(
         val triangleWeight = triangleWeight()
         val carry = FloatArray(planeCount * OVERLAP_SAMPLES)
         val carryWeight = FloatArray(OVERLAP_SAMPLES)
+        val reuseWorkspaces = config.postprocessMode == PostprocessMode.FUSED_REUSE
+        val waveformWorkspace = if (reuseWorkspaces) {
+            FloatArray(CHANNEL_COUNT * WINDOW_SAMPLES)
+        } else {
+            null
+        }
+        val pcmWorkspaces = if (reuseWorkspaces) {
+            Array(stemCount) { ByteArray(WINDOW_SAMPLES * BYTES_PER_FRAME) }
+        } else {
+            emptyArray()
+        }
         val stemStats = Array(stemCount) { StemStats() }
         val writers = mutableListOf<WavFileWriter>()
         var environment: Environment? = null
@@ -599,6 +624,7 @@ internal class HtdemucsCanonicalE2eBenchmark(
                         windowSamples = WINDOW_SAMPLES,
                         istftMode = config.istftMode,
                         istftWorkers = config.istftWorkers,
+                        reuseIoWorkspaces = reuseWorkspaces,
                     )
                 }
                 dsp = dspSetup.value
@@ -681,6 +707,7 @@ internal class HtdemucsCanonicalE2eBenchmark(
                             wav,
                             calibrationPlan,
                             normalization,
+                            waveformWorkspace,
                         )
                         val spectrum = requireNotNull(dsp).waveformToSpectrum(waveform)
                         inputBuffers.getValue(WAVEFORM_INPUT_NAME).writeFloat(waveform)
@@ -728,7 +755,13 @@ internal class HtdemucsCanonicalE2eBenchmark(
                     val windowStarted = StageStart()
                     var waveformInput: FloatArray? = null
                     val prepareStarted = StageStart()
-                    waveformInput = readNormalizedWindow(audio, wav, plan, normalization)
+                    waveformInput = readNormalizedWindow(
+                        audio,
+                        wav,
+                        plan,
+                        normalization,
+                        waveformWorkspace,
+                    )
                     stage.put("prepare", prepareStarted.elapsed().evidence())
 
                     var spectrumInput: FloatArray? = null
@@ -808,46 +841,66 @@ internal class HtdemucsCanonicalE2eBenchmark(
                             .put("time", timeRead.evidence()),
                     )
 
-                    val branchCombine = timed {
-                        val time = requireNotNull(timeOutput)
-                        combined.indices.forEach { index -> combined[index] += time[index] }
+                    val finalized = if (config.postprocessMode == PostprocessMode.FUSED_REUSE) {
+                        val fused = timed {
+                            fusedPostprocessAndWrite(
+                                frequencyWaveform = combined,
+                                timeWaveform = requireNotNull(timeOutput),
+                                plan = plan,
+                                trackFrames = selectedFrames,
+                                normalization = normalization,
+                                triangleWeight = triangleWeight,
+                                carry = carry,
+                                carryWeight = carryWeight,
+                                carryLength = carryLength,
+                                stemCount = stemCount,
+                                stats = stemStats,
+                                writers = writers,
+                                pcmWorkspaces = pcmWorkspaces,
+                            )
+                        }
+                        stage.put("fusedPostprocessWrite", fused.timing.evidence())
+                        fused.value
+                    } else {
+                        val branchCombine = timed {
+                            val time = requireNotNull(timeOutput)
+                            combined.indices.forEach { index -> combined[index] += time[index] }
+                        }
+                        stage.put("branchCombine", branchCombine.timing.evidence())
+                        val ola = timed {
+                            applyStreamingOla(
+                                combined = combined,
+                                plan = plan,
+                                trackFrames = selectedFrames,
+                                normalization = normalization,
+                                triangleWeight = triangleWeight,
+                                carry = carry,
+                                carryWeight = carryWeight,
+                                carryLength = carryLength,
+                                planeCount = planeCount,
+                            )
+                        }
+                        val pcm = timed {
+                            encodePcm16(
+                                combined = combined,
+                                frames = ola.value.frames,
+                                stats = stemStats,
+                                stemCount = stemCount,
+                            )
+                        }
+                        stage.put("branchCombine", branchCombine.timing.evidence())
+                        stage.put("ola", ola.timing.evidence())
+                        stage.put("pcm", pcm.timing.evidence())
+                        val write = timed {
+                            pcm.value.forEachIndexed { stem, bytes ->
+                                writers[stem].writePcm16(bytes)
+                            }
+                        }
+                        stage.put("write", write.timing.evidence())
+                        ola.value
                     }
                     timeOutput = null
-                    stage.put("branchCombine", branchCombine.timing.evidence())
-
-                    val ola = timed {
-                        applyStreamingOla(
-                            combined = combined,
-                            plan = plan,
-                            trackFrames = selectedFrames,
-                            normalization = normalization,
-                            triangleWeight = triangleWeight,
-                            carry = carry,
-                            carryWeight = carryWeight,
-                            carryLength = carryLength,
-                            planeCount = planeCount,
-                        )
-                    }
-                    val finalized = ola.value
                     carryLength = finalized.nextCarryLength
-                    stage.put("ola", ola.timing.evidence())
-
-                    val pcm = timed {
-                        encodePcm16(
-                            combined = combined,
-                            frames = finalized.frames,
-                            stats = stemStats,
-                            stemCount = stemCount,
-                        )
-                    }
-                    stage.put("pcm", pcm.timing.evidence())
-
-                    val write = timed {
-                        pcm.value.forEachIndexed { stem, bytes ->
-                            writers[stem].writePcm16(bytes)
-                        }
-                    }
-                    stage.put("write", write.timing.evidence())
                     outputFrames += finalized.frames
                     completedWindows = windowIndex + 1
 
@@ -1077,8 +1130,11 @@ internal class HtdemucsCanonicalE2eBenchmark(
         wav: CanonicalPcm16Wav,
         plan: WindowPlan,
         normalization: Normalization,
+        reusableOutput: FloatArray? = null,
     ): FloatArray {
-        val output = FloatArray(CHANNEL_COUNT * WINDOW_SAMPLES)
+        val output = reusableOutput ?: FloatArray(CHANNEL_COUNT * WINDOW_SAMPLES)
+        require(output.size == CHANNEL_COUNT * WINDOW_SAMPLES)
+        output.fill(0f)
         val copyFrames = plan.sourceEnd - plan.sourceStart
         require(copyFrames + plan.padLeft + plan.padRight == WINDOW_SAMPLES)
         input.seek(wav.dataOffset + plan.sourceStart.toLong() * BYTES_PER_FRAME)
@@ -1180,6 +1236,85 @@ internal class HtdemucsCanonicalE2eBenchmark(
                 byteIndex = encodeSample(combined[rightBase + frame], bytes, byteIndex, stats[stem])
             }
         }
+    }
+
+    private fun fusedPostprocessAndWrite(
+        frequencyWaveform: FloatArray,
+        timeWaveform: FloatArray,
+        plan: WindowPlan,
+        trackFrames: Int,
+        normalization: Normalization,
+        triangleWeight: FloatArray,
+        carry: FloatArray,
+        carryWeight: FloatArray,
+        carryLength: Int,
+        stemCount: Int,
+        stats: Array<StemStats>,
+        writers: List<WavFileWriter>,
+        pcmWorkspaces: Array<ByteArray>,
+    ): FinalizedChunk {
+        val planeCount = stemCount * CHANNEL_COUNT
+        require(frequencyWaveform.size == planeCount * WINDOW_SAMPLES)
+        require(timeWaveform.size == frequencyWaveform.size)
+        require(pcmWorkspaces.size == stemCount && writers.size == stemCount)
+        if (plan.offset == 0) require(carryLength == 0) else require(carryLength in 1..OVERLAP_SAMPLES)
+        val hasNext = plan.offset + STRIDE_SAMPLES < trackFrames
+        val finalizedFrames = if (hasNext) STRIDE_SAMPLES else plan.actualSamples
+        val nextCarryLength = if (hasNext) plan.actualSamples - STRIDE_SAMPLES else 0
+        require(finalizedFrames <= plan.actualSamples)
+        require(nextCarryLength in 0..OVERLAP_SAMPLES)
+
+        repeat(stemCount) { stem ->
+            val leftPlane = stem * CHANNEL_COUNT
+            val rightPlane = leftPlane + 1
+            val leftSource = leftPlane * WINDOW_SAMPLES + plan.cropLeft
+            val rightSource = rightPlane * WINDOW_SAMPLES + plan.cropLeft
+            val leftCarry = leftPlane * OVERLAP_SAMPLES
+            val rightCarry = rightPlane * OVERLAP_SAMPLES
+            val bytes = pcmWorkspaces[stem]
+            var byteIndex = 0
+            repeat(finalizedFrames) { frame ->
+                val weight = triangleWeight[frame]
+                var denominator = weight
+                var left = (frequencyWaveform[leftSource + frame] + timeWaveform[leftSource + frame]) * weight
+                var right = (frequencyWaveform[rightSource + frame] + timeWaveform[rightSource + frame]) * weight
+                if (frame < carryLength) {
+                    left += carry[leftCarry + frame]
+                    right += carry[rightCarry + frame]
+                    denominator += carryWeight[frame]
+                }
+                require(denominator > 0f)
+                val leftOutput = (left / denominator) * normalization.scale + normalization.mean
+                val rightOutput = (right / denominator) * normalization.scale + normalization.mean
+                byteIndex = encodeSample(leftOutput, bytes, byteIndex, stats[stem])
+                byteIndex = encodeSample(rightOutput, bytes, byteIndex, stats[stem])
+            }
+            if (hasNext) {
+                repeat(nextCarryLength) { frame ->
+                    val activeFrame = STRIDE_SAMPLES + frame
+                    val weight = triangleWeight[activeFrame]
+                    carry[leftCarry + frame] =
+                        (frequencyWaveform[leftSource + activeFrame] +
+                            timeWaveform[leftSource + activeFrame]) * weight
+                    carry[rightCarry + frame] =
+                        (frequencyWaveform[rightSource + activeFrame] +
+                            timeWaveform[rightSource + activeFrame]) * weight
+                }
+                carry.fill(0f, leftCarry + nextCarryLength, leftCarry + OVERLAP_SAMPLES)
+                carry.fill(0f, rightCarry + nextCarryLength, rightCarry + OVERLAP_SAMPLES)
+            }
+            writers[stem].writePcm16(bytes, 0, byteIndex)
+        }
+        if (hasNext) {
+            repeat(nextCarryLength) { frame ->
+                carryWeight[frame] = triangleWeight[STRIDE_SAMPLES + frame]
+            }
+            carryWeight.fill(0f, nextCarryLength, OVERLAP_SAMPLES)
+        } else {
+            carry.fill(0f)
+            carryWeight.fill(0f)
+        }
+        return FinalizedChunk(finalizedFrames, nextCarryLength)
     }
 
     private fun encodeSample(
@@ -1407,6 +1542,12 @@ internal class HtdemucsCanonicalE2eBenchmark(
         .put("complexTransformArrayLength", HtdemucsDsp.N_FFT * 2)
         .put("executorOwned", config.istftMode == HtdemucsDsp.IstftMode.PARALLEL_LANES)
         .put("floatParityCheckRequested", config.validateIstftFloatParity)
+        .put("postprocessMode", config.postprocessMode.wireValue)
+        .put("reuseWaveformWorkspace", config.postprocessMode == PostprocessMode.FUSED_REUSE)
+        .put("reuseDspIoWorkspaces", config.postprocessMode == PostprocessMode.FUSED_REUSE)
+        .put("reusePcmByteBuffers", config.postprocessMode == PostprocessMode.FUSED_REUSE)
+        .put("fusedBranchOlaPcmWrite", config.postprocessMode == PostprocessMode.FUSED_REUSE)
+        .put("tensorBufferReadIntoAvailable", false)
 
     private fun stemCountFor(modelVariant: String): Int =
         MODEL_IDENTITIES.getValue(modelVariant).stemOrder.size
@@ -1836,6 +1977,7 @@ internal class HtdemucsCanonicalE2eBenchmark(
             "canonicalE2eValidateIstftFloatParity"
         const val ARG_CORE_WARMUP_RUNS = "canonicalE2eCoreWarmupRuns"
         const val ARG_CORE_MEASURED_RUNS = "canonicalE2eCoreMeasuredRuns"
+        const val ARG_POSTPROCESS_MODE = "canonicalE2ePostprocessMode"
         const val ARG_RUN_ID = "canonicalE2eRunId"
         const val ARG_CANCEL_AFTER_WINDOWS = "canonicalE2eCancelAfterWindows"
         const val ARG_RESUME_AFTER_CANCEL = "canonicalE2eResumeAfterCancel"

@@ -20,9 +20,14 @@ class WavFileWriter(
     }
 
     fun writePcm16(bytes: ByteArray) {
+        writePcm16(bytes, 0, bytes.size)
+    }
+
+    fun writePcm16(bytes: ByteArray, offset: Int, length: Int) {
+        require(offset >= 0 && length >= 0 && offset <= bytes.size - length)
         output.seek(HEADER_SIZE + dataSize)
-        output.write(bytes)
-        dataSize += bytes.size
+        output.write(bytes, offset, length)
+        dataSize += length
     }
 
     override fun close() {

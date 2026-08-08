@@ -39,6 +39,7 @@ class MdxDspBaselineInstrumentedTest {
         val warmups = args.getString("warmups", "2")!!.toInt().coerceIn(0, 10)
         val measured = args.getString("measuredRuns", "10")!!.toInt().coerceIn(1, 100)
         val sessionIndex = args.getString("sessionIndex", "1")!!.toInt()
+        val dspWorkers = args.getString("dspWorkers", "1")!!.toInt().coerceIn(1, 8)
         val context = ApplicationProvider.getApplicationContext<Context>()
         val root = File(requireNotNull(context.getExternalFilesDir(null)), "benchmark")
         val model = File(root, "models/$modelFileName")
@@ -60,7 +61,7 @@ class MdxDspBaselineInstrumentedTest {
         val waveform = fixture(config)
         val waveformSha = sha256Floats(waveform)
         val profile = if (backend == "gpu-bounded") "gpu-opencl-bounded-fp32-v1" else "cpu-xnnpack"
-        val resultDir = File(root, "mdx-dsp-baseline/$modelId/$backend/session-$sessionIndex").apply {
+        val resultDir = File(root, "mdx-dsp-baseline/$modelId/$backend/workers-$dspWorkers/session-$sessionIndex").apply {
             deleteRecursively(); mkdirs()
         }
         val report = JSONObject()
@@ -87,6 +88,7 @@ class MdxDspBaselineInstrumentedTest {
             .put("stemContract", contract.getJSONObject("stemContract"))
             .put("fixture", JSONObject().put("waveformSha256", waveformSha).put("samples", config.chunkSize))
             .put("warmups", warmups).put("measuredRuns", measured).put("threads", threads)
+            .put("dspWorkers", dspWorkers)
             .put("iStftOlaCombined", true)
         val sessions = JSONArray()
         try {
@@ -110,13 +112,16 @@ class MdxDspBaselineInstrumentedTest {
             val input = compiled.createInputBuffers().single()
             val output = compiled.createOutputBuffers().single()
             val setupMs = (SystemClock.elapsedRealtimeNanos() - setupStart) / 1_000_000.0
-            val spectrogram = MdxSpectrogram(config)
             val warmupTimes = JSONArray()
-            repeat(warmups) { warmupTimes.put(runWindow(compiled, input, output, spectrogram, waveform, config, dsp.getDouble("modelOutputScale"), null, boundedRuntime).getDouble("totalMs")) }
-            boundedRuntime?.resetInferenceCounters()
-            val runtimeBefore = runtimeStats()
-            repeat(measured) { sessions.put(runWindow(compiled, input, output, spectrogram, waveform, config, dsp.getDouble("modelOutputScale"), resultDir, boundedRuntime)) }
-            val runtimeAfter = runtimeStats()
+            val runtimeBefore: Map<String, Long>
+            val runtimeAfter: Map<String, Long>
+            MdxSpectrogram(config, workerCount = dspWorkers).use { spectrogram ->
+                repeat(warmups) { warmupTimes.put(runWindow(compiled, input, output, spectrogram, waveform, config, dsp.getDouble("modelOutputScale"), null, boundedRuntime).getDouble("totalMs")) }
+                boundedRuntime?.resetInferenceCounters()
+                runtimeBefore = runtimeStats()
+                repeat(measured) { sessions.put(runWindow(compiled, input, output, spectrogram, waveform, config, dsp.getDouble("modelOutputScale"), resultDir, boundedRuntime)) }
+                runtimeAfter = runtimeStats()
+            }
             report.put("setupMs", setupMs).put("warmupMs", warmupTimes)
                 .put("runs", sessions).put("memory", memoryEvidence())
                 .put("runtimeStatsDelta", runtimeStatsDelta(runtimeBefore, runtimeAfter))

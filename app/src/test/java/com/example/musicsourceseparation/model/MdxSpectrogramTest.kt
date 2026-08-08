@@ -36,29 +36,35 @@ class MdxSpectrogramTest {
 
     @Test
     fun parallelStftAndIstftAreBitExactWithSerialExecution() {
-        val config = MdxDspConfig()
-        val waveform = Array(2) { channel ->
-            FloatArray(config.chunkSize) { index ->
-                (((index * 37 + channel * 17) % 101) - 50) / 101f
+        val configs = listOf(
+            MdxDspConfig(nFft = 6144, dimF = 2048),
+            MdxDspConfig(nFft = 7680, dimF = 3072),
+            MdxDspConfig(nFft = 5120, dimF = 2560),
+        )
+        for (config in configs) {
+            val waveform = Array(2) { channel ->
+                FloatArray(config.chunkSize) { index ->
+                    (((index * 37 + channel * 17) % 101) - 50) / 101f
+                }
             }
-        }
 
-        val serialTensor = MdxSpectrogram(config, workerCount = 1).use { serial ->
-            serial.waveformToTensor(waveform)
-        }
-        val parallelTensor = MdxSpectrogram(config, workerCount = 4).use { parallel ->
-            parallel.waveformToTensor(waveform)
-        }
-        assertArrayEquals(serialTensor, parallelTensor, 0f)
+            val serialTensor = MdxSpectrogram(config, workerCount = 1).use { serial ->
+                serial.waveformToTensor(waveform)
+            }
+            val parallelTensor = MdxSpectrogram(config, workerCount = 4).use { parallel ->
+                parallel.waveformToTensor(waveform)
+            }
+            assertArrayEquals(serialTensor, parallelTensor, 0f)
 
-        val serialWaveform = MdxSpectrogram(config, workerCount = 1).use { serial ->
-            serial.tensorToWaveform(serialTensor)
-        }
-        val parallelWaveform = MdxSpectrogram(config, workerCount = 4).use { parallel ->
-            parallel.tensorToWaveform(serialTensor)
-        }
-        for (channel in serialWaveform.indices) {
-            assertArrayEquals(serialWaveform[channel], parallelWaveform[channel], 0f)
+            val serialWaveform = MdxSpectrogram(config, workerCount = 1).use { serial ->
+                serial.tensorToWaveform(serialTensor)
+            }
+            val parallelWaveform = MdxSpectrogram(config, workerCount = 4).use { parallel ->
+                parallel.tensorToWaveform(serialTensor)
+            }
+            for (channel in serialWaveform.indices) {
+                assertArrayEquals(serialWaveform[channel], parallelWaveform[channel], 0f)
+            }
         }
     }
 

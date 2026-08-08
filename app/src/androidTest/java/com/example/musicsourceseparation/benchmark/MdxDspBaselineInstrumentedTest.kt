@@ -43,6 +43,7 @@ class MdxDspBaselineInstrumentedTest {
         val sessionIndex = args.getString("sessionIndex", "1")!!.toInt()
         val dspWorkers = args.getString("dspWorkers", "1")!!.toInt().coerceIn(1, 8)
         val dspProfile = args.getString("dspProfile", "legacy")!!
+        val rotateFixture = args.getString("rotateFixture", "false")!!.toBooleanStrictOrNull() ?: false
         require(dspProfile in setOf("legacy", "reuse-nhwc", "native-full", "native-packed"))
         val context = ApplicationProvider.getApplicationContext<Context>()
         val powerManager = context.getSystemService(PowerManager::class.java)
@@ -95,6 +96,7 @@ class MdxDspBaselineInstrumentedTest {
             .put("warmups", warmups).put("measuredRuns", measured).put("threads", threads)
             .put("dspWorkers", dspWorkers)
             .put("dspProfile", dspProfile)
+            .put("rotateFixture", rotateFixture)
             .put("nativeFftLibrary", if (dspProfile.startsWith("native-")) "pocketfft@c90e55b3" else JSONObject.NULL)
             .put("iStftOlaCombined", true)
             .put("thermalStatusStart", powerManager.currentThermalStatus)
@@ -129,16 +131,24 @@ class MdxDspBaselineInstrumentedTest {
             }
             val runtimeBefore: Map<String, Long>
             val runtimeAfter: Map<String, Long>
+            val memorySamples = JSONArray()
             MdxSpectrogram(config, workerCount = dspWorkers).use { spectrogram ->
                 repeat(warmups) { warmupTimes.put(runWindow(compiled, input, output, spectrogram, waveform, config, dsp.getDouble("modelOutputScale"), null, boundedRuntime, dspBuffers, nativeDsp).getDouble("totalMs")) }
                 boundedRuntime?.resetInferenceCounters()
                 runtimeBefore = runtimeStats()
-                repeat(measured) { sessions.put(runWindow(compiled, input, output, spectrogram, waveform, config, dsp.getDouble("modelOutputScale"), resultDir, boundedRuntime, dspBuffers, nativeDsp)) }
+                repeat(measured) { runIndex ->
+                    if (rotateFixture) rotateFixture(waveform, runIndex)
+                    sessions.put(runWindow(compiled, input, output, spectrogram, waveform, config, dsp.getDouble("modelOutputScale"), resultDir, boundedRuntime, dspBuffers, nativeDsp))
+                    if ((runIndex + 1) % 10 == 0 || runIndex + 1 == measured) {
+                        memorySamples.put(memoryEvidence().put("completedRuns", runIndex + 1))
+                    }
+                }
                 runtimeAfter = runtimeStats()
             }
             nativeDsp?.close()
             report.put("setupMs", setupMs).put("warmupMs", warmupTimes)
                 .put("runs", sessions).put("memory", memoryEvidence())
+                .put("memorySamples", memorySamples)
                 .put("runtimeStatsDelta", runtimeStatsDelta(runtimeBefore, runtimeAfter))
                 .put("thermalStatusEnd", powerManager.currentThermalStatus)
             boundedRuntime?.let { report.put("boundedGpuEvidence", it.evidence()) }
@@ -216,6 +226,15 @@ class MdxDspBaselineInstrumentedTest {
 
     private fun fixture(config: MdxDspConfig): Array<FloatArray> = Array(2) { c ->
         FloatArray(config.chunkSize) { i -> (0.1 * sin(2.0 * PI * (220 + c * 37) * i / config.sampleRate) + 0.01 * sin(i * 0.013)).toFloat() }
+    }
+
+    private fun rotateFixture(waveform: Array<FloatArray>, runIndex: Int) {
+        val delta = (runIndex + 1) * 0.0001f
+        for (channel in waveform.indices) {
+            for (sample in waveform[channel].indices) {
+                waveform[channel][sample] = (waveform[channel][sample] + delta).coerceIn(-0.2f, 0.2f)
+            }
+        }
     }
 
     private fun nchwToNhwc(input: FloatArray, f: Int, t: Int): FloatArray {

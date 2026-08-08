@@ -75,6 +75,55 @@ class NativeMdxDspInstrumentedTest {
         )
     }
 
+    @Test
+    fun nativePackedRealParityGate() {
+        val configs = listOf(
+            "9662" to MdxDspConfig(nFft = 6144, dimF = 2048),
+            "kim_inst" to MdxDspConfig(nFft = 7680, dimF = 3072),
+            "hq4" to MdxDspConfig(nFft = 5120, dimF = 2560),
+        )
+        val results = JSONArray()
+        for ((name, config) in configs) {
+            val waveform = fixture(config)
+            val fullTensor = FloatArray(config.tensorElementCount)
+            val packedTensor = FloatArray(config.tensorElementCount)
+            val fullWaveform = Array(2) { FloatArray(config.chunkSize) }
+            val packedWaveform = Array(2) { FloatArray(config.chunkSize) }
+            NativeMdxDsp(config, 4, NativeMdxDsp.Mode.FULL_COMPLEX).use { full ->
+                full.waveformToNhwcTensorInto(waveform, fullTensor)
+                full.nhwcTensorToWaveformInto(fullTensor, fullWaveform)
+            }
+            NativeMdxDsp(config, 4, NativeMdxDsp.Mode.PACKED_REAL).use { packed ->
+                packed.waveformToNhwcTensorInto(waveform, packedTensor)
+                packed.nhwcTensorToWaveformInto(fullTensor, packedWaveform)
+            }
+            val stft = errorStats(fullTensor, packedTensor)
+            val istft = errorStats(fullWaveform.flatten(), packedWaveform.flatten())
+            results.put(
+                JSONObject()
+                    .put("model", name)
+                    .put("nFft", config.nFft)
+                    .put("dimF", config.dimF)
+                    .put("stft", stft.toJson())
+                    .put("iStft", istft.toJson()),
+            )
+            check(stft.snrDb >= 80.0 && stft.maxAbs <= 1e-3)
+            check(istft.snrDb >= 80.0 && istft.maxAbs <= 1e-3)
+        }
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val output = File(requireNotNull(context.getExternalFilesDir(null)), "benchmark/native-mdx-parity")
+            .apply { mkdirs() }
+        File(output, "packed-real.json").writeText(
+            JSONObject()
+                .put("status", "numerical-pass")
+                .put("reference", "native-full-complex")
+                .put("numericalGateSnrDb", 80.0)
+                .put("numericalGateMaxAbs", 1e-3)
+                .put("results", results)
+                .toString(2),
+        )
+    }
+
     private fun fixture(config: MdxDspConfig): Array<FloatArray> = Array(2) { channel ->
         FloatArray(config.chunkSize) { index ->
             (0.1 * sin(2.0 * PI * (220 + channel * 37) * index / config.sampleRate) +

@@ -43,7 +43,7 @@ class MdxDspBaselineInstrumentedTest {
         val sessionIndex = args.getString("sessionIndex", "1")!!.toInt()
         val dspWorkers = args.getString("dspWorkers", "1")!!.toInt().coerceIn(1, 8)
         val dspProfile = args.getString("dspProfile", "legacy")!!
-        require(dspProfile in setOf("legacy", "reuse-nhwc", "native-full"))
+        require(dspProfile in setOf("legacy", "reuse-nhwc", "native-full", "native-packed"))
         val context = ApplicationProvider.getApplicationContext<Context>()
         val powerManager = context.getSystemService(PowerManager::class.java)
         val root = File(requireNotNull(context.getExternalFilesDir(null)), "benchmark")
@@ -95,7 +95,7 @@ class MdxDspBaselineInstrumentedTest {
             .put("warmups", warmups).put("measuredRuns", measured).put("threads", threads)
             .put("dspWorkers", dspWorkers)
             .put("dspProfile", dspProfile)
-            .put("nativeFftLibrary", if (dspProfile == "native-full") "pocketfft@c90e55b3" else JSONObject.NULL)
+            .put("nativeFftLibrary", if (dspProfile.startsWith("native-")) "pocketfft@c90e55b3" else JSONObject.NULL)
             .put("iStftOlaCombined", true)
             .put("thermalStatusStart", powerManager.currentThermalStatus)
         val sessions = JSONArray()
@@ -122,7 +122,11 @@ class MdxDspBaselineInstrumentedTest {
             val setupMs = (SystemClock.elapsedRealtimeNanos() - setupStart) / 1_000_000.0
             val warmupTimes = JSONArray()
             val dspBuffers = if (dspProfile != "legacy") ReusableDspBuffers(config) else null
-            val nativeDsp = if (dspProfile == "native-full") NativeMdxDsp(config, dspWorkers) else null
+            val nativeDsp = when (dspProfile) {
+                "native-full" -> NativeMdxDsp(config, dspWorkers, NativeMdxDsp.Mode.FULL_COMPLEX)
+                "native-packed" -> NativeMdxDsp(config, dspWorkers, NativeMdxDsp.Mode.PACKED_REAL)
+                else -> null
+            }
             val runtimeBefore: Map<String, Long>
             val runtimeAfter: Map<String, Long>
             MdxSpectrogram(config, workerCount = dspWorkers).use { spectrogram ->

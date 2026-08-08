@@ -3,6 +3,7 @@ package com.example.musicsourceseparation.model
 class NativeMdxDsp(
     private val config: MdxDspConfig,
     workerCount: Int,
+    mode: Mode = Mode.FULL_COMPLEX,
 ) : AutoCloseable {
     private var handle = nativeCreate(
         config.nFft,
@@ -11,6 +12,7 @@ class NativeMdxDsp(
         config.dimT,
         config.chunkSize,
         workerCount,
+        mode == Mode.PACKED_REAL,
     ).also { require(it != 0L) { "Native MDX DSP plan creation failed." } }
 
     fun waveformToNhwcTensorInto(waveform: Array<FloatArray>, tensor: FloatArray) {
@@ -41,6 +43,7 @@ class NativeMdxDsp(
         dimT: Int,
         chunkSize: Int,
         workerCount: Int,
+        packedReal: Boolean,
     ): Long
 
     private external fun nativePreprocess(
@@ -63,5 +66,10 @@ class NativeMdxDsp(
         init {
             System.loadLibrary("mss_mdx_dsp")
         }
+    }
+
+    enum class Mode {
+        FULL_COMPLEX,
+        PACKED_REAL,
     }
 }

@@ -68,6 +68,44 @@ class MdxSpectrogramTest {
         }
     }
 
+    @Test
+    fun reusableNhwcPathMatchesLegacyForAllSentinels() {
+        val configs = listOf(
+            MdxDspConfig(nFft = 6144, dimF = 2048),
+            MdxDspConfig(nFft = 7680, dimF = 3072),
+            MdxDspConfig(nFft = 5120, dimF = 2560),
+        )
+        for (config in configs) {
+            val waveform = stereoSineChunk(config)
+            MdxSpectrogram(config, workerCount = 4).use { spectrogram ->
+                val legacy = spectrogram.waveformToTensor(waveform)
+                val directNhwc = FloatArray(config.tensorElementCount)
+                spectrogram.waveformToNhwcTensorInto(waveform, directNhwc)
+                assertArrayEquals(nchwToNhwc(legacy, config), directNhwc, 0f)
+
+                val legacyWaveform = spectrogram.tensorToWaveform(legacy)
+                val reusableWaveform = Array(2) { FloatArray(config.chunkSize) }
+                spectrogram.nhwcTensorToWaveformInto(directNhwc, reusableWaveform)
+                for (channel in legacyWaveform.indices) {
+                    assertArrayEquals(legacyWaveform[channel], reusableWaveform[channel], 0f)
+                }
+            }
+        }
+    }
+
+    private fun nchwToNhwc(input: FloatArray, config: MdxDspConfig): FloatArray {
+        val output = FloatArray(input.size)
+        for (channel in 0 until 4) {
+            for (frequency in 0 until config.dimF) {
+                for (frame in 0 until config.dimT) {
+                    output[(frequency * config.dimT + frame) * 4 + channel] =
+                        input[(channel * config.dimF + frequency) * config.dimT + frame]
+                }
+            }
+        }
+        return output
+    }
+
     private fun stereoSineChunk(config: MdxDspConfig): Array<FloatArray> {
         return Array(2) { channel ->
             FloatArray(config.chunkSize) { index ->

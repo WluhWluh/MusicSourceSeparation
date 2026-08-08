@@ -3,6 +3,7 @@ package com.example.musicsourceseparation.benchmark
 import android.content.Context
 import android.os.Build
 import android.os.Debug
+import android.os.PowerManager
 import android.os.SystemClock
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -40,7 +41,10 @@ class MdxDspBaselineInstrumentedTest {
         val measured = args.getString("measuredRuns", "10")!!.toInt().coerceIn(1, 100)
         val sessionIndex = args.getString("sessionIndex", "1")!!.toInt()
         val dspWorkers = args.getString("dspWorkers", "1")!!.toInt().coerceIn(1, 8)
+        val dspProfile = args.getString("dspProfile", "legacy")!!
+        require(dspProfile == "legacy" || dspProfile == "reuse-nhwc")
         val context = ApplicationProvider.getApplicationContext<Context>()
+        val powerManager = context.getSystemService(PowerManager::class.java)
         val root = File(requireNotNull(context.getExternalFilesDir(null)), "benchmark")
         val model = File(root, "models/$modelFileName")
         val contractFile = File(root, "contracts/$contractFileName")
@@ -61,7 +65,7 @@ class MdxDspBaselineInstrumentedTest {
         val waveform = fixture(config)
         val waveformSha = sha256Floats(waveform)
         val profile = if (backend == "gpu-bounded") "gpu-opencl-bounded-fp32-v1" else "cpu-xnnpack"
-        val resultDir = File(root, "mdx-dsp-baseline/$modelId/$backend/workers-$dspWorkers/session-$sessionIndex").apply {
+        val resultDir = File(root, "mdx-dsp-baseline/$modelId/$backend/$dspProfile/workers-$dspWorkers/session-$sessionIndex").apply {
             deleteRecursively(); mkdirs()
         }
         val report = JSONObject()
@@ -89,7 +93,9 @@ class MdxDspBaselineInstrumentedTest {
             .put("fixture", JSONObject().put("waveformSha256", waveformSha).put("samples", config.chunkSize))
             .put("warmups", warmups).put("measuredRuns", measured).put("threads", threads)
             .put("dspWorkers", dspWorkers)
+            .put("dspProfile", dspProfile)
             .put("iStftOlaCombined", true)
+            .put("thermalStatusStart", powerManager.currentThermalStatus)
         val sessions = JSONArray()
         try {
             val boundedRuntime = if (backend == "gpu-bounded") BoundedGpuRuntime.loadAndValidate() else null
@@ -113,24 +119,27 @@ class MdxDspBaselineInstrumentedTest {
             val output = compiled.createOutputBuffers().single()
             val setupMs = (SystemClock.elapsedRealtimeNanos() - setupStart) / 1_000_000.0
             val warmupTimes = JSONArray()
+            val dspBuffers = if (dspProfile == "reuse-nhwc") ReusableDspBuffers(config) else null
             val runtimeBefore: Map<String, Long>
             val runtimeAfter: Map<String, Long>
             MdxSpectrogram(config, workerCount = dspWorkers).use { spectrogram ->
-                repeat(warmups) { warmupTimes.put(runWindow(compiled, input, output, spectrogram, waveform, config, dsp.getDouble("modelOutputScale"), null, boundedRuntime).getDouble("totalMs")) }
+                repeat(warmups) { warmupTimes.put(runWindow(compiled, input, output, spectrogram, waveform, config, dsp.getDouble("modelOutputScale"), null, boundedRuntime, dspBuffers).getDouble("totalMs")) }
                 boundedRuntime?.resetInferenceCounters()
                 runtimeBefore = runtimeStats()
-                repeat(measured) { sessions.put(runWindow(compiled, input, output, spectrogram, waveform, config, dsp.getDouble("modelOutputScale"), resultDir, boundedRuntime)) }
+                repeat(measured) { sessions.put(runWindow(compiled, input, output, spectrogram, waveform, config, dsp.getDouble("modelOutputScale"), resultDir, boundedRuntime, dspBuffers)) }
                 runtimeAfter = runtimeStats()
             }
             report.put("setupMs", setupMs).put("warmupMs", warmupTimes)
                 .put("runs", sessions).put("memory", memoryEvidence())
                 .put("runtimeStatsDelta", runtimeStatsDelta(runtimeBefore, runtimeAfter))
+                .put("thermalStatusEnd", powerManager.currentThermalStatus)
             boundedRuntime?.let { report.put("boundedGpuEvidence", it.evidence()) }
             compiled.close()
             environment.close()
         } catch (error: Throwable) {
             report.put("status", "error").put("errorClass", error::class.java.name).put("message", error.message.orEmpty())
                 .put("stack", error.stackTraceToString()).put("memory", memoryEvidence())
+                .put("thermalStatusEnd", powerManager.currentThermalStatus)
         }
         File(resultDir, "report.json").writeText(report.toString(2))
         println(report)
@@ -147,18 +156,40 @@ class MdxDspBaselineInstrumentedTest {
         modelOutputScale: Double,
         resultDir: File?,
         boundedRuntime: BoundedGpuRuntime?,
+        reusable: ReusableDspBuffers?,
     ): JSONObject {
         fun now() = SystemClock.elapsedRealtimeNanos()
         val total = now()
-        val stftStart = now(); val nchw = spectrogram.waveformToTensor(waveform); val stftMs = (now() - stftStart) / 1e6
-        val layoutStart = now(); val nhwc = nchwToNhwc(nchw, config.dimF, config.dimT); val layoutMs = (now() - layoutStart) / 1e6
+        val stftStart = now()
+        val spectrogramOutput = if (reusable != null) {
+            spectrogram.waveformToNhwcTensorInto(waveform, reusable.inputNhwc)
+            reusable.inputNhwc
+        } else {
+            spectrogram.waveformToTensor(waveform)
+        }
+        val stftMs = (now() - stftStart) / 1e6
+        val layoutStart = now()
+        val nhwc = if (reusable != null) spectrogramOutput else nchwToNhwc(spectrogramOutput, config.dimF, config.dimT)
+        val layoutMs = (now() - layoutStart) / 1e6
         val writeStart = now(); input.writeFloat(nhwc); val writeMs = (now() - writeStart) / 1e6
         val invokeStart = now(); boundedRuntime?.beginInference(); try { model.run(listOf(input), listOf(output)) } finally { boundedRuntime?.endInference() }; val invokeMs = (now() - invokeStart) / 1e6
         val readStart = now(); val outNhwc = output.readFloat(); val readMs = (now() - readStart) / 1e6
-        val outputLayoutStart = now(); val outNchw = nhwcToNchw(outNhwc, config.dimF, config.dimT); val outputLayoutMs = (now() - outputLayoutStart) / 1e6
-        val istftStart = now(); val separated = spectrogram.tensorToWaveform(outNchw); val istftOlaMs = (now() - istftStart) / 1e6
-        val residualStart = now(); val residual = Array(2) { c -> FloatArray(config.chunkSize) { i -> waveform[c][i] - separated[c][i] * modelOutputScale.toFloat() } }; val residualMs = (now() - residualStart) / 1e6
-        val pcmStart = now(); val pcmBytes = ByteArray(config.chunkSize * 4); var offset = 0
+        val outputLayoutStart = now()
+        val inverseInput = if (reusable != null) outNhwc else nhwcToNchw(outNhwc, config.dimF, config.dimT)
+        val outputLayoutMs = (now() - outputLayoutStart) / 1e6
+        val istftStart = now()
+        val separated = if (reusable != null) {
+            spectrogram.nhwcTensorToWaveformInto(inverseInput, reusable.separated)
+            reusable.separated
+        } else {
+            spectrogram.tensorToWaveform(inverseInput)
+        }
+        val istftOlaMs = (now() - istftStart) / 1e6
+        val residualStart = now()
+        val residual = reusable?.residual ?: Array(2) { FloatArray(config.chunkSize) }
+        for (c in 0 until 2) for (i in 0 until config.chunkSize) residual[c][i] = waveform[c][i] - separated[c][i] * modelOutputScale.toFloat()
+        val residualMs = (now() - residualStart) / 1e6
+        val pcmStart = now(); val pcmBytes = reusable?.pcm16 ?: ByteArray(config.chunkSize * 4); var offset = 0
         for (i in 0 until config.chunkSize) for (c in 0 until 2) { val sample = (separated[c][i].coerceIn(-1f, 1f) * 32767f).toInt().coerceIn(-32768, 32767); pcmBytes[offset++] = sample.toByte(); pcmBytes[offset++] = (sample ushr 8).toByte() }
         val pcmMs = (now() - pcmStart) / 1e6
         if (resultDir != null && sessionsWritten++ == 0) File(resultDir, "output-preview.pcm16le").writeBytes(pcmBytes)
@@ -196,6 +227,12 @@ class MdxDspBaselineInstrumentedTest {
     private fun sha256Floats(value: Array<FloatArray>): String = sha256Bytes(value.flatMap { it.toList() }.toFloatArray())
     private fun sha256Bytes(value: FloatArray): String = MessageDigest.getInstance("SHA-256").digest(floatBytes(value)).joinToString("") { "%02x".format(it) }
     private fun floatBytes(value: FloatArray): ByteArray { val b = ByteBuffer.allocate(value.size * 4).order(ByteOrder.LITTLE_ENDIAN); value.forEach { b.putFloat(it) }; return b.array() }
+    private class ReusableDspBuffers(config: MdxDspConfig) {
+        val inputNhwc = FloatArray(config.tensorElementCount)
+        val separated = Array(2) { FloatArray(config.chunkSize) }
+        val residual = Array(2) { FloatArray(config.chunkSize) }
+        val pcm16 = ByteArray(config.chunkSize * 4)
+    }
     private class BoundedGpuRuntime private constructor(private val runtimeClass: Class<*>, private val capability: Any) {
         fun resetInferenceCounters() { invoke("resetInferenceCounters") }
         fun beginInference() { invoke("beginInference") }

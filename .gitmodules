@@ -1,0 +1,3 @@
+[submodule "app/src/main/cpp/third_party/pocketfft"]
+	path = app/src/main/cpp/third_party/pocketfft
+	url = https://github.com/mreineck/pocketfft.git

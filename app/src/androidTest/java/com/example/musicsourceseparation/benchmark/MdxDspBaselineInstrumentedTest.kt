@@ -11,6 +11,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.example.musicsourceseparation.BuildConfig
 import com.example.musicsourceseparation.model.MdxDspConfig
 import com.example.musicsourceseparation.model.MdxSpectrogram
+import com.example.musicsourceseparation.model.NativeMdxDsp
 import com.google.ai.edge.litert.Accelerator
 import com.google.ai.edge.litert.CompiledModel
 import com.google.ai.edge.litert.Environment
@@ -42,7 +43,7 @@ class MdxDspBaselineInstrumentedTest {
         val sessionIndex = args.getString("sessionIndex", "1")!!.toInt()
         val dspWorkers = args.getString("dspWorkers", "1")!!.toInt().coerceIn(1, 8)
         val dspProfile = args.getString("dspProfile", "legacy")!!
-        require(dspProfile == "legacy" || dspProfile == "reuse-nhwc")
+        require(dspProfile in setOf("legacy", "reuse-nhwc", "native-full"))
         val context = ApplicationProvider.getApplicationContext<Context>()
         val powerManager = context.getSystemService(PowerManager::class.java)
         val root = File(requireNotNull(context.getExternalFilesDir(null)), "benchmark")
@@ -94,6 +95,7 @@ class MdxDspBaselineInstrumentedTest {
             .put("warmups", warmups).put("measuredRuns", measured).put("threads", threads)
             .put("dspWorkers", dspWorkers)
             .put("dspProfile", dspProfile)
+            .put("nativeFftLibrary", if (dspProfile == "native-full") "pocketfft@c90e55b3" else JSONObject.NULL)
             .put("iStftOlaCombined", true)
             .put("thermalStatusStart", powerManager.currentThermalStatus)
         val sessions = JSONArray()
@@ -119,16 +121,18 @@ class MdxDspBaselineInstrumentedTest {
             val output = compiled.createOutputBuffers().single()
             val setupMs = (SystemClock.elapsedRealtimeNanos() - setupStart) / 1_000_000.0
             val warmupTimes = JSONArray()
-            val dspBuffers = if (dspProfile == "reuse-nhwc") ReusableDspBuffers(config) else null
+            val dspBuffers = if (dspProfile != "legacy") ReusableDspBuffers(config) else null
+            val nativeDsp = if (dspProfile == "native-full") NativeMdxDsp(config, dspWorkers) else null
             val runtimeBefore: Map<String, Long>
             val runtimeAfter: Map<String, Long>
             MdxSpectrogram(config, workerCount = dspWorkers).use { spectrogram ->
-                repeat(warmups) { warmupTimes.put(runWindow(compiled, input, output, spectrogram, waveform, config, dsp.getDouble("modelOutputScale"), null, boundedRuntime, dspBuffers).getDouble("totalMs")) }
+                repeat(warmups) { warmupTimes.put(runWindow(compiled, input, output, spectrogram, waveform, config, dsp.getDouble("modelOutputScale"), null, boundedRuntime, dspBuffers, nativeDsp).getDouble("totalMs")) }
                 boundedRuntime?.resetInferenceCounters()
                 runtimeBefore = runtimeStats()
-                repeat(measured) { sessions.put(runWindow(compiled, input, output, spectrogram, waveform, config, dsp.getDouble("modelOutputScale"), resultDir, boundedRuntime, dspBuffers)) }
+                repeat(measured) { sessions.put(runWindow(compiled, input, output, spectrogram, waveform, config, dsp.getDouble("modelOutputScale"), resultDir, boundedRuntime, dspBuffers, nativeDsp)) }
                 runtimeAfter = runtimeStats()
             }
+            nativeDsp?.close()
             report.put("setupMs", setupMs).put("warmupMs", warmupTimes)
                 .put("runs", sessions).put("memory", memoryEvidence())
                 .put("runtimeStatsDelta", runtimeStatsDelta(runtimeBefore, runtimeAfter))
@@ -157,11 +161,15 @@ class MdxDspBaselineInstrumentedTest {
         resultDir: File?,
         boundedRuntime: BoundedGpuRuntime?,
         reusable: ReusableDspBuffers?,
+        nativeDsp: NativeMdxDsp?,
     ): JSONObject {
         fun now() = SystemClock.elapsedRealtimeNanos()
         val total = now()
         val stftStart = now()
-        val spectrogramOutput = if (reusable != null) {
+        val spectrogramOutput = if (nativeDsp != null) {
+            nativeDsp.waveformToNhwcTensorInto(waveform, requireNotNull(reusable).inputNhwc)
+            reusable.inputNhwc
+        } else if (reusable != null) {
             spectrogram.waveformToNhwcTensorInto(waveform, reusable.inputNhwc)
             reusable.inputNhwc
         } else {
@@ -178,7 +186,10 @@ class MdxDspBaselineInstrumentedTest {
         val inverseInput = if (reusable != null) outNhwc else nhwcToNchw(outNhwc, config.dimF, config.dimT)
         val outputLayoutMs = (now() - outputLayoutStart) / 1e6
         val istftStart = now()
-        val separated = if (reusable != null) {
+        val separated = if (nativeDsp != null) {
+            nativeDsp.nhwcTensorToWaveformInto(inverseInput, requireNotNull(reusable).separated)
+            reusable.separated
+        } else if (reusable != null) {
             spectrogram.nhwcTensorToWaveformInto(inverseInput, reusable.separated)
             reusable.separated
         } else {

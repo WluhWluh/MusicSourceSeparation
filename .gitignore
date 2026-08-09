@@ -47,6 +47,7 @@ dist/
 # Locally packaged BrowserStack validation fixtures and credentials
 app/src/qnnV*/assets/app-live/
 app/src/dspMatrix/assets/app-live-dsp/
+app/src/dspShapeAbi/assets/app-live-dsp/
 
 # OS files
 Thumbs.db

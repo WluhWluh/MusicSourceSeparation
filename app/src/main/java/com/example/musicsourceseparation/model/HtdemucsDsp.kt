@@ -19,8 +19,8 @@ class HtdemucsDsp(
     val istftMode: IstftMode = IstftMode.SERIAL,
     val istftWorkers: Int = 1,
     val reuseIoWorkspaces: Boolean = false,
-) : AutoCloseable {
-    val frameCount: Int = ceil(windowSamples.toDouble() / HOP_LENGTH).toInt()
+) : HtdemucsDspSession {
+    override val frameCount: Int = ceil(windowSamples.toDouble() / HOP_LENGTH).toInt()
 
     private val fft = FloatFFT_1D(N_FFT.toLong())
     private val hann = FloatArray(N_FFT) { index ->
@@ -74,7 +74,7 @@ class HtdemucsDsp(
     }
 
     @Synchronized
-    fun waveformToSpectrum(planarStereoWaveform: FloatArray): FloatArray {
+    override fun waveformToSpectrum(planarStereoWaveform: FloatArray): FloatArray {
         check(!closed.get()) { "HtdemucsDsp is closed." }
         require(planarStereoWaveform.size == CHANNEL_COUNT * windowSamples) {
             "Expected planar stereo waveform with " + (CHANNEL_COUNT * windowSamples) + " values."
@@ -110,9 +110,12 @@ class HtdemucsDsp(
     }
 
     @Synchronized
-    fun frequencyToWaveform(
+    fun frequencyToWaveform(packedFrequency: FloatArray): FloatArray =
+        frequencyToWaveform(packedFrequency, DEFAULT_STEM_COUNT)
+
+    override fun frequencyToWaveform(
         packedFrequency: FloatArray,
-        stemCount: Int = DEFAULT_STEM_COUNT,
+        stemCount: Int,
     ): FloatArray {
         check(!closed.get()) { "HtdemucsDsp is closed." }
         val expected = stemCount * FEATURE_COUNT * FREQUENCY_BINS * frameCount

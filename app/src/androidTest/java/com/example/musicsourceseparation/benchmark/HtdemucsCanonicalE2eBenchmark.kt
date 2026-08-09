@@ -14,6 +14,9 @@ import com.example.musicsourceseparation.audio.DecodedPcmAudio
 import com.example.musicsourceseparation.audio.NativePcm16
 import com.example.musicsourceseparation.audio.WavFileWriter
 import com.example.musicsourceseparation.model.HtdemucsDsp
+import com.example.musicsourceseparation.model.HtdemucsDspSession
+import com.example.musicsourceseparation.model.HtdemucsNativeDspContracts
+import com.example.musicsourceseparation.model.NativeHtdemucsDsp
 import com.google.ai.edge.litert.Accelerator
 import com.google.ai.edge.litert.CompiledModel
 import com.google.ai.edge.litert.Environment
@@ -42,6 +45,7 @@ internal class HtdemucsCanonicalE2eBenchmark(
         val durationSeconds: Int? = null,
         val frameLimit: Int? = null,
         val threads: Int,
+        val dspMode: DspMode = DspMode.KOTLIN_JTRANSFORMS,
         val istftMode: HtdemucsDsp.IstftMode = HtdemucsDsp.IstftMode.SERIAL,
         val istftWorkers: Int = 1,
         val validateIstftFloatParity: Boolean = false,
@@ -87,9 +91,27 @@ internal class HtdemucsCanonicalE2eBenchmark(
         }
     }
 
+    enum class DspMode(val wireValue: String) {
+        KOTLIN_JTRANSFORMS("kotlin-jtransforms"),
+        NATIVE_PACKED("native-packed"),
+        ;
+
+        companion object {
+            fun fromWireValue(value: String): DspMode = entries.firstOrNull {
+                it.wireValue == value
+            } ?: error("Unknown HTDemucs DSP mode '$value'.")
+        }
+    }
+
     fun run(config: Config): Result {
         validateConfig(config)
         val modelIdentity = MODEL_IDENTITIES.getValue(config.modelVariant)
+        val nativeDspContract = HtdemucsNativeDspContracts.forVariant(config.modelVariant)
+        require(nativeDspContract.modelId == modelIdentity.modelId)
+        require(nativeDspContract.artifactFileName == modelIdentity.fileName)
+        require(nativeDspContract.artifactByteSize == modelIdentity.byteSize)
+        require(nativeDspContract.artifactSha256 == modelIdentity.sha256)
+        require(nativeDspContract.sourceOrder == modelIdentity.stemOrder)
         val outputAbi = outputAbi(modelIdentity.stemOrder.size)
         val benchmarkRoot = File(
             requireNotNull(context.getExternalFilesDir(null)),
@@ -132,7 +154,8 @@ internal class HtdemucsCanonicalE2eBenchmark(
         } else {
             "$runFamily/istft-${config.istftMode.wireValue}-w${config.istftWorkers}"
         }
-        val profileFamily = "$executionFamily/postprocess-${config.postprocessMode.wireValue}"
+        val profileFamily = "$executionFamily/dsp-${config.dspMode.wireValue}/" +
+            "postprocess-${config.postprocessMode.wireValue}"
         val runRoot = File(benchmarkRoot, "$profileFamily/$selectionLabel/${config.runId}")
         require(runRoot.deleteRecursively() && runRoot.mkdirs()) {
             "Could not prepare E2E run directory: ${runRoot.absolutePath}"
@@ -257,6 +280,7 @@ internal class HtdemucsCanonicalE2eBenchmark(
                 .put("runtime", runtimeEvidence())
                 .put("model", JSONObject()
                     .put("modelId", modelIdentity.modelId)
+                    .put("executableContractId", nativeDspContract.executableContractId)
                     .put("path", modelFile.absolutePath)
                     .put("fileName", modelIdentity.fileName)
                     .put("byteSize", modelIdentity.byteSize)
@@ -589,7 +613,8 @@ internal class HtdemucsCanonicalE2eBenchmark(
         require(stagingDir.mkdirs())
         val windows = JSONArray()
         val totalStarted = StageStart()
-        var dsp: HtdemucsDsp? = null
+        val nativeDspContract = HtdemucsNativeDspContracts.forVariant(modelIdentity.variant)
+        var dsp: HtdemucsDspSession? = null
         var parityDsp: HtdemucsDsp? = null
         val triangleWeight = triangleWeight()
         val carry = FloatArray(planeCount * OVERLAP_SAMPLES)
@@ -639,12 +664,18 @@ internal class HtdemucsCanonicalE2eBenchmark(
         try {
             val sessionPrepare = timed {
                 val dspSetup = timed {
-                    HtdemucsDsp(
-                        windowSamples = WINDOW_SAMPLES,
-                        istftMode = config.istftMode,
-                        istftWorkers = config.istftWorkers,
-                        reuseIoWorkspaces = reuseWorkspaces,
-                    )
+                    when (config.dspMode) {
+                        DspMode.KOTLIN_JTRANSFORMS -> HtdemucsDsp(
+                            windowSamples = WINDOW_SAMPLES,
+                            istftMode = config.istftMode,
+                            istftWorkers = config.istftWorkers,
+                            reuseIoWorkspaces = reuseWorkspaces,
+                        )
+                        DspMode.NATIVE_PACKED -> NativeHtdemucsDsp(
+                            contract = nativeDspContract,
+                            workerCount = config.istftWorkers,
+                        )
+                    }
                 }
                 dsp = dspSetup.value
                 require(dspSetup.value.frameCount == SPECTRUM_FRAMES)
@@ -1594,7 +1625,7 @@ internal class HtdemucsCanonicalE2eBenchmark(
         outputBuffers: Collection<TensorBuffer>,
         model: CompiledModel?,
         environment: Environment?,
-        dsp: HtdemucsDsp?,
+        dsp: HtdemucsDspSession?,
         parityDsp: HtdemucsDsp?,
     ): Throwable? {
         var failure: Throwable? = null
@@ -1616,18 +1647,29 @@ internal class HtdemucsCanonicalE2eBenchmark(
     }
 
     private fun istftExecutionEvidence(config: Config, stemCount: Int): JSONObject = JSONObject()
+        .put("dspMode", config.dspMode.wireValue)
         .put("mode", config.istftMode.wireValue)
         .put("requestedWorkers", config.istftWorkers)
         .put("effectiveWorkers", minOf(config.istftWorkers, stemCount * CHANNEL_COUNT))
         .put("laneCount", stemCount * CHANNEL_COUNT)
-        .put("fftImplementation", "JTransforms-3.1-FloatFFT_1D-complexInverse")
+        .put(
+            "fftImplementation",
+            when (config.dspMode) {
+                DspMode.KOTLIN_JTRANSFORMS -> "JTransforms-3.1-FloatFFT_1D-complexInverse"
+                DspMode.NATIVE_PACKED -> "native-pocketfft-r2c-c2r-packed-real"
+            },
+        )
         .put("jTransformsInternalThreadPolicy", "library-default-global")
         .put("jTransformsGlobalThreads", ConcurrencyUtils.getNumberOfThreads())
         .put("jTransformsProcessorCount", ConcurrencyUtils.getNumberOfProcessors())
         .put("jTransforms1dFft2ThreadsThreshold", CommonUtils.getThreadsBeginN_1D_FFT_2Threads())
         .put("jTransforms1dFft4ThreadsThreshold", CommonUtils.getThreadsBeginN_1D_FFT_4Threads())
         .put("complexTransformArrayLength", HtdemucsDsp.N_FFT * 2)
-        .put("executorOwned", config.istftMode == HtdemucsDsp.IstftMode.PARALLEL_LANES)
+        .put(
+            "executorOwned",
+            config.dspMode == DspMode.KOTLIN_JTRANSFORMS &&
+                config.istftMode == HtdemucsDsp.IstftMode.PARALLEL_LANES,
+        )
         .put("floatParityCheckRequested", config.validateIstftFloatParity)
         .put("postprocessMode", config.postprocessMode.wireValue)
         .put("reuseWaveformWorkspace", config.postprocessMode != PostprocessMode.LEGACY)
@@ -1667,6 +1709,7 @@ internal class HtdemucsCanonicalE2eBenchmark(
             "durationSeconds and frameLimit are mutually exclusive."
         }
         require(config.threads in 1..16)
+        require(config.dspMode != DspMode.NATIVE_PACKED || config.istftWorkers <= 8)
         require(config.coreWarmupRuns in 0..100)
         require(config.coreMeasuredRuns in 0..100)
         require((config.coreWarmupRuns == 0) == (config.coreMeasuredRuns == 0)) {
@@ -1688,8 +1731,9 @@ internal class HtdemucsCanonicalE2eBenchmark(
         ) { "Parallel-lanes iSTFT requires at least two workers." }
         require(
             !config.validateIstftFloatParity ||
-                config.istftMode == HtdemucsDsp.IstftMode.PARALLEL_LANES,
-        ) { "Raw-float iSTFT parity validation requires parallel-lanes mode." }
+                (config.dspMode == DspMode.KOTLIN_JTRANSFORMS &&
+                    config.istftMode == HtdemucsDsp.IstftMode.PARALLEL_LANES),
+        ) { "Bit-exact iSTFT parity validation requires Kotlin parallel-lanes mode." }
         config.expectedAudioSha256?.let { require(SHA256.matches(it)) }
         require(config.cancelAfterWindows >= 0)
         require(!config.resumeAfterCancel || config.cancelAfterWindows > 0)
@@ -2072,6 +2116,7 @@ internal class HtdemucsCanonicalE2eBenchmark(
         const val ARG_DURATION_SECONDS = "canonicalE2eDurationSeconds"
         const val ARG_FRAME_LIMIT = "canonicalE2eFrameLimit"
         const val ARG_THREADS = "canonicalE2eThreads"
+        const val ARG_DSP_MODE = "canonicalE2eDspMode"
         const val ARG_ISTFT_MODE = "canonicalE2eIstftMode"
         const val ARG_ISTFT_WORKERS = "canonicalE2eIstftWorkers"
         const val ARG_VALIDATE_ISTFT_FLOAT_PARITY =

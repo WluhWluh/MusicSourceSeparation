@@ -433,7 +433,7 @@ class AppLiveDspMatrixService : Service() {
             .put("application", JSONObject()
                 .put("package", packageName)
                 .put("versionName", packageInfo.versionName)
-                .put("versionCode", packageInfo.longVersionCode)
+                .put("versionCode", packageVersionCode(packageInfo))
                 .put("apkFiles", JSONArray(apkFiles))
                 .put("nativeLibraryDir", applicationInfo.nativeLibraryDir)
                 .put("nativeLibraries", JSONArray(nativeLibraries)))
@@ -458,6 +458,10 @@ class AppLiveDspMatrixService : Service() {
         val candidates = if (Process.is64Bit()) Build.SUPPORTED_64_BIT_ABIS else Build.SUPPORTED_32_BIT_ABIS
         return candidates.firstOrNull().orEmpty()
     }
+
+    @Suppress("DEPRECATION")
+    private fun packageVersionCode(packageInfo: android.content.pm.PackageInfo): Long =
+        if (Build.VERSION.SDK_INT >= 28) packageInfo.longVersionCode else packageInfo.versionCode.toLong()
 
     private fun deviceEvidence(): JSONObject {
         val power = getSystemService(PowerManager::class.java)

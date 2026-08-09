@@ -87,7 +87,7 @@ class AppLiveDspMatrixService : Service() {
                 File(runDirectory, "dsp-matrix-logcat.txt"),
             )
             logger.log("run=$runId bundle=${bundle.bundleId} origin=${origin.id}")
-            updateState(runId, "Running three-shape DSP matrix")
+            updateState(runId, "Running contract-driven DSP matrix")
             val manifestFile = File(runDirectory, "artifact-manifest.json").apply {
                 writeText(bundle.manifestText)
             }
@@ -206,11 +206,19 @@ class AppLiveDspMatrixService : Service() {
         val deviceStart = deviceEvidence()
         val started = SystemClock.elapsedRealtimeNanos()
         val shapeResults = JSONArray()
-        bundle.shapes.forEachIndexed { index, shape ->
-            updateState("", "Running ${shape.id} (${index + 1}/${bundle.shapes.size})")
-            logger.log("shape=${shape.id} starting")
-            shapeResults.put(runShape(shape, bundle, logger))
-            logger.log("shape=${shape.id} complete")
+        val totalShapeRuns = bundle.shapes.size * bundle.workerCounts.size
+        var shapeRunIndex = 0
+        bundle.workerCounts.forEach { workerCount ->
+            bundle.shapes.forEach { shape ->
+                shapeRunIndex++
+                updateState(
+                    "",
+                    "Running ${shape.id} workers=$workerCount ($shapeRunIndex/$totalShapeRuns)",
+                )
+                logger.log("shape=${shape.id} workers=$workerCount starting")
+                shapeResults.put(runShape(shape, workerCount, bundle, logger))
+                logger.log("shape=${shape.id} workers=$workerCount complete")
+            }
         }
         return JSONObject()
             .put("schemaVersion", 1)
@@ -220,11 +228,11 @@ class AppLiveDspMatrixService : Service() {
             .put("contractVersion", bundle.contractVersion)
             .put("bundleId", bundle.bundleId)
             .put("pocketfftRevision", POCKETFFT_REVISION)
-            .put("profiles", JSONArray(PROFILE_IDS))
-            .put("workerCount", bundle.workerCount)
+            .put("profiles", JSONArray(bundle.profiles))
+            .put("workerCounts", JSONArray(bundle.workerCounts))
             .put("warmups", bundle.warmups)
             .put("measuredRunsPerProfile", bundle.measuredRuns)
-            .put("measurementOrder", "balanced-cross-over")
+            .put("measurementOrder", "balanced-alternating-rounds")
             .put("minimumSnrDb", bundle.minimumSnrDb)
             .put("maximumAbsoluteError", bundle.maximumAbsoluteError)
             .put("elapsedMs", elapsedMs(started))
@@ -237,6 +245,7 @@ class AppLiveDspMatrixService : Service() {
 
     private fun runShape(
         shape: AppLiveDspShape,
+        workerCount: Int,
         bundle: AppLiveDspMatrixBundle,
         logger: RunLogger,
     ): JSONObject {
@@ -252,29 +261,32 @@ class AppLiveDspMatrixService : Service() {
         val shapeStartMemory = processEvidence()
         val thermalStart = deviceEvidence()
         val runtimeBefore = runtimeStats()
-        val engines = linkedMapOf<String, DspEngine>(
-            PROFILE_KOTLIN to KotlinDspEngine(config, bundle.workerCount),
-            PROFILE_NATIVE_FULL to NativeDspEngine(
-                config,
-                bundle.workerCount,
-                NativeMdxDsp.Mode.FULL_COMPLEX,
-            ),
-            PROFILE_NATIVE_PACKED to NativeDspEngine(
-                config,
-                bundle.workerCount,
-                NativeMdxDsp.Mode.PACKED_REAL,
-            ),
-        )
+        val engines = bundle.profiles.associateWithTo(linkedMapOf()) { profile ->
+            when (profile) {
+                PROFILE_KOTLIN -> KotlinDspEngine(config, workerCount)
+                PROFILE_NATIVE_FULL -> NativeDspEngine(
+                    config,
+                    workerCount,
+                    NativeMdxDsp.Mode.FULL_COMPLEX,
+                )
+                PROFILE_NATIVE_PACKED -> NativeDspEngine(
+                    config,
+                    workerCount,
+                    NativeMdxDsp.Mode.PACKED_REAL,
+                )
+                else -> error("Unsupported DSP profile: $profile")
+            }
+        }
         try {
             val kotlin = engines.getValue(PROFILE_KOTLIN)
             kotlin.stft(waveform, referenceTensor)
             kotlin.iStft(referenceTensor, referenceWaveform)
             val parity = linkedMapOf<String, JSONObject>()
-            val samples = PROFILE_IDS.associateWith { mutableListOf<RunSample>() }
+            val samples = bundle.profiles.associateWith { mutableListOf<RunSample>() }
             val candidateTensor = FloatArray(config.tensorElementCount)
             val candidateWaveform = Array(2) { FloatArray(config.chunkSize) }
 
-            PROFILE_IDS.forEach { profile ->
+            bundle.profiles.forEach { profile ->
                 val engine = engines.getValue(profile)
                 repeat(bundle.warmups) {
                     engine.stft(waveform, candidateTensor)
@@ -295,26 +307,8 @@ class AppLiveDspMatrixService : Service() {
                     .put("iStft", iStftStats.toJson())
             }
 
-            repeat(bundle.measuredRuns / 2) { cycle ->
-                val order = if (cycle % 2 == 0) {
-                    listOf(
-                        PROFILE_KOTLIN,
-                        PROFILE_NATIVE_FULL,
-                        PROFILE_NATIVE_PACKED,
-                        PROFILE_NATIVE_PACKED,
-                        PROFILE_NATIVE_FULL,
-                        PROFILE_KOTLIN,
-                    )
-                } else {
-                    listOf(
-                        PROFILE_NATIVE_PACKED,
-                        PROFILE_NATIVE_FULL,
-                        PROFILE_KOTLIN,
-                        PROFILE_KOTLIN,
-                        PROFILE_NATIVE_FULL,
-                        PROFILE_NATIVE_PACKED,
-                    )
-                }
+            repeat(bundle.measuredRuns) { cycle ->
+                val order = if (cycle % 2 == 0) bundle.profiles else bundle.profiles.reversed()
                 order.forEach { profile ->
                     val engine = engines.getValue(profile)
                     val sample = measuredRun(engine, waveform, referenceTensor, candidateTensor, candidateWaveform)
@@ -326,7 +320,7 @@ class AppLiveDspMatrixService : Service() {
                 }
             }
             val profiles = JSONObject()
-            PROFILE_IDS.forEach { profile ->
+            bundle.profiles.forEach { profile ->
                 val values = samples.getValue(profile)
                 require(values.size == bundle.measuredRuns)
                 profiles.put(
@@ -340,11 +334,12 @@ class AppLiveDspMatrixService : Service() {
                         .put("samples", JSONArray(values.map(RunSample::toJson))),
                 )
             }
-            val fastest = PROFILE_IDS.minBy { profile ->
+            val fastest = bundle.profiles.minBy { profile ->
                 median(samples.getValue(profile).map { it.totalWallMs })
             }
             return JSONObject()
                 .put("id", shape.id)
+                .put("workerCount", workerCount)
                 .put("config", JSONObject()
                     .put("nFft", config.nFft)
                     .put("hopLength", config.hopLength)
@@ -445,7 +440,7 @@ class AppLiveDspMatrixService : Service() {
                 .put("library", "mss_mdx_dsp")
                 .put("fft", "pocketfft")
                 .put("pocketfftRevision", POCKETFFT_REVISION)
-                .put("profiles", JSONArray(PROFILE_IDS)))
+                .put("profiles", JSONArray(bundle.profiles)))
     }
 
     private fun processEvidence(): JSONObject {
@@ -750,7 +745,6 @@ class AppLiveDspMatrixService : Service() {
         private const val PROFILE_KOTLIN = "kotlin-jtransforms"
         private const val PROFILE_NATIVE_FULL = "native-full"
         private const val PROFILE_NATIVE_PACKED = "native-packed"
-        private val PROFILE_IDS = listOf(PROFILE_KOTLIN, PROFILE_NATIVE_FULL, PROFILE_NATIVE_PACKED)
         private val RUNTIME_STATS = listOf(
             "art.gc.gc-count",
             "art.gc.blocking-gc-count",

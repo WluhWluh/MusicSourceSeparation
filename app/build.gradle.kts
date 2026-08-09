@@ -21,6 +21,11 @@ fun buildConfigString(value: String): String =
     "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
 
 val liteRtAar = providers.gradleProperty("liteRtAar").orNull
+val dspShapeAbi = providers.gradleProperty("dspShapeAbi").orElse("arm64-v8a").get().also {
+    require(it in setOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")) {
+        "dspShapeAbi must name a supported Android ABI"
+    }
+}
 val qnnHtpVersions = listOf(69, 73, 75, 79)
 val sourceRevision = providers.gradleProperty("benchmarkSourceRevision").orElse("unknown").get()
 val sourceDirty = providers.gradleProperty("benchmarkSourceDirty").orElse("unknown").get()
@@ -88,6 +93,15 @@ android {
             versionNameSuffix = "-dsp-matrix-v2"
             ndk {
                 abiFilters += "arm64-v8a"
+            }
+        }
+        create("dspShapeAbi") {
+            dimension = "runtime"
+            applicationIdSuffix = ".dspshapeabi"
+            versionCode = 3
+            versionNameSuffix = "-dsp-shape-abi-v3"
+            ndk {
+                abiFilters += dspShapeAbi
             }
         }
         qnnHtpVersions.forEach { htpVersion ->

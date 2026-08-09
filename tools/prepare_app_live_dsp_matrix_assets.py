@@ -15,18 +15,35 @@ from pathlib import Path
 
 
 SCHEMA_VERSION = 1
-CONTRACT_VERSION = 2
-SHAPES = (
+CONTRACT_VERSION = 3
+ALL_SHAPES = (
+    {"id": "kuielab_b_drums", "nFft": 4096, "hopLength": 1024, "dimF": 2048, "dimTPower": 7},
+    {"id": "kuielab_a_drums", "nFft": 4096, "hopLength": 1024, "dimF": 2048, "dimTPower": 9},
+    {"id": "uvr_mdxnet_inst_main", "nFft": 5120, "hopLength": 1024, "dimF": 2048, "dimTPower": 8},
+    {"id": "uvr_mdxnet_inst_hq_4", "nFft": 5120, "hopLength": 1024, "dimF": 2560, "dimTPower": 8},
     {"id": "uvr_mdxnet_3_9662", "nFft": 6144, "hopLength": 1024, "dimF": 2048, "dimTPower": 8},
+    {"id": "uvr_mdxnet_inst_hq_1", "nFft": 6144, "hopLength": 1024, "dimF": 3072, "dimTPower": 8},
+    {"id": "kuielab_a_vocals", "nFft": 6144, "hopLength": 1024, "dimF": 2048, "dimTPower": 9},
+    {"id": "reverb_hq_by_foxjoy", "nFft": 6144, "hopLength": 1024, "dimF": 3072, "dimTPower": 9},
     {"id": "kim_inst", "nFft": 7680, "hopLength": 1024, "dimF": 3072, "dimTPower": 8},
-    {
-        "id": "uvr_mdxnet_inst_hq_4",
-        "nFft": 5120,
-        "hopLength": 1024,
-        "dimF": 2560,
-        "dimTPower": 8,
-    },
+    {"id": "kuielab_b_other", "nFft": 8192, "hopLength": 1024, "dimF": 2048, "dimTPower": 8},
+    {"id": "kuielab_a_other", "nFft": 8192, "hopLength": 1024, "dimF": 2048, "dimTPower": 9},
+    {"id": "kuielab_b_bass", "nFft": 16384, "hopLength": 1024, "dimF": 2048, "dimTPower": 8},
+    {"id": "kuielab_a_bass", "nFft": 16384, "hopLength": 1024, "dimF": 2048, "dimTPower": 9},
 )
+SHAPE_IDS = {
+    "all13": tuple(shape["id"] for shape in ALL_SHAPES),
+    "remaining10": (
+        "kuielab_b_drums", "kuielab_a_drums", "uvr_mdxnet_inst_main",
+        "uvr_mdxnet_inst_hq_1", "kuielab_a_vocals", "reverb_hq_by_foxjoy",
+        "kuielab_b_other", "kuielab_a_other", "kuielab_b_bass", "kuielab_a_bass",
+    ),
+    "risk4": (
+        "kuielab_b_drums", "kuielab_a_drums", "reverb_hq_by_foxjoy", "kuielab_a_bass",
+    ),
+    "x86-3": ("uvr_mdxnet_3_9662", "reverb_hq_by_foxjoy", "kuielab_a_bass"),
+}
+SHAPES_BY_ID = {shape["id"]: shape for shape in ALL_SHAPES}
 
 
 def parse_env(path: Path) -> dict[str, str]:
@@ -55,15 +72,21 @@ def parse_args(repository: Path) -> argparse.Namespace:
         type=Path,
         default=repository.parent / "BSSUploadRelay/relay-client.env",
     )
-    parser.add_argument("--campaign", default="app-live-mdx-dsp-matrix-v2")
+    parser.add_argument("--campaign", default="app-live-mdx-dsp-shape-abi-v3")
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=repository / "app/src/dspMatrix/assets/app-live-dsp",
+        default=repository / "app/src/dspShapeAbi/assets/app-live-dsp",
     )
-    parser.add_argument("--worker-count", type=int, default=4)
+    parser.add_argument("--shape-set", choices=sorted(SHAPE_IDS), default="remaining10")
+    parser.add_argument(
+        "--profiles",
+        choices=("kotlin-packed", "kotlin-full-packed"),
+        default="kotlin-packed",
+    )
+    parser.add_argument("--worker-count", type=int, action="append", dest="worker_counts")
     parser.add_argument("--warmups", type=int, default=2)
-    parser.add_argument("--measured-runs", type=int, default=10)
+    parser.add_argument("--measured-runs", type=int, default=5)
     parser.add_argument("--no-auto-start", action="store_true")
     return parser.parse_args()
 
@@ -71,12 +94,13 @@ def parse_args(repository: Path) -> argparse.Namespace:
 def main() -> int:
     repository = Path(__file__).resolve().parents[1]
     args = parse_args(repository)
-    if not 1 <= args.worker_count <= 8:
-        raise ValueError("worker count must be between 1 and 8")
+    worker_counts = args.worker_counts or [4]
+    if len(worker_counts) != len(set(worker_counts)) or not all(1 <= value <= 8 for value in worker_counts):
+        raise ValueError("worker counts must be unique values between 1 and 8")
     if not 1 <= args.warmups <= 5:
         raise ValueError("warmups must be between 1 and 5")
-    if not 2 <= args.measured_runs <= 50 or args.measured_runs % 2:
-        raise ValueError("measured runs must be an even number from 2 through 50")
+    if not 1 <= args.measured_runs <= 50:
+        raise ValueError("measured runs must be from 1 through 50")
     safe = lambda value: len(value) <= 96 and all(
         character.isalnum() or character in "._-" for character in value
     )
@@ -95,16 +119,20 @@ def main() -> int:
 
     commit = git_output(repository, "rev-parse", "HEAD")
     dirty = bool(git_output(repository, "status", "--short"))
+    profiles = ["kotlin-jtransforms", "native-packed"]
+    if args.profiles == "kotlin-full-packed":
+        profiles.insert(1, "native-full")
     matrix = {
-        "profiles": ["kotlin-jtransforms", "native-full", "native-packed"],
-        "workerCount": args.worker_count,
+        "profiles": profiles,
+        "workerCounts": worker_counts,
         "warmups": args.warmups,
         "measuredRuns": args.measured_runs,
-        "order": "balanced-cross-over",
+        "order": "balanced-alternating-rounds",
         "minimumSnrDb": 80.0,
         "maximumAbsoluteError": 0.001,
         "fixture": "deterministic-stereo-multisine-v1",
-        "shapes": SHAPES,
+        "shapeSet": args.shape_set,
+        "shapes": [SHAPES_BY_ID[shape_id] for shape_id in SHAPE_IDS[args.shape_set]],
     }
     bundle_material = json.dumps(
         {"contractVersion": CONTRACT_VERSION, "sourceCommit": commit, "matrix": matrix},

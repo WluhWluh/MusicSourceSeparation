@@ -64,7 +64,8 @@ internal object AppLiveDspMatrixSummary {
             "apk_sha256" to apkSha,
             "native_dsp_sha256" to nativeDspSha,
             "pocketfft_revision" to nativeDsp.getString("pocketfftRevision"),
-            "worker_count" to report.getInt("workerCount"),
+            // Overwritten per shape-run while retaining the frozen CSV field order.
+            "worker_count" to 0,
             "warmups" to report.getInt("warmups"),
             "measured_runs" to report.getInt("measuredRunsPerProfile"),
             "matrix_elapsed_ms" to report.getDouble("elapsedMs"),
@@ -82,6 +83,10 @@ internal object AppLiveDspMatrixSummary {
                 .getLong("nativeHeapAllocatedBytes"),
         )
         val rows = JSONArray()
+        val profileIds = report.getJSONArray("profiles").let { values ->
+            List(values.length()) { values.getString(it) }
+        }
+        require(profileIds.firstOrNull() == PROFILE_KOTLIN && PROFILE_NATIVE_PACKED in profileIds)
         val nativeWinners = mutableListOf<String>()
         val shapes = report.getJSONArray("shapes")
         repeat(shapes.length()) { shapeIndex ->
@@ -90,14 +95,16 @@ internal object AppLiveDspMatrixSummary {
             val profiles = shape.getJSONObject("profiles")
             val kotlinMedian = profiles.getJSONObject(PROFILE_KOTLIN)
                 .getJSONObject("combined").getDouble("medianMs")
-            val fullMedian = profiles.getJSONObject(PROFILE_NATIVE_FULL)
-                .getJSONObject("combined").getDouble("medianMs")
             val packedMedian = profiles.getJSONObject(PROFILE_NATIVE_PACKED)
                 .getJSONObject("combined").getDouble("medianMs")
-            val nativeWinner = if (packedMedian < fullMedian) PROFILE_NATIVE_PACKED else PROFILE_NATIVE_FULL
-            nativeWinners += nativeWinner
+            val fullMedian = profiles.optJSONObject(PROFILE_NATIVE_FULL)
+                ?.getJSONObject("combined")?.getDouble("medianMs")
+            val nativeWinner = fullMedian?.let {
+                if (packedMedian < it) PROFILE_NATIVE_PACKED else PROFILE_NATIVE_FULL
+            } ?: "not-measured"
+            if (fullMedian != null) nativeWinners += nativeWinner
             val runtime = shape.getJSONObject("runtimeStatsDelta")
-            PROFILE_IDS.forEach { profileId ->
+            profileIds.forEach { profileId ->
                 val profile = profiles.getJSONObject(profileId)
                 val stft = profile.getJSONObject("stft")
                 val iStft = profile.getJSONObject("iStft")
@@ -110,7 +117,8 @@ internal object AppLiveDspMatrixSummary {
                     parityPass(stftParity, report) && parityPass(iStftParity, report)
                 val row = JSONObject()
                 common.forEach { (key, value) -> row.put(key, value ?: JSONObject.NULL) }
-                row.put("shape_id", shape.getString("id"))
+                row.put("worker_count", shape.getInt("workerCount"))
+                    .put("shape_id", shape.getString("id"))
                     .put("n_fft", config.getInt("nFft"))
                     .put("hop_length", config.getInt("hopLength"))
                     .put("dim_f", config.getInt("dimF"))
@@ -138,7 +146,10 @@ internal object AppLiveDspMatrixSummary {
                     .put("bit_exact", stftParity.getBoolean("bitExact") && iStftParity.getBoolean("bitExact"))
                     .put("qualified", qualified)
                     .put("speedup_vs_kotlin", kotlinMedian / combined.getDouble("medianMs"))
-                    .put("speedup_vs_native_full", fullMedian / combined.getDouble("medianMs"))
+                    .put(
+                        "speedup_vs_native_full",
+                        fullMedian?.div(combined.getDouble("medianMs")) ?: JSONObject.NULL,
+                    )
                     .put("native_winner", nativeWinner)
                     .put("shape_pss_start_kb", shape.getJSONObject("processStart").getInt("totalPssKb"))
                     .put("shape_pss_end_kb", shape.getJSONObject("processEnd").getInt("totalPssKb"))
@@ -173,7 +184,7 @@ internal object AppLiveDspMatrixSummary {
             .put("rowCount", rows.length())
             .put("qualifiedRowCount", qualifiedRows)
             .put("allRowsQualified", qualifiedRows == rows.length())
-            .put("uniformNativeWinner", uniformWinner ?: "mixed")
+            .put("uniformNativeWinner", uniformWinner ?: if (nativeWinners.isEmpty()) "not-measured" else "mixed")
             .put("nativeWinnerCounts", JSONObject(nativeWinners.groupingBy { it }.eachCount()))
             .put("csvFields", JSONArray(csvFields))
             .put("rows", rows)
@@ -223,5 +234,4 @@ internal object AppLiveDspMatrixSummary {
     private const val PROFILE_KOTLIN = "kotlin-jtransforms"
     private const val PROFILE_NATIVE_FULL = "native-full"
     private const val PROFILE_NATIVE_PACKED = "native-packed"
-    private val PROFILE_IDS = listOf(PROFILE_KOTLIN, PROFILE_NATIVE_FULL, PROFILE_NATIVE_PACKED)
 }

@@ -13,8 +13,6 @@ from typing import Any
 
 
 SCHEMA_VERSION = 1
-CONTRACT_VERSION = 2
-EXPECTED_ROWS_PER_RUN = 9
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -46,28 +44,35 @@ def discover(inputs: list[Path]) -> list[Path]:
     return sorted(discovered)
 
 
-def validate(path: Path, summary: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:
+def validate(
+    path: Path,
+    summary: dict[str, Any],
+    contract_version: int | None,
+) -> tuple[int, list[str], list[dict[str, Any]]]:
     if summary.get("schemaVersion") != SCHEMA_VERSION:
         raise ValueError(f"Unsupported summary schema in {path}")
-    if summary.get("contractVersion") != CONTRACT_VERSION:
+    current_contract = summary.get("contractVersion")
+    if not isinstance(current_contract, int) or current_contract not in (2, 3):
         raise ValueError(f"Unsupported DSP contract in {path}")
+    if contract_version is not None and current_contract != contract_version:
+        raise ValueError(f"Mixed DSP contracts in {path}")
     if summary.get("status") != "complete" or not summary.get("allRowsQualified"):
         raise ValueError(f"Unqualified DSP run: {path}")
     fields = summary.get("csvFields")
     rows = summary.get("rows")
     if not isinstance(fields, list) or not all(isinstance(value, str) for value in fields):
         raise ValueError(f"Invalid CSV fields in {path}")
-    if not isinstance(rows, list) or len(rows) != EXPECTED_ROWS_PER_RUN:
-        raise ValueError(f"Expected {EXPECTED_ROWS_PER_RUN} rows in {path}")
+    if not isinstance(rows, list) or not rows or len(rows) != summary.get("rowCount"):
+        raise ValueError(f"Invalid DSP row count in {path}")
     run_id = summary.get("runId")
     for row in rows:
         if not isinstance(row, dict) or list(row.keys()) != fields:
             raise ValueError(f"DSP row schema mismatch in {path}")
         if row.get("run_id") != run_id or not row.get("qualified"):
             raise ValueError(f"Invalid DSP row identity or gate in {path}")
-        if row.get("sample_count") != 10:
+        if row.get("sample_count") != row.get("measured_runs"):
             raise ValueError(f"Unexpected measured sample count in {path}")
-    return fields, rows
+    return current_contract, fields, rows
 
 
 def parse_args(repository: Path) -> argparse.Namespace:
@@ -84,6 +89,7 @@ def parse_args(repository: Path) -> argparse.Namespace:
         type=Path,
         default=repository.parent / "BSSUploadRelay/results/app-live-mdx-dsp-matrix-v2",
     )
+    parser.add_argument("--contract-version", type=int, choices=(2, 3))
     return parser.parse_args()
 
 
@@ -94,17 +100,24 @@ def main() -> int:
     if not paths:
         raise FileNotFoundError("No dsp-matrix-summary.json files found")
     fields: list[str] | None = None
-    rows_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+    contract_version = args.contract_version
+    rows_by_key: dict[tuple[str, str, int, str], dict[str, Any]] = {}
     runs: list[dict[str, Any]] = []
     for path in paths:
         summary = read_json(path)
-        current_fields, rows = validate(path, summary)
+        current_contract, current_fields, rows = validate(path, summary, contract_version)
+        contract_version = current_contract
         if fields is None:
             fields = current_fields
         elif current_fields != fields:
             raise ValueError(f"CSV field contract changed in {path}")
         for row in rows:
-            key = (str(row["run_id"]), str(row["shape_id"]), str(row["profile"]))
+            key = (
+                str(row["run_id"]),
+                str(row["shape_id"]),
+                int(row["worker_count"]),
+                str(row["profile"]),
+            )
             if key in rows_by_key and rows_by_key[key] != row:
                 raise ValueError(f"Conflicting duplicate DSP row: {key}")
             rows_by_key[key] = row
@@ -129,7 +142,7 @@ def main() -> int:
     ordered_rows = sorted(
         rows_by_key.values(),
         key=lambda row: (str(row["soc_model"]), str(row["model"]), str(row["run_id"]),
-                         str(row["shape_id"]), str(row["profile"])),
+                         str(row["shape_id"]), int(row["worker_count"]), str(row["profile"])),
     )
     output_dir = args.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -145,7 +158,7 @@ def main() -> int:
         json_path,
         {
             "schemaVersion": SCHEMA_VERSION,
-            "contractVersion": CONTRACT_VERSION,
+            "contractVersion": contract_version,
             "generatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "runCount": len(runs),
             "rowCount": len(ordered_rows),

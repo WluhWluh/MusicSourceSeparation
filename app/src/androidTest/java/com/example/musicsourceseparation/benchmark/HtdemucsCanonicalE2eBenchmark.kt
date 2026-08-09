@@ -1,9 +1,12 @@
 package com.example.musicsourceseparation.benchmark
 
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Debug
 import android.os.PowerManager
@@ -17,6 +20,7 @@ import com.example.musicsourceseparation.model.HtdemucsDsp
 import com.example.musicsourceseparation.model.HtdemucsDspSession
 import com.example.musicsourceseparation.model.HtdemucsNativeDspContracts
 import com.example.musicsourceseparation.model.NativeHtdemucsDsp
+import com.example.musicsourceseparation.model.NativeLiteRtHtdemucsPipeline
 import com.google.ai.edge.litert.Accelerator
 import com.google.ai.edge.litert.CompiledModel
 import com.google.ai.edge.litert.Environment
@@ -94,6 +98,7 @@ internal class HtdemucsCanonicalE2eBenchmark(
     enum class DspMode(val wireValue: String) {
         KOTLIN_JTRANSFORMS("kotlin-jtransforms"),
         NATIVE_PACKED("native-packed"),
+        NATIVE_PACKED_LITERT_C("native-packed-litert-c"),
         ;
 
         companion object {
@@ -650,6 +655,7 @@ internal class HtdemucsCanonicalE2eBenchmark(
         val writers = mutableListOf<WavFileWriter>()
         var environment: Environment? = null
         var model: CompiledModel? = null
+        var nativePipeline: NativeLiteRtHtdemucsPipeline? = null
         val inputBuffers = linkedMapOf<String, TensorBuffer>()
         val outputBuffers = linkedMapOf<String, TensorBuffer>()
         var completedWindows = 0
@@ -660,6 +666,13 @@ internal class HtdemucsCanonicalE2eBenchmark(
         var e2eStarted: StageStart? = null
         var failure: Throwable? = null
         var cancelled = false
+        val combinedOutputWorkspace = if (
+            config.dspMode == DspMode.NATIVE_PACKED_LITERT_C
+        ) {
+            FloatArray(timeOutputElements)
+        } else {
+            null
+        }
 
         try {
             val sessionPrepare = timed {
@@ -675,6 +688,13 @@ internal class HtdemucsCanonicalE2eBenchmark(
                             contract = nativeDspContract,
                             workerCount = config.istftWorkers,
                         )
+                        DspMode.NATIVE_PACKED_LITERT_C ->
+                            NativeLiteRtHtdemucsPipeline(
+                                contract = nativeDspContract,
+                                modelPath = modelFile.absolutePath,
+                                cpuThreads = config.threads,
+                                workerCount = config.istftWorkers,
+                            ).also { nativePipeline = it }
                     }
                 }
                 dsp = dspSetup.value
@@ -685,43 +705,60 @@ internal class HtdemucsCanonicalE2eBenchmark(
                     null
                 }
                 parityDsp = parityDspSetup?.value
-                val createdEnvironment = Environment.create()
-                environment = createdEnvironment
-                val availableAccelerators = createdEnvironment.getAvailableAccelerators()
-                    .map { it.name }
-                    .sorted()
-                require(Accelerator.CPU.name in availableAccelerators) {
-                    "CPU accelerator is unavailable: $availableAccelerators"
-                }
-                val options = CompiledModel.Options(Accelerator.CPU).apply {
-                    cpuOptions = CompiledModel.CpuOptions(
-                        numThreads = config.threads,
-                        xnnPackFlags = null,
-                        xnnPackWeightCachePath = null,
-                    )
-                }
-                val compile = timed {
-                    CompiledModel.create(modelFile.absolutePath, options, createdEnvironment)
-                }
-                val compiled = compile.value
-                model = compiled
-                val allocation = timed {
-                    INPUT_ABI.forEach { tensor ->
-                        checkTensorType(
-                            compiled.getInputTensorType(tensor.name, SIGNATURE_KEY),
-                            tensor,
-                        )
-                        inputBuffers[tensor.name] =
-                            compiled.createInputBuffer(tensor.name, SIGNATURE_KEY)
+                val nativeCore = config.dspMode == DspMode.NATIVE_PACKED_LITERT_C
+                val availableAccelerators: List<String>
+                val compileEvidence: Any
+                val allocationEvidence: Any
+                if (nativeCore) {
+                    availableAccelerators = listOf(Accelerator.CPU.name)
+                    compileEvidence = JSONObject()
+                        .put("status", "included-in-native-pipeline-setup")
+                        .put("api", "LiteRT-2.1.5-C")
+                    allocationEvidence = JSONObject()
+                        .put("status", "included-in-native-pipeline-setup")
+                        .put("bufferType", "managed-host-memory")
+                        .put("packedSizeValidated", true)
+                } else {
+                    val createdEnvironment = Environment.create()
+                    environment = createdEnvironment
+                    availableAccelerators = createdEnvironment.getAvailableAccelerators()
+                        .map { it.name }
+                        .sorted()
+                    require(Accelerator.CPU.name in availableAccelerators) {
+                        "CPU accelerator is unavailable: $availableAccelerators"
                     }
-                    outputAbi.forEach { tensor ->
-                        checkTensorType(
-                            compiled.getOutputTensorType(tensor.name, SIGNATURE_KEY),
-                            tensor,
+                    val options = CompiledModel.Options(Accelerator.CPU).apply {
+                        cpuOptions = CompiledModel.CpuOptions(
+                            numThreads = config.threads,
+                            xnnPackFlags = null,
+                            xnnPackWeightCachePath = null,
                         )
-                        outputBuffers[tensor.name] =
-                            compiled.createOutputBuffer(tensor.name, SIGNATURE_KEY)
                     }
+                    val compile = timed {
+                        CompiledModel.create(modelFile.absolutePath, options, createdEnvironment)
+                    }
+                    val compiled = compile.value
+                    model = compiled
+                    compileEvidence = compile.timing.evidence()
+                    val allocation = timed {
+                        INPUT_ABI.forEach { tensor ->
+                            checkTensorType(
+                                compiled.getInputTensorType(tensor.name, SIGNATURE_KEY),
+                                tensor,
+                            )
+                            inputBuffers[tensor.name] =
+                                compiled.createInputBuffer(tensor.name, SIGNATURE_KEY)
+                        }
+                        outputAbi.forEach { tensor ->
+                            checkTensorType(
+                                compiled.getOutputTensorType(tensor.name, SIGNATURE_KEY),
+                                tensor,
+                            )
+                            outputBuffers[tensor.name] =
+                                compiled.createOutputBuffer(tensor.name, SIGNATURE_KEY)
+                        }
+                    }
+                    allocationEvidence = allocation.timing.evidence()
                 }
                 val writerSetup = timed {
                     stemOrder.forEach { stem ->
@@ -740,10 +777,12 @@ internal class HtdemucsCanonicalE2eBenchmark(
                     )
                     .put("dspIstft", istftExecutionEvidence(config, stemCount))
                     .put("availableAccelerators", JSONArray(availableAccelerators))
-                    .put("compile", compile.timing.evidence())
-                    .put("bufferAllocation", allocation.timing.evidence())
+                    .put("compile", compileEvidence)
+                    .put("bufferAllocation", allocationEvidence)
                     .put("writerSetup", writerSetup.timing.evidence())
                     .put("process", processSnapshot())
+                    .put("thermalStatus", thermalStatus())
+                    .put("batteryTemperatureDeciC", batteryTemperatureDeciC())
             }
             prepareEvidence = sessionPrepare.value
                 .put("total", sessionPrepare.timing.evidence())
@@ -760,23 +799,40 @@ internal class HtdemucsCanonicalE2eBenchmark(
                             waveformWorkspace,
                         )
                         val spectrum = requireNotNull(dsp).waveformToSpectrum(waveform)
-                        inputBuffers.getValue(WAVEFORM_INPUT_NAME).writeFloat(waveform)
-                        inputBuffers.getValue(SPECTRUM_INPUT_NAME).writeFloat(spectrum)
+                        if (config.dspMode == DspMode.NATIVE_PACKED_LITERT_C) {
+                            requireNotNull(nativePipeline).writeInputs(waveform, spectrum)
+                        } else {
+                            inputBuffers.getValue(WAVEFORM_INPUT_NAME).writeFloat(waveform)
+                            inputBuffers.getValue(SPECTRUM_INPUT_NAME).writeFloat(spectrum)
+                        }
                     }
                     repeat(config.coreWarmupRuns) {
-                        requireNotNull(model).run(inputBuffers, outputBuffers, SIGNATURE_KEY)
+                        if (config.dspMode == DspMode.NATIVE_PACKED_LITERT_C) {
+                            requireNotNull(nativePipeline).run()
+                        } else {
+                            requireNotNull(model).run(inputBuffers, outputBuffers, SIGNATURE_KEY)
+                        }
                     }
                     val samples = JSONArray()
                     val before = processSnapshot()
                     repeat(config.coreMeasuredRuns) { sampleIndex ->
                         val sample = timed {
-                            requireNotNull(model).run(inputBuffers, outputBuffers, SIGNATURE_KEY)
+                            if (config.dspMode == DspMode.NATIVE_PACKED_LITERT_C) {
+                                requireNotNull(nativePipeline).run()
+                            } else {
+                                requireNotNull(model).run(
+                                    inputBuffers,
+                                    outputBuffers,
+                                    SIGNATURE_KEY,
+                                )
+                            }
                         }
                         samples.put(
                             JSONObject()
                                 .put("index", sampleIndex)
                                 .put("timing", sample.timing.evidence())
-                                .put("thermalStatus", thermalStatus()),
+                                .put("thermalStatus", thermalStatus())
+                                .put("batteryTemperatureDeciC", batteryTemperatureDeciC()),
                         )
                     }
                     coreBenchmarkEvidence = JSONObject()
@@ -821,31 +877,57 @@ internal class HtdemucsCanonicalE2eBenchmark(
                     stage.put("stft", stftStarted.elapsed().evidence())
 
                     val inputWrite = timed {
-                        inputBuffers.getValue(WAVEFORM_INPUT_NAME)
-                            .writeFloat(requireNotNull(waveformInput))
-                        inputBuffers.getValue(SPECTRUM_INPUT_NAME)
-                            .writeFloat(requireNotNull(spectrumInput))
+                        if (config.dspMode == DspMode.NATIVE_PACKED_LITERT_C) {
+                            requireNotNull(nativePipeline).writeInputs(
+                                requireNotNull(waveformInput),
+                                requireNotNull(spectrumInput),
+                            )
+                        } else {
+                            inputBuffers.getValue(WAVEFORM_INPUT_NAME)
+                                .writeFloat(requireNotNull(waveformInput))
+                            inputBuffers.getValue(SPECTRUM_INPUT_NAME)
+                                .writeFloat(requireNotNull(spectrumInput))
+                        }
                     }
                     stage.put("inputWrite", inputWrite.timing.evidence())
                     waveformInput = null
                     spectrumInput = null
 
                     val inference = timed {
-                        requireNotNull(model).run(inputBuffers, outputBuffers, SIGNATURE_KEY)
+                        if (config.dspMode == DspMode.NATIVE_PACKED_LITERT_C) {
+                            requireNotNull(nativePipeline).run()
+                        } else {
+                            requireNotNull(model).run(inputBuffers, outputBuffers, SIGNATURE_KEY)
+                        }
                     }
                     stage.put("inference", inference.timing.evidence())
 
                     var frequencyOutput: FloatArray? = null
-                    val frequencyReadStarted = StageStart()
-                    frequencyOutput = outputBuffers.getValue(FREQUENCY_OUTPUT_NAME).readFloat()
-                    require(requireNotNull(frequencyOutput).size == frequencyOutputElements)
-                    val frequencyRead = frequencyReadStarted.elapsed()
+                    val directNativeOutput =
+                        config.dspMode == DspMode.NATIVE_PACKED_LITERT_C
+                    val frequencyRead = if (directNativeOutput) {
+                        zeroTiming()
+                    } else {
+                        val frequencyReadStarted = StageStart()
+                        frequencyOutput = outputBuffers.getValue(FREQUENCY_OUTPUT_NAME).readFloat()
+                        require(requireNotNull(frequencyOutput).size == frequencyOutputElements)
+                        frequencyReadStarted.elapsed()
+                    }
 
-                    val inverse = timed {
-                        requireNotNull(dsp).frequencyToWaveform(
-                            requireNotNull(frequencyOutput),
-                            stemCount,
-                        )
+                    val inverse = if (directNativeOutput) {
+                        timed {
+                            requireNotNull(nativePipeline).postprocessOutputsInto(
+                                requireNotNull(combinedOutputWorkspace),
+                            )
+                            requireNotNull(combinedOutputWorkspace)
+                        }
+                    } else {
+                        timed {
+                            requireNotNull(dsp).frequencyToWaveform(
+                                requireNotNull(frequencyOutput),
+                                stemCount,
+                            )
+                        }
                     }
                     val combined = inverse.value
                     stage.put("iSTFT", inverse.timing.evidence())
@@ -880,22 +962,34 @@ internal class HtdemucsCanonicalE2eBenchmark(
                     frequencyOutput = null
 
                     var timeOutput: FloatArray? = null
-                    val timeReadStarted = StageStart()
-                    timeOutput = outputBuffers.getValue(TIME_OUTPUT_NAME).readFloat()
-                    require(requireNotNull(timeOutput).size == timeOutputElements)
-                    val timeRead = timeReadStarted.elapsed()
+                    val timeRead = if (directNativeOutput) {
+                        zeroTiming()
+                    } else {
+                        val timeReadStarted = StageStart()
+                        timeOutput = outputBuffers.getValue(TIME_OUTPUT_NAME).readFloat()
+                        require(requireNotNull(timeOutput).size == timeOutputElements)
+                        timeReadStarted.elapsed()
+                    }
                     stage.put(
                         "outputRead",
                         (frequencyRead + timeRead).evidence()
                             .put("frequency", frequencyRead.evidence())
-                            .put("time", timeRead.evidence()),
+                            .put("time", timeRead.evidence())
+                            .put(
+                                "mode",
+                                if (directNativeOutput) {
+                                    "native-locked-during-postprocess"
+                                } else {
+                                    "tensor-buffer-read-float"
+                                },
+                            ),
                     )
 
                     val finalized = if (config.postprocessMode != PostprocessMode.LEGACY) {
                         val fused = timed {
                             fusedPostprocessAndWrite(
                                 frequencyWaveform = combined,
-                                timeWaveform = requireNotNull(timeOutput),
+                                timeWaveform = timeOutput,
                                 plan = plan,
                                 trackFrames = selectedFrames,
                                 normalization = normalization,
@@ -916,8 +1010,9 @@ internal class HtdemucsCanonicalE2eBenchmark(
                         fused.value
                     } else {
                         val branchCombine = timed {
-                            val time = requireNotNull(timeOutput)
-                            combined.indices.forEach { index -> combined[index] += time[index] }
+                            timeOutput?.let { time ->
+                                combined.indices.forEach { index -> combined[index] += time[index] }
+                            }
                         }
                         stage.put("branchCombine", branchCombine.timing.evidence())
                         val ola = timed {
@@ -966,7 +1061,8 @@ internal class HtdemucsCanonicalE2eBenchmark(
                             .put("stages", stage)
                             .put("total", windowStarted.elapsed().evidence())
                             .put("process", processSnapshot())
-                            .put("thermalStatus", thermalStatus()),
+                            .put("thermalStatus", thermalStatus())
+                            .put("batteryTemperatureDeciC", batteryTemperatureDeciC()),
                     )
                     publishJson(
                         File(attemptRoot, "progress.json"),
@@ -1128,6 +1224,7 @@ internal class HtdemucsCanonicalE2eBenchmark(
             .put("failure", failure?.let(::failureEvidence) ?: JSONObject.NULL)
             .put("finalProcess", processSnapshot())
             .put("finalThermalStatus", thermalStatus())
+            .put("finalBatteryTemperatureDeciC", batteryTemperatureDeciC())
     }
 
     private fun compareFloatBits(
@@ -1293,7 +1390,7 @@ internal class HtdemucsCanonicalE2eBenchmark(
 
     private fun fusedPostprocessAndWrite(
         frequencyWaveform: FloatArray,
-        timeWaveform: FloatArray,
+        timeWaveform: FloatArray?,
         plan: WindowPlan,
         trackFrames: Int,
         normalization: Normalization,
@@ -1311,7 +1408,7 @@ internal class HtdemucsCanonicalE2eBenchmark(
     ): FinalizedChunk {
         val planeCount = stemCount * CHANNEL_COUNT
         require(frequencyWaveform.size == planeCount * WINDOW_SAMPLES)
-        require(timeWaveform.size == frequencyWaveform.size)
+        require(timeWaveform == null || timeWaveform.size == frequencyWaveform.size)
         require(writers.size == stemCount)
         require(mode != PostprocessMode.LEGACY)
         require(
@@ -1344,8 +1441,14 @@ internal class HtdemucsCanonicalE2eBenchmark(
             repeat(finalizedFrames) { frame ->
                 val weight = triangleWeight[frame]
                 var denominator = weight
-                var left = (frequencyWaveform[leftSource + frame] + timeWaveform[leftSource + frame]) * weight
-                var right = (frequencyWaveform[rightSource + frame] + timeWaveform[rightSource + frame]) * weight
+                var left = (
+                    frequencyWaveform[leftSource + frame] +
+                        (timeWaveform?.get(leftSource + frame) ?: 0f)
+                    ) * weight
+                var right = (
+                    frequencyWaveform[rightSource + frame] +
+                        (timeWaveform?.get(rightSource + frame) ?: 0f)
+                    ) * weight
                 if (frame < carryLength) {
                     left += carry[leftCarry + frame]
                     right += carry[rightCarry + frame]
@@ -1382,10 +1485,10 @@ internal class HtdemucsCanonicalE2eBenchmark(
                     val weight = triangleWeight[activeFrame]
                     carry[leftCarry + frame] =
                         (frequencyWaveform[leftSource + activeFrame] +
-                            timeWaveform[leftSource + activeFrame]) * weight
+                            (timeWaveform?.get(leftSource + activeFrame) ?: 0f)) * weight
                     carry[rightCarry + frame] =
                         (frequencyWaveform[rightSource + activeFrame] +
-                            timeWaveform[rightSource + activeFrame]) * weight
+                            (timeWaveform?.get(rightSource + activeFrame) ?: 0f)) * weight
                 }
                 carry.fill(0f, leftCarry + nextCarryLength, leftCarry + OVERLAP_SAMPLES)
                 carry.fill(0f, rightCarry + nextCarryLength, rightCarry + OVERLAP_SAMPLES)
@@ -1568,6 +1671,14 @@ internal class HtdemucsCanonicalE2eBenchmark(
         null
     }
 
+    private fun batteryTemperatureDeciC(): Int? {
+        val value = context.registerReceiver(
+            null,
+            IntentFilter(Intent.ACTION_BATTERY_CHANGED),
+        )?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
+        return value?.takeUnless { it == Int.MIN_VALUE }
+    }
+
     private fun summarizeWindowStages(windows: JSONArray): JSONObject {
         val values = linkedMapOf<String, MutableList<Double>>()
         repeat(windows.length()) { index ->
@@ -1657,6 +1768,8 @@ internal class HtdemucsCanonicalE2eBenchmark(
             when (config.dspMode) {
                 DspMode.KOTLIN_JTRANSFORMS -> "JTransforms-3.1-FloatFFT_1D-complexInverse"
                 DspMode.NATIVE_PACKED -> "native-pocketfft-r2c-c2r-packed-real"
+                DspMode.NATIVE_PACKED_LITERT_C ->
+                    "native-pocketfft-r2c-c2r-packed-real+litert-2.1.5-c-api"
             },
         )
         .put("jTransformsInternalThreadPolicy", "library-default-global")
@@ -1691,6 +1804,14 @@ internal class HtdemucsCanonicalE2eBenchmark(
             },
         )
         .put("tensorBufferReadIntoAvailable", false)
+        .put(
+            "modelOutputBoundary",
+            if (config.dspMode == DspMode.NATIVE_PACKED_LITERT_C) {
+                "native-managed-buffer-lock-no-java-output-array"
+            } else {
+                "tensor-buffer-read-float-array"
+            },
+        )
 
     private fun stemCountFor(modelVariant: String): Int =
         MODEL_IDENTITIES.getValue(modelVariant).stemOrder.size
@@ -1709,7 +1830,13 @@ internal class HtdemucsCanonicalE2eBenchmark(
             "durationSeconds and frameLimit are mutually exclusive."
         }
         require(config.threads in 1..16)
-        require(config.dspMode != DspMode.NATIVE_PACKED || config.istftWorkers <= 8)
+        require(
+            config.dspMode == DspMode.KOTLIN_JTRANSFORMS || config.istftWorkers <= 8,
+        )
+        require(
+            config.dspMode != DspMode.NATIVE_PACKED_LITERT_C ||
+                config.postprocessMode != PostprocessMode.LEGACY,
+        ) { "LiteRT C direct-output mode requires fused postprocess." }
         require(config.coreWarmupRuns in 0..100)
         require(config.coreMeasuredRuns in 0..100)
         require((config.coreWarmupRuns == 0) == (config.coreMeasuredRuns == 0)) {
@@ -1780,6 +1907,14 @@ internal class HtdemucsCanonicalE2eBenchmark(
         val start = StageStart()
         return TimedValue(block(), start.elapsed())
     }
+
+    private fun zeroTiming(): StageTiming = StageTiming(
+        wallMs = 0.0,
+        processCpuMs = 0L,
+        threadCpuMs = 0.0,
+        allocatedBytesDelta = 0L,
+        gcCountDelta = 0L,
+    )
 
     private class StageStart {
         private val wallNanos = SystemClock.elapsedRealtimeNanos()

@@ -24,31 +24,58 @@ and stay within `1e-3` maximum absolute error.
 
 ## Artifact
 
+The current package is contract v2. Contract v1 remains historical and should
+not be used for new BrowserStack runs.
+
 | Field | Value |
 | --- | --- |
 | Branch | `experiment/mdx-app-live-dsp-matrix` |
-| Source commit | `b11fa61763ae780ae0e65385df91cd824b6a37cd` |
+| Source commit | `4a26d2850f97f98fa6fc4338249dedd425a03bda` |
 | Source dirty | `false` |
 | Variant | `dspMatrixDebug` |
 | Package | `com.example.musicsourceseparation.dspmatrix` |
-| Bundle ID | `b8dfcf5287b0fb67eaddf59a69db2069dacbe03d49daed878b2e93f2cb55b9ef` |
-| APK bytes | 98,021,627 |
-| APK SHA-256 | `883d4f4c564ed756dcbe5f75241c23b493e9c47ee9737d6cc55604c674a8e370` |
-| Campaign | `app-live-mdx-dsp-matrix-v1` |
+| Contract | 2 |
+| Bundle ID | `eeccfead0c30e7022afdecace644e82bb8bbb2dda8a8e27988d4bb676ec7ebc0` |
+| APK bytes | 97,887,073 |
+| APK SHA-256 | `56d6499307ea9b42f7ad25f12fa0e859adf098121a5c50e99ec8ebcea4278a65` |
+| Campaign | `app-live-mdx-dsp-matrix-v2` |
 
 The private package, checksum, build metadata, and App Live procedure are under
 `C:\Users\User\Documents\BSSUploadRelay\app-live-apks\` with prefix
-`BSS-AppLive-MDX-DSP-Matrix-v1-b8dfcf52`.
+`BSS-AppLive-MDX-DSP-Matrix-v2-eeccfead`.
 
-Successful runs upload `artifact-manifest.json`, `identity.json`,
-`dsp-matrix-report.json`, process-filtered logcat, the application log, and the
-terminal `complete.json`. Identity includes exact APK/native-library hashes,
+Successful v2 runs upload eight files: `artifact-manifest.json`, `identity.json`,
+the full `dsp-matrix-report.json`, batch-ready JSON and CSV summaries,
+process-filtered logcat, the application log, and terminal `complete.json`.
+Identity includes exact APK/native-library hashes,
 source and bundle IDs, firmware, SoC, ABI, and memory. Reports include every
 raw sample, P50/P95, parity, PSS/native heap, ART allocation/GC, thermal, and
 battery evidence. A write-only temporary relay credential is packaged; the
 relay read credential is not present.
 
+The summary JSON contains nine fully flattened shape/profile rows, an explicit
+qualification count, native winner counts, and a uniform-winner field. The CSV
+contains the same rows under a frozen 74-column header. Each row repeats the
+run, device, fingerprint hash, artifact identity, timing, parity, speedup,
+memory, GC, and thermal data needed for direct concatenation. `complete.json`
+pins both summary files by byte count and SHA-256.
+
+`tools/summarize_app_live_dsp_matrix.py` discovers downloaded v2 summaries and
+writes combined JSON/CSV. It rejects wrong contracts, incomplete or failed
+runs, missing rows, sample-count changes, field drift, and conflicting
+duplicate identities.
+
 ## Final-artifact S10 control
+
+The v2 exact-artifact control is
+`local-sm-g9730-dsp-matrix-20260809T024326Z-eeccfead`. It uploaded eight files,
+reported 9/9 qualified rows, generated a 74-column CSV, and merged to one run
+and nine rows without reading the raw report. The APK SHA, summary JSON/CSV SHA,
+bundle, clean source commit, and terminal evidence all match. Logcat contains no
+fatal exception, ANR, OOM, or native abort.
+
+The table below is the earlier v1 S10 performance control; v2 does not change
+the DSP algorithm or measurement order.
 
 Run `local-sm-g9730-dsp-matrix-20260809T015731Z-b8dfcf52` completed in
 32.282 seconds on the Galaxy S10 / SM8150. Relay download verified all six file

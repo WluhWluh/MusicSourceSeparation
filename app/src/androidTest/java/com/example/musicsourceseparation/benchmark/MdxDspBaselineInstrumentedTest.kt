@@ -128,6 +128,7 @@ class MdxDspBaselineInstrumentedTest {
                             "opaqueToml",
                             if (backend == "gpu-bounded") {
                                 "backend = 1\nprecision = 2\n" +
+                                    "kernel_batch_size = 1\n" +
                                     "num_steps_of_command_buffer_preparations = 1\n"
                             } else {
                                 "num_threads = $threads\n"
@@ -241,7 +242,6 @@ class MdxDspBaselineInstrumentedTest {
                 runtimeAfter = runtimeStats()
             }
             nativeDsp?.close()
-            directPipeline?.close()
             report.put("setupMs", setupMs).put("warmupMs", warmupTimes)
                 .put("runs", sessions).put("memory", memoryEvidence())
                 .put("memorySamples", memorySamples)
@@ -258,8 +258,10 @@ class MdxDspBaselineInstrumentedTest {
                 )
             }
             boundedRuntime?.let { report.put("boundedGpuEvidence", it.evidence()) }
+            directPipeline?.close()
             compiled?.close()
             environment?.close()
+            report.put("memoryAfterClose", memoryEvidence())
         } catch (error: Throwable) {
             report.put("status", "error").put("errorClass", error::class.java.name).put("message", error.message.orEmpty())
                 .put("stack", error.stackTraceToString()).put("memory", memoryEvidence())

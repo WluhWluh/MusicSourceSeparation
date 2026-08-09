@@ -81,6 +81,7 @@ class MdxNativeFullSongInstrumentedTest {
                             "opaqueToml",
                             if (backend == "gpu-bounded") {
                                 "backend = 1\nprecision = 2\n" +
+                                    "kernel_batch_size = 1\n" +
                                     "num_steps_of_command_buffer_preparations = 1\n"
                             } else {
                                 "num_threads = 4\n"

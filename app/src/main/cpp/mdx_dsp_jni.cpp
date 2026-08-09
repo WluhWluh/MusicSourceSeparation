@@ -414,8 +414,10 @@ private:
                                "LiteRtSetOptionsHardwareAccelerators(CPU)");
 
         const std::string identifier = boundedGpu ? "gpu_options" : "xnnpack";
+        // bss.2 redirects the Kotlin command-buffer preparation field to its
+        // bounded OpenCL kernel batch. Preserve that exact public API profile.
         const std::string toml = boundedGpu
-            ? "backend = 1\nprecision = 2\nkernel_batch_size = 1\n"
+            ? "backend = 1\nprecision = 2\nnum_steps_of_command_buffer_preparations = 1\n"
             : "num_threads = " + std::to_string(cpuThreads) + "\n";
         addOpaqueToml(identifier.c_str(), toml);
 

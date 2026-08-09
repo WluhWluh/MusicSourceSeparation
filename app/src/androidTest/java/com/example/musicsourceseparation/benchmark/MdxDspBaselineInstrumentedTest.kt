@@ -118,6 +118,25 @@ class MdxDspBaselineInstrumentedTest {
                     "tensor-buffer-write-float-read-float"
                 },
             )
+            .put(
+                "nativeLiteRtOptions",
+                if (dspProfile == "native-packed-litert-c") {
+                    JSONObject()
+                        .put("api", "LiteRT-2.1.5-C")
+                        .put("opaqueIdentifier", if (backend == "gpu-bounded") "gpu_options" else "xnnpack")
+                        .put(
+                            "opaqueToml",
+                            if (backend == "gpu-bounded") {
+                                "backend = 1\nprecision = 2\n" +
+                                    "num_steps_of_command_buffer_preparations = 1\n"
+                            } else {
+                                "num_threads = $threads\n"
+                            },
+                        )
+                } else {
+                    JSONObject.NULL
+                },
+            )
             .put("iStftOlaCombined", true)
             .put("thermalStatusStart", powerManager.currentThermalStatus)
             .put("batteryTemperatureDeciCStart", batteryTemperatureDeciC(context))

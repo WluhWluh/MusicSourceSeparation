@@ -71,6 +71,25 @@ class MdxNativeFullSongInstrumentedTest {
                     "tensor-buffer-write-float-read-float"
                 },
             )
+            .put(
+                "nativeLiteRtOptions",
+                if (profile == "native-packed-litert-c") {
+                    JSONObject()
+                        .put("api", "LiteRT-2.1.5-C")
+                        .put("opaqueIdentifier", if (backend == "gpu-bounded") "gpu_options" else "xnnpack")
+                        .put(
+                            "opaqueToml",
+                            if (backend == "gpu-bounded") {
+                                "backend = 1\nprecision = 2\n" +
+                                    "num_steps_of_command_buffer_preparations = 1\n"
+                            } else {
+                                "num_threads = 4\n"
+                            },
+                        )
+                } else {
+                    JSONObject.NULL
+                },
+            )
             .put("device", JSONObject().put("model", Build.MODEL).put("soc", Build.SOC_MODEL))
         val powerManager = context.getSystemService(PowerManager::class.java)
         report.put("thermalStatusStart", powerManager.currentThermalStatus)

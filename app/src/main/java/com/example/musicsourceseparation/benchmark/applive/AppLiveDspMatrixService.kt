@@ -91,13 +91,22 @@ class AppLiveDspMatrixService : Service() {
             val manifestFile = File(runDirectory, "artifact-manifest.json").apply {
                 writeText(bundle.manifestText)
             }
+            val identity = identity(runId, origin, bundle)
             val identityFile = File(runDirectory, "identity.json").apply {
-                writeJsonAtomic(this, identity(runId, origin, bundle))
+                writeJsonAtomic(this, identity)
             }
             val report = runMatrix(runId, origin, bundle, logger)
             report.put("logcat", logcat.finish("dsp-matrix"))
             val reportFile = File(runDirectory, "dsp-matrix-report.json").apply {
                 writeJsonAtomic(this, report)
+            }
+            val summary = AppLiveDspMatrixSummary.create(identity, report)
+            require(summary.getBoolean("allRowsQualified")) { "DSP summary contains failed rows" }
+            val summaryJsonFile = File(runDirectory, "dsp-matrix-summary.json").apply {
+                writeJsonAtomic(this, summary)
+            }
+            val summaryCsvFile = File(runDirectory, "dsp-matrix-summary.csv").apply {
+                writeText(AppLiveDspMatrixSummary.toCsv(summary), Charsets.UTF_8)
             }
             logger.log("matrix complete; beginning deferred relay upload")
             val completeFile = File(runDirectory, "complete.json").apply {
@@ -109,12 +118,18 @@ class AppLiveDspMatrixService : Service() {
                         .put("profile", AppLiveValidationProfile.DSP_MATRIX.id)
                         .put("runId", runId)
                         .put("bundleId", bundle.bundleId)
+                        .put("summaryRows", summary.getInt("rowCount"))
+                        .put("uniformNativeWinner", summary.getString("uniformNativeWinner"))
+                        .put("summaryJson", fileEvidence(summaryJsonFile))
+                        .put("summaryCsv", fileEvidence(summaryCsvFile))
                         .put("completedAt", isoNow()),
                 )
             }
             val uploads = listOf(
                 manifestFile to "application/json",
                 identityFile to "application/json",
+                summaryJsonFile to "application/json",
+                summaryCsvFile to "text/csv",
                 reportFile to "application/json",
                 logcat.file to "text/plain",
                 logger.file to "text/plain",
@@ -158,6 +173,9 @@ class AppLiveDspMatrixService : Service() {
                     listOfNotNull(
                         File(directory, "artifact-manifest.json").takeIf(File::isFile),
                         File(directory, "identity.json").takeIf(File::isFile),
+                        File(directory, "dsp-matrix-summary.json").takeIf(File::isFile),
+                        File(directory, "dsp-matrix-summary.csv").takeIf(File::isFile),
+                        File(directory, "dsp-matrix-report.json").takeIf(File::isFile),
                         logger?.file?.takeIf(File::isFile),
                         logcat?.file?.takeIf(File::isFile),
                         failureFile,

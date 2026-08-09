@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 SCHEMA_VERSION = 1
-CONTRACT_VERSION = 1
+CONTRACT_VERSION = 2
 SHAPES = (
     {"id": "uvr_mdxnet_3_9662", "nFft": 6144, "hopLength": 1024, "dimF": 2048, "dimTPower": 8},
     {"id": "kim_inst", "nFft": 7680, "hopLength": 1024, "dimF": 3072, "dimTPower": 8},
@@ -55,7 +55,7 @@ def parse_args(repository: Path) -> argparse.Namespace:
         type=Path,
         default=repository.parent / "BSSUploadRelay/relay-client.env",
     )
-    parser.add_argument("--campaign", default="app-live-mdx-dsp-matrix-v1")
+    parser.add_argument("--campaign", default="app-live-mdx-dsp-matrix-v2")
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -124,6 +124,8 @@ def main() -> int:
             "files": [
                 "artifact-manifest.json",
                 "identity.json",
+                "dsp-matrix-summary.json",
+                "dsp-matrix-summary.csv",
                 "dsp-matrix-report.json",
                 "dsp-matrix-logcat.txt",
                 "app.log",

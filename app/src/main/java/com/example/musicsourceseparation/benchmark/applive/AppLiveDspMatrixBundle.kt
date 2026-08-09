@@ -48,7 +48,7 @@ internal data class AppLiveDspMatrixBundle(
             val bundleId = manifest.getString("bundleId").lowercase()
             require(bundleId.matches(sha256)) { "Invalid DSP matrix bundle ID" }
             val contractVersion = manifest.getInt("contractVersion")
-            require(contractVersion == 1) { "Unsupported DSP matrix contract: $contractVersion" }
+            require(contractVersion == 2) { "Unsupported DSP matrix contract: $contractVersion" }
             val source = manifest.getJSONObject("source")
             val matrix = manifest.getJSONObject("matrix")
             val profiles = matrix.getJSONArray("profiles")

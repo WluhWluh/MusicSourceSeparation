@@ -84,7 +84,8 @@ android {
         create("dspMatrix") {
             dimension = "runtime"
             applicationIdSuffix = ".dspmatrix"
-            versionNameSuffix = "-dsp-matrix"
+            versionCode = 2
+            versionNameSuffix = "-dsp-matrix-v2"
             ndk {
                 abiFilters += "arm64-v8a"
             }

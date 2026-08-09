@@ -32,6 +32,11 @@
             android:name=".benchmark.applive.AppLiveValidationService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <service
+            android:name=".benchmark.applive.AppLiveDspMatrixService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 
 </manifest>

@@ -157,6 +157,9 @@ class AppLiveValidationService : Service() {
                     uploadedFiles,
                     activeLogger,
                 )
+                AppLiveValidationProfile.DSP_MATRIX -> error(
+                    "DSP matrix must run in AppLiveDspMatrixService",
+                )
             }
 
             activeLogger.log("validation stages complete")
@@ -895,6 +898,9 @@ class AppLiveValidationService : Service() {
                 "fullAudio",
                 "runtimeManifest",
             )
+            AppLiveValidationProfile.DSP_MATRIX -> error(
+                "DSP matrix does not use QNN validation fixtures",
+            )
         }
         return fixtureIds.associateWith { id ->
             val fixture = bundle.requireFixture(id)
@@ -1241,6 +1247,7 @@ class AppLiveValidationService : Service() {
             val action = when (profile) {
                 AppLiveValidationProfile.QUICK -> ACTION_QUICK
                 AppLiveValidationProfile.FULL -> ACTION_FULL
+                AppLiveValidationProfile.DSP_MATRIX -> error("DSP matrix uses AppLiveDspMatrixService")
             }
             context.startForegroundService(Intent(action, null, context, AppLiveValidationService::class.java))
         }

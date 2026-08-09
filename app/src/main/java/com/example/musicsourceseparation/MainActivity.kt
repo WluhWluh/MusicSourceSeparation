@@ -10,6 +10,7 @@ import android.os.Handler
 import android.os.Looper
 import android.text.InputType
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.AdapterView
@@ -24,6 +25,8 @@ import android.widget.TextView
 import com.example.musicsourceseparation.audio.AudioMetadata
 import com.example.musicsourceseparation.audio.AudioMetadataReader
 import com.example.musicsourceseparation.audio.AudioPassthroughExporter
+import com.example.musicsourceseparation.benchmark.applive.AppLiveDspMatrixBundle
+import com.example.musicsourceseparation.benchmark.applive.AppLiveDspMatrixService
 import com.example.musicsourceseparation.benchmark.applive.AppLiveRunOrigin
 import com.example.musicsourceseparation.benchmark.applive.AppLiveValidationBundle
 import com.example.musicsourceseparation.benchmark.applive.AppLiveValidationProfile
@@ -41,6 +44,7 @@ class MainActivity : Activity() {
     private lateinit var appLiveOriginSpinner: Spinner
     private lateinit var appLiveQuickButton: Button
     private lateinit var appLiveFullButton: Button
+    private lateinit var appLiveDspMatrixButton: Button
     private lateinit var selectedFileText: TextView
     private lateinit var statusText: TextView
     private lateinit var exportButton: Button
@@ -70,12 +74,18 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         updateBenchmarkScreenPolicy(intent)
+        intent.getStringExtra(EXTRA_APP_LIVE_ORIGIN)?.let { origin ->
+            AppLiveValidationState.setOrigin(this, AppLiveRunOrigin.from(origin))
+        }
         val snapshot = AppLiveValidationState.snapshot(this)
-        if (snapshot.running && !AppLiveValidationService.isRunning()) {
+        if (snapshot.running && !AppLiveValidationService.isRunning() &&
+            !AppLiveDspMatrixService.isRunning()
+        ) {
             AppLiveValidationState.markInterrupted(this)
         }
         setContentView(createContentView())
         refreshAppLiveControls()
+        maybeAutoStartDspMatrix()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -276,6 +286,11 @@ class MainActivity : Activity() {
             text = getString(R.string.app_live_full_validation)
             setOnClickListener { confirmFullValidation() }
         }
+        appLiveDspMatrixButton = Button(this).apply {
+            text = getString(R.string.app_live_dsp_matrix)
+            visibility = View.GONE
+            setOnClickListener { startDspMatrix() }
+        }
         val buttonRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             addView(appLiveQuickButton, LinearLayout.LayoutParams(
@@ -297,6 +312,7 @@ class MainActivity : Activity() {
         root.addView(originLabel, spacedLayoutParams(top = 10, density = resources.displayMetrics.density))
         root.addView(appLiveOriginSpinner)
         root.addView(buttonRow, spacedLayoutParams(top = 8, density = resources.displayMetrics.density))
+        root.addView(appLiveDspMatrixButton, spacedLayoutParams(top = 8, density = resources.displayMetrics.density))
         root.addView(appLiveStatusText, spacedLayoutParams(top = 8, density = resources.displayMetrics.density))
         return root
     }
@@ -345,8 +361,10 @@ class MainActivity : Activity() {
     private fun refreshAppLiveControls() {
         if (!::appLiveBundleText.isInitialized) return
         val bundleResult = AppLiveValidationBundle.loadCatching(this)
+        val dspBundleResult = AppLiveDspMatrixBundle.loadCatching(this)
         val snapshot = AppLiveValidationState.snapshot(this)
-        val running = snapshot.running || AppLiveValidationService.isRunning()
+        val running = snapshot.running || AppLiveValidationService.isRunning() ||
+            AppLiveDspMatrixService.isRunning()
         bundleResult.onSuccess { bundle ->
             appLiveBundleText.text = getString(
                 R.string.app_live_bundle_ready,
@@ -361,10 +379,17 @@ class MainActivity : Activity() {
                 },
             )
         }.onFailure { error ->
-            appLiveBundleText.text = error.message ?: getString(R.string.app_live_bundle_missing)
+            dspBundleResult.onSuccess { bundle ->
+                appLiveBundleText.text = "DSP bundle ${bundle.bundleId.take(12)} / " +
+                    "contract v${bundle.contractVersion} - ${bundle.relay.campaign}"
+            }.onFailure {
+                appLiveBundleText.text = error.message ?: getString(R.string.app_live_bundle_missing)
+            }
         }
         appLiveQuickButton.isEnabled = bundleResult.isSuccess && !running
         appLiveFullButton.isEnabled = bundleResult.isSuccess && !running
+        appLiveDspMatrixButton.visibility = if (dspBundleResult.isSuccess) View.VISIBLE else View.GONE
+        appLiveDspMatrixButton.isEnabled = dspBundleResult.isSuccess && !running
         appLiveOriginSpinner.isEnabled = !running
         appLiveStatusText.text = buildString {
             append(snapshot.state.uppercase())
@@ -375,6 +400,48 @@ class MainActivity : Activity() {
                 append(snapshot.runId)
             }
         }
+    }
+
+    private fun maybeAutoStartDspMatrix() {
+        val bundle = AppLiveDspMatrixBundle.loadCatching(this).getOrNull() ?: return
+        if (!bundle.autoStart) return
+        val preferences = getSharedPreferences(DSP_MATRIX_PREFS, MODE_PRIVATE)
+        val key = "auto_started_${bundle.bundleId}"
+        if (preferences.getBoolean(key, false)) return
+        preferences.edit().putBoolean(key, true).apply()
+        startDspMatrix()
+    }
+
+    private fun startDspMatrix() {
+        val bundle = AppLiveDspMatrixBundle.loadCatching(this)
+        if (bundle.isFailure) {
+            appLiveStatusText.text = bundle.exceptionOrNull()?.message ?: getString(R.string.app_live_bundle_missing)
+            return
+        }
+        val snapshot = AppLiveValidationState.snapshot(this)
+        if (snapshot.running || AppLiveValidationService.isRunning() ||
+            AppLiveDspMatrixService.isRunning()
+        ) return
+        AppLiveValidationState.update(
+            this,
+            state = "starting",
+            running = true,
+            profile = AppLiveValidationProfile.DSP_MATRIX,
+            runId = "",
+            message = "Starting DSP matrix",
+        )
+        runCatching { AppLiveDspMatrixService.start(this) }
+            .onFailure { error ->
+                AppLiveValidationState.update(
+                    this,
+                    state = "error",
+                    running = false,
+                    profile = AppLiveValidationProfile.DSP_MATRIX,
+                    runId = "",
+                    message = error.message ?: error::class.java.simpleName,
+                )
+            }
+        refreshAppLiveControls()
     }
 
     private fun createRangeInputs(): LinearLayout {
@@ -648,7 +715,9 @@ class MainActivity : Activity() {
 
     private companion object {
         const val EXTRA_BENCHMARK_KEEP_SCREEN_ON = "benchmarkKeepScreenOn"
+        const val EXTRA_APP_LIVE_ORIGIN = "app_live_origin"
         const val REQUEST_AUDIO = 1001
         const val APP_LIVE_REFRESH_MS = 500L
+        const val DSP_MATRIX_PREFS = "app_live_dsp_matrix"
     }
 }

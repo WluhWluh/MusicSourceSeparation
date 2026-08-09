@@ -15,6 +15,7 @@ internal enum class AppLiveRunOrigin(val id: String, val displayName: String) {
 internal enum class AppLiveValidationProfile(val id: String, val displayName: String) {
     QUICK("quick", "Quick gate"),
     FULL("full", "Full validation"),
+    DSP_MATRIX("dsp-matrix", "DSP matrix"),
 }
 
 internal data class AppLiveValidationSnapshot(

@@ -4,6 +4,7 @@
     <string name="app_live_run_origin">Run origin</string>
     <string name="app_live_quick_gate">Quick gate</string>
     <string name="app_live_full_validation">Full validation</string>
+    <string name="app_live_dsp_matrix">Run DSP matrix</string>
     <string name="app_live_full_validation_confirmation">Run the complete Coast Town QNN validation and upload both output stems?</string>
     <string name="app_live_run">Run</string>
     <string name="app_live_bundle_missing">App Live bundle not packaged</string>

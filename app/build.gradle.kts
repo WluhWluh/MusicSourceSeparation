@@ -81,6 +81,14 @@ android {
         create("standard") {
             dimension = "runtime"
         }
+        create("dspMatrix") {
+            dimension = "runtime"
+            applicationIdSuffix = ".dspmatrix"
+            versionNameSuffix = "-dsp-matrix"
+            ndk {
+                abiFilters += "arm64-v8a"
+            }
+        }
         qnnHtpVersions.forEach { htpVersion ->
             create("qnnV$htpVersion") {
                 dimension = "runtime"

@@ -100,9 +100,10 @@ native iSTFT SNR spans 136.82-137.62 dB. All maximum errors remain below
 32.0 C. Process PSS moved from 120,273 to 156,851 KiB after all three shapes;
 this is an end snapshot after released plans, not a peak-memory claim.
 
-## S25 status
+## Campaign result
 
-The exact final APK is ready for S25 installation. The previously used S25
-address `192.168.8.197:5555` is present on the LAN but currently refuses ADB,
-and no wireless-debugging mDNS service is advertised. S25 collection remains
-pending until wireless debugging is enabled on that device.
+The final contract-v2 artifact completed an 81-run campaign spanning 77 unique
+firmware fingerprints, 72 device models, nine manufacturers, and 37 reported
+SoCs. The complete analysis and final uniform native-packed product decision
+are recorded in
+[`mdx-app-live-dsp-matrix-v2-batch-results-2026-08-08.md`](mdx-app-live-dsp-matrix-v2-batch-results-2026-08-08.md).

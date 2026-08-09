@@ -426,6 +426,7 @@ class AppLiveDspMatrixService : Service() {
                 .put("androidRelease", Build.VERSION.RELEASE)
                 .put("sdk", Build.VERSION.SDK_INT)
                 .put("abis", JSONArray(Build.SUPPORTED_ABIS.toList()))
+                .put("processAbi", processAbi())
                 .put("is64Bit", Process.is64Bit())
                 .put("totalMemoryBytes", memory.totalMem)
                 .put("lowRamDevice", getSystemService(ActivityManager::class.java).isLowRamDevice))
@@ -451,6 +452,11 @@ class AppLiveDspMatrixService : Service() {
             .put("totalPssKb", memory.totalPss)
             .put("totalPrivateDirtyKb", memory.totalPrivateDirty)
             .put("nativeHeapAllocatedBytes", Debug.getNativeHeapAllocatedSize())
+    }
+
+    private fun processAbi(): String {
+        val candidates = if (Process.is64Bit()) Build.SUPPORTED_64_BIT_ABIS else Build.SUPPORTED_32_BIT_ABIS
+        return candidates.firstOrNull().orEmpty()
     }
 
     private fun deviceEvidence(): JSONObject {

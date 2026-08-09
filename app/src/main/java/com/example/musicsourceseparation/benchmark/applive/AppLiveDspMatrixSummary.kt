@@ -58,7 +58,10 @@ internal object AppLiveDspMatrixSummary {
             "soc_model" to device.getString("socModel"),
             "android_release" to device.getString("androidRelease"),
             "sdk" to device.getInt("sdk"),
-            "abi" to if (abis.length() > 0) abis.getString(0) else "",
+            "abi" to device.optString(
+                "processAbi",
+                if (abis.length() > 0) abis.getString(0) else "",
+            ),
             "total_memory_bytes" to device.getLong("totalMemoryBytes"),
             "fingerprint_sha256" to sha256(device.getString("fingerprint")),
             "apk_sha256" to apkSha,

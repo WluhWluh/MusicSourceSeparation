@@ -127,11 +127,13 @@ class MdxDoubleBufferInstrumentedTest {
                     numStepsOfCommandBufferPreparations = 1,
                 )
             }
+            val setupStarted = now()
             model = CompiledModel.create(modelFile.absolutePath, options, environment!!)
             repeat(2) {
                 inputs += model!!.createInputBuffer(inputName)
                 outputs += model!!.createOutputBuffer(outputName)
             }
+            report.put("setupMs", elapsed(setupStarted))
             val waveform = fixture(config)
             repeat(warmups) { index ->
                 val slot = index and 1
@@ -140,9 +142,12 @@ class MdxDoubleBufferInstrumentedTest {
                 dsps[slot].nhwcTensorToWaveformInto(outputs[slot].readFloat(), separated[slot])
             }
             boundedRuntime?.resetInferenceCounters()
+            val countersBefore = runtimeCounters()
             report.put("dspProfile", "native-packed-w4")
             report.put("sequential", sequential(runs, model!!, dsps, waveform, inputTensors, separated, inputs, outputs, boundedRuntime))
             report.put("doubleBuffered", doubleBuffered(runs, model!!, dsps, waveform, inputTensors, separated, inputs, outputs, executor, boundedRuntime))
+            report.put("artRuntimeDelta", counterDelta(countersBefore, runtimeCounters()))
+                .put("memory", memoryEvidence())
             report.put("availableAccelerators", JSONArray(environment!!.getAvailableAccelerators().map { it.name }.sorted()))
             boundedRuntime?.let { report.put("boundedGpuEvidence", it.evidence()) }
             val qnnIr = File(resultDir, "qnn-ir").takeIf { it.isDirectory }?.walkTopDown()

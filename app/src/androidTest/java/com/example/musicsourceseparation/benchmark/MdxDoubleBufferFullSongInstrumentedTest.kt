@@ -12,6 +12,7 @@ import com.example.musicsourceseparation.audio.AudioPcmDecoder
 import com.example.musicsourceseparation.audio.DecodedPcmAudio
 import com.example.musicsourceseparation.audio.WavFileWriter
 import com.example.musicsourceseparation.model.MdxDspConfig
+import com.example.musicsourceseparation.model.NativeLiteRtMdxPipeline
 import com.example.musicsourceseparation.model.NativeMdxDsp
 import com.google.ai.edge.litert.Accelerator
 import com.google.ai.edge.litert.BuiltinNpuAcceleratorProvider
@@ -43,6 +44,9 @@ class MdxDoubleBufferFullSongInstrumentedTest {
         val audioFile = File(root, "audio-input/${requireNotNull(args.getString("audioFile"))}")
         val backend = args.getString("backend", "gpu-bounded")!!
         require(backend == "gpu-bounded" || backend == "qnn")
+        val tensorBoundary = args.getString("tensorBoundary", "java-tensor")!!
+        require(tensorBoundary == "java-tensor" || tensorBoundary == "native-managed")
+        if (tensorBoundary == "native-managed") require(backend == "gpu-bounded")
         val contract = JSONObject(contractFile.readText())
         require(sha256(modelFile) == contract.getJSONObject("artifact").getString("sha256"))
         val dspJson = contract.getJSONObject("dsp")
@@ -51,16 +55,33 @@ class MdxDoubleBufferFullSongInstrumentedTest {
             hopLength = dspJson.getInt("hopLength"), dimF = dspJson.getInt("dimF"),
             dimTPower = dspJson.getInt("dimTPower"),
         )
-        val outputDir = File(root, "mdx-double-buffer-full-song/$modelId/$backend").apply {
+        val resultLeaf = if (tensorBoundary == "native-managed") "$backend/$tensorBoundary" else backend
+        val outputDir = File(root, "mdx-double-buffer-full-song/$modelId/$resultLeaf").apply {
             deleteRecursively(); mkdirs()
         }
         val report = JSONObject().put("status", "running").put("modelId", modelId)
             .put("modelSha256", sha256(modelFile)).put("contractSha256", sha256(contractFile))
             .put("sourceSha256", sha256(audioFile)).put("backend", backend)
+            .put("tensorBoundary", tensorBoundary)
             .put("dspProfile", "native-packed-w4").put("doubleBufferSlots", 2)
             .put("device", JSONObject().put("model", Build.MODEL).put("soc", Build.SOC_MODEL))
         val thermal = context.getSystemService(android.os.PowerManager::class.java)
         report.put("thermalStatusStart", thermal.currentThermalStatus)
+        if (tensorBoundary == "native-managed") {
+            try {
+                runNativeManagedFullSong(
+                    context, report, outputDir, modelFile, audioFile, dspJson, config,
+                )
+            } catch (error: Throwable) {
+                report.put("status", "error").put("errorClass", error.javaClass.name)
+                    .put("message", error.message ?: JSONObject.NULL)
+                    .put("stack", error.stackTraceToString())
+            }
+            report.put("thermalStatusEnd", thermal.currentThermalStatus)
+            File(outputDir, "report.json").writeText(report.toString(2))
+            check(report.getString("status") == "complete") { report.toString() }
+            return
+        }
         var environment: Environment? = null
         var model: CompiledModel? = null
         val inputs = mutableListOf<TensorBuffer>()
@@ -167,9 +188,140 @@ class MdxDoubleBufferFullSongInstrumentedTest {
         check(report.getString("status") == "complete") { report.toString() }
     }
 
+    private fun runNativeManagedFullSong(
+        context: Context,
+        report: JSONObject,
+        outputDir: File,
+        modelFile: File,
+        audioFile: File,
+        dspJson: JSONObject,
+        config: MdxDspConfig,
+    ) {
+        val decodeStarted = now()
+        val decoded = AudioPcmDecoder(context).decode(Uri.fromFile(audioFile))
+        require(decoded.sampleRate == config.sampleRate && decoded.channelCount == 2)
+        val decodeMs = elapsed(decodeStarted)
+        val setupStarted = now()
+        val pipeline = NativeLiteRtMdxPipeline(
+            config = config,
+            modelPath = modelFile.absolutePath,
+            workerCount = 4,
+            backend = NativeLiteRtMdxPipeline.Backend.BOUNDED_GPU,
+            slotCount = 2,
+        )
+        val setupMs = elapsed(setupStarted)
+        val executor = Executors.newSingleThreadExecutor()
+        val bounded = BoundedGpuRuntime.loadAndValidate()
+        val slots = Array(2) { NativeSlot(config) }
+        val modelOutput = File(outputDir, "model-output.wav")
+        val residualOutput = File(outputDir, "residual.wav")
+        try {
+            WavFileWriter(modelOutput, config.sampleRate, 2).use { modelWriter ->
+                WavFileWriter(residualOutput, config.sampleRate, 2).use { residualWriter ->
+                    val windowCount = ceil(decoded.frameCount.toDouble() / config.generationSize).toInt()
+                    val stage = linkedMapOf<String, Long>()
+                    fun <T> timed(name: String, action: () -> T): T {
+                        val start = now()
+                        return try { action() } finally {
+                            stage[name] = (stage[name] ?: 0L) + (now() - start)
+                        }
+                    }
+                    fun prepare(slot: Int, index: Int) {
+                        val start = index * config.generationSize
+                        slots[slot].writeFrames = minOf(
+                            config.generationSize, decoded.frameCount - start,
+                        )
+                        slots[slot].mix = decoded.toStereoFloatContextWindow(
+                            start - config.trim, config.chunkSize,
+                        )
+                        pipeline.preprocessInput(slots[slot].mix, slot)
+                    }
+                    fun submit(slot: Int): Future<*> = executor.submit {
+                        bounded.beginInference()
+                        try { pipeline.run(slot) } finally { bounded.endInference() }
+                    }
+                    bounded.resetInferenceCounters()
+                    val countersBefore = runtimeCounters()
+                    val processStarted = now()
+                    timed("initialPrepare") { prepare(0, 0) }
+                    var previous = submit(0)
+                    for (index in 0 until windowCount) {
+                        val completed = index and 1
+                        val next = (index + 1) and 1
+                        var current: Future<*>? = null
+                        if (index + 1 < windowCount) {
+                            timed("nextPrepare") { prepare(next, index + 1) }
+                            current = submit(next)
+                        }
+                        timed("inferenceWait") { previous.get() }
+                        timed("iStft") {
+                            pipeline.postprocessOutputInto(slots[completed].separated, completed)
+                        }
+                        check(slots[completed].separated.all { channel ->
+                            channel.take(256).all { it.isFinite() }
+                        })
+                        timed("residual") {
+                            val scale = dspJson.getDouble("modelOutputScale").toFloat()
+                            for (channel in 0..1) for (sample in 0 until config.chunkSize) {
+                                slots[completed].separated[channel][sample] *= scale
+                                slots[completed].residual[channel][sample] =
+                                    slots[completed].mix[channel][sample] -
+                                        slots[completed].separated[channel][sample]
+                            }
+                        }
+                        timed("pcmWrite") {
+                            fillPcm16(
+                                slots[completed].separated, config.trim,
+                                slots[completed].writeFrames, slots[completed].pcm,
+                            )
+                            modelWriter.writePcm16(
+                                slots[completed].pcm, 0, slots[completed].writeFrames * 4,
+                            )
+                            fillPcm16(
+                                slots[completed].residual, config.trim,
+                                slots[completed].writeFrames, slots[completed].pcm,
+                            )
+                            residualWriter.writePcm16(
+                                slots[completed].pcm, 0, slots[completed].writeFrames * 4,
+                            )
+                        }
+                        if (current != null) previous = current
+                    }
+                    val processingMs = elapsed(processStarted)
+                    report.put("status", "complete")
+                        .put("dspProfile", "native-packed-litert-c-w4")
+                        .put("decodeMs", decodeMs).put("setupMs", setupMs)
+                        .put("processingMs", processingMs)
+                        .put("audioSeconds", decoded.frameCount.toDouble() / config.sampleRate)
+                        .put("windowCount", windowCount)
+                        .put("realtimeFactor", processingMs / 1000.0 /
+                            (decoded.frameCount.toDouble() / config.sampleRate))
+                        .put("stagesMs", JSONObject(stage.mapValues { it.value / 1e6 }))
+                        .put("artRuntimeDelta", counterDelta(countersBefore, runtimeCounters()))
+                        .put("memory", memoryEvidence())
+                        .put("boundedGpuEvidence", bounded.evidence())
+                        .put("backendQualification", "qualified")
+                }
+            }
+            report.put("modelOutput", fileEvidence(modelOutput))
+                .put("residualOutput", fileEvidence(residualOutput))
+        } finally {
+            executor.shutdownNow()
+            pipeline.close()
+        }
+    }
+
     private class Slot(config: MdxDspConfig) {
         var mix = Array(2) { FloatArray(config.chunkSize) }
         val tensor = FloatArray(config.tensorElementCount)
+        val separated = Array(2) { FloatArray(config.chunkSize) }
+        val residual = Array(2) { FloatArray(config.chunkSize) }
+        val pcm = ByteArray(config.generationSize * 4)
+        var writeFrames = 0
+    }
+
+    private class NativeSlot(config: MdxDspConfig) {
+        var mix = Array(2) { FloatArray(config.chunkSize) }
         val separated = Array(2) { FloatArray(config.chunkSize) }
         val residual = Array(2) { FloatArray(config.chunkSize) }
         val pcm = ByteArray(config.generationSize * 4)
@@ -184,6 +336,14 @@ class MdxDoubleBufferFullSongInstrumentedTest {
     private fun fillPcm16(waveform: Array<FloatArray>, start: Int, frames: Int, output: ByteArray) { var offset = 0; for (sample in start until start + frames) for (channel in 0..1) { val value = (waveform[channel][sample].coerceIn(-1f, 1f) * 32767f).roundToInt().coerceIn(-32768, 32767); output[offset++] = value.toByte(); output[offset++] = (value ushr 8).toByte() } }
     private fun fileEvidence(file: File): JSONObject = JSONObject().put("path", file.absolutePath).put("bytes", file.length()).put("sha256", sha256(file))
     private fun memoryEvidence(): JSONObject = Debug.MemoryInfo().also(Debug::getMemoryInfo).let { JSONObject().put("pssKb", it.totalPss).put("nativeHeapBytes", Debug.getNativeHeapAllocatedSize()) }
+    private fun runtimeCounters(): Map<String, Long> = RUNTIME_COUNTERS.mapNotNull { key ->
+        runCatching { Debug.getRuntimeStat(key) }.getOrNull()?.toLongOrNull()?.let { key to it }
+    }.toMap()
+    private fun counterDelta(before: Map<String, Long>, after: Map<String, Long>): JSONObject =
+        JSONObject(RUNTIME_COUNTERS.associateWith { key ->
+            if (before[key] != null && after[key] != null) after.getValue(key) - before.getValue(key)
+            else JSONObject.NULL
+        })
     private fun now() = SystemClock.elapsedRealtimeNanos()
     private fun elapsed(start: Long) = (now() - start) / 1e6
     private fun sha256(file: File): String = MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString("") { "%02x".format(it) }
@@ -202,5 +362,11 @@ class MdxDoubleBufferFullSongInstrumentedTest {
                 return BoundedGpuRuntime(clazz, cap)
             }
         }
+    }
+    companion object {
+        private val RUNTIME_COUNTERS = listOf(
+            "art.gc.gc-count", "art.gc.bytes-allocated", "art.gc.bytes-freed",
+            "art.gc.blocking-gc-count",
+        )
     }
 }

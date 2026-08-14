@@ -2,12 +2,14 @@ package com.example.musicsourceseparation.benchmark
 
 import android.content.Context
 import android.os.Build
+import android.os.Debug
 import android.os.SystemClock
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.example.musicsourceseparation.BuildConfig
 import com.example.musicsourceseparation.model.MdxDspConfig
+import com.example.musicsourceseparation.model.NativeLiteRtMdxPipeline
 import com.example.musicsourceseparation.model.NativeMdxDsp
 import com.google.ai.edge.litert.Accelerator
 import com.google.ai.edge.litert.BuiltinNpuAcceleratorProvider
@@ -36,6 +38,9 @@ class MdxDoubleBufferInstrumentedTest {
         val contractName = requireNotNull(args.getString("contractFile"))
         val backend = args.getString("backend", "gpu-bounded")!!
         require(backend == "gpu-bounded" || backend == "qnn")
+        val tensorBoundary = args.getString("tensorBoundary", "java-tensor")!!
+        require(tensorBoundary == "java-tensor" || tensorBoundary == "native-managed")
+        if (tensorBoundary == "native-managed") require(backend == "gpu-bounded")
         val runs = args.getString("runs", "5")!!.toInt().coerceIn(2, 20)
         val warmups = args.getString("warmups", "1")!!.toInt().coerceIn(0, 5)
         val runId = args.getString("runId") ?: "run-${System.currentTimeMillis()}"
@@ -69,7 +74,8 @@ class MdxDoubleBufferInstrumentedTest {
             .put("runtimeId", BuildConfig.BENCHMARK_RUNTIME_ID)
             .put("sourceRevision", BuildConfig.BENCHMARK_SOURCE_REVISION)
             .put("sourceDirty", BuildConfig.BENCHMARK_SOURCE_DIRTY)
-            .put("backend", backend).put("runs", runs).put("warmups", warmups)
+            .put("backend", backend).put("tensorBoundary", tensorBoundary)
+            .put("runs", runs).put("warmups", warmups)
             .put("device", JSONObject().put("manufacturer", Build.MANUFACTURER)
                 .put("model", Build.MODEL).put("socManufacturer", Build.SOC_MANUFACTURER)
                 .put("socModel", Build.SOC_MODEL).put("sdk", Build.VERSION.SDK_INT)
@@ -77,6 +83,18 @@ class MdxDoubleBufferInstrumentedTest {
             .put("doubleBuffer", JSONObject().put("slots", 2)
                 .put("modelInstances", 1)
                 .put("overlap", "STFT+input write window n+1 with invoke window n"))
+        if (tensorBoundary == "native-managed") {
+            try {
+                runNativeManaged(report, modelFile, config, runs, warmups)
+            } catch (error: Throwable) {
+                report.put("status", "error").put("errorClass", error.javaClass.name)
+                    .put("message", error.message ?: JSONObject.NULL)
+                    .put("stack", error.stackTraceToString())
+            }
+            File(resultDir, "report.json").writeText(report.toString(2))
+            check(report.getString("status") == "complete") { report.toString() }
+            return
+        }
         var environment: Environment? = null
         var model: CompiledModel? = null
         val inputs = mutableListOf<TensorBuffer>()
@@ -144,6 +162,129 @@ class MdxDoubleBufferInstrumentedTest {
         check(report.getString("status") == "complete") { report.toString() }
     }
 
+    private fun runNativeManaged(
+        report: JSONObject,
+        modelFile: File,
+        config: MdxDspConfig,
+        runs: Int,
+        warmups: Int,
+    ) {
+        val bounded = BoundedGpuRuntime.loadAndValidate()
+        val setupStarted = now()
+        val pipeline = NativeLiteRtMdxPipeline(
+            config = config,
+            modelPath = modelFile.absolutePath,
+            workerCount = 4,
+            backend = NativeLiteRtMdxPipeline.Backend.BOUNDED_GPU,
+            slotCount = 2,
+        )
+        val setupMs = elapsed(setupStarted)
+        val executor = Executors.newSingleThreadExecutor()
+        val waveform = fixture(config)
+        val separated = Array(2) { Array(2) { FloatArray(config.chunkSize) } }
+        try {
+            repeat(warmups) { index ->
+                val slot = index and 1
+                pipeline.preprocessInput(waveform, slot)
+                bounded.beginInference()
+                try { pipeline.run(slot) } finally { bounded.endInference() }
+                pipeline.postprocessOutputInto(separated[slot], slot)
+            }
+            bounded.resetInferenceCounters()
+            val countersBefore = runtimeCounters()
+            val sequential = nativeSequential(runs, pipeline, waveform, separated, bounded)
+            val doubleBuffered = nativeDoubleBuffered(
+                runs, pipeline, waveform, separated, executor, bounded,
+            )
+            report.put("dspProfile", "native-packed-litert-c-w4")
+                .put("setupMs", setupMs)
+                .put("sequential", sequential)
+                .put("doubleBuffered", doubleBuffered)
+                .put("artRuntimeDelta", counterDelta(countersBefore, runtimeCounters()))
+                .put("memory", memoryEvidence())
+                .put("boundedGpuEvidence", bounded.evidence())
+                .put("backendQualification", "qualified")
+        } finally {
+            executor.shutdownNow()
+            pipeline.close()
+        }
+    }
+
+    private fun nativeSequential(
+        runs: Int,
+        pipeline: NativeLiteRtMdxPipeline,
+        waveform: Array<FloatArray>,
+        separated: Array<Array<FloatArray>>,
+        bounded: BoundedGpuRuntime,
+    ): JSONObject {
+        val samples = JSONArray()
+        repeat(runs) { index ->
+            val slot = index and 1
+            val start = now()
+            val prep = now(); pipeline.preprocessInput(waveform, slot); val prepMs = elapsed(prep)
+            val invoke = now()
+            bounded.beginInference()
+            try { pipeline.run(slot) } finally { bounded.endInference() }
+            val invokeMs = elapsed(invoke)
+            val inverse = now(); pipeline.postprocessOutputInto(separated[slot], slot)
+            val inverseMs = elapsed(inverse)
+            check(separated[slot].all { channel -> channel.take(256).all { it.isFinite() } })
+            samples.put(JSONObject().put("stftInputMs", prepMs)
+                .put("inferenceMs", invokeMs).put("outputReadMs", 0.0)
+                .put("iStftOlaMs", inverseMs).put("totalMs", elapsed(start)))
+        }
+        return summary(samples, "totalMs")
+    }
+
+    private fun nativeDoubleBuffered(
+        runs: Int,
+        pipeline: NativeLiteRtMdxPipeline,
+        waveform: Array<FloatArray>,
+        separated: Array<Array<FloatArray>>,
+        executor: java.util.concurrent.ExecutorService,
+        bounded: BoundedGpuRuntime,
+    ): JSONObject {
+        fun submit(slot: Int): Future<*> = executor.submit {
+            bounded.beginInference()
+            try { pipeline.run(slot) } finally { bounded.endInference() }
+        }
+        val samples = JSONArray()
+        pipeline.preprocessInput(waveform, 0)
+        var previous = submit(0)
+        val pipelineStart = now()
+        repeat(runs) { index ->
+            val completed = index and 1
+            val next = (index + 1) and 1
+            val prepMs: Double
+            val current: Future<*>?
+            if (index + 1 < runs) {
+                val prep = now(); pipeline.preprocessInput(waveform, next); prepMs = elapsed(prep)
+                current = submit(next)
+            } else {
+                prepMs = 0.0
+                current = null
+            }
+            val wait = now(); previous.get(); val waitMs = elapsed(wait)
+            val inverse = now(); pipeline.postprocessOutputInto(separated[completed], completed)
+            val inverseMs = elapsed(inverse)
+            check(separated[completed].all { channel -> channel.take(256).all { it.isFinite() } })
+            samples.put(JSONObject().put("nextStftInputMs", prepMs)
+                .put("inferenceWaitMs", waitMs).put("outputReadMs", 0.0)
+                .put("previousIStftOlaMs", inverseMs))
+            if (current != null) previous = current
+        }
+        val pipelineMs = elapsed(pipelineStart)
+        val stageValues = (0 until samples.length()).map { index ->
+            samples.getJSONObject(index).let {
+                it.getDouble("nextStftInputMs") + it.getDouble("inferenceWaitMs") +
+                    it.getDouble("outputReadMs") + it.getDouble("previousIStftOlaMs")
+            }
+        }
+        return JSONObject().put("count", runs).put("samples", samples)
+            .put("pipelineTotalMs", pipelineMs).put("meanMs", pipelineMs / runs)
+            .put("stageSumMeanMs", stageValues.average())
+    }
+
     private fun prepare(dsp: NativeMdxDsp, waveform: Array<FloatArray>, tensor: FloatArray, input: TensorBuffer) {
         dsp.waveformToNhwcTensorInto(waveform, tensor)
         input.writeFloat(tensor)
@@ -193,6 +334,18 @@ class MdxDoubleBufferInstrumentedTest {
     private fun fixture(config: MdxDspConfig): Array<FloatArray> = Array(2) { c -> FloatArray(config.chunkSize) { i -> (0.1 * sin(2.0 * PI * (220 + c * 37) * i / config.sampleRate) + 0.01 * sin(i * 0.013)).toFloat() } }
     private fun now() = SystemClock.elapsedRealtimeNanos()
     private fun elapsed(start: Long) = (now() - start) / 1_000_000.0
+    private fun memoryEvidence(): JSONObject = Debug.MemoryInfo().also(Debug::getMemoryInfo).let {
+        JSONObject().put("pssKb", it.totalPss)
+            .put("nativeHeapAllocatedBytes", Debug.getNativeHeapAllocatedSize())
+    }
+    private fun runtimeCounters(): Map<String, Long> = RUNTIME_COUNTERS.mapNotNull { key ->
+        runCatching { Debug.getRuntimeStat(key) }.getOrNull()?.toLongOrNull()?.let { key to it }
+    }.toMap()
+    private fun counterDelta(before: Map<String, Long>, after: Map<String, Long>): JSONObject =
+        JSONObject(RUNTIME_COUNTERS.associateWith { key ->
+            if (before[key] != null && after[key] != null) after.getValue(key) - before.getValue(key)
+            else JSONObject.NULL
+        })
     private fun sha256(file: File): String = MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString("") { "%02x".format(it) }
     private class BoundedGpuRuntime private constructor(private val runtimeClass: Class<*>, private val capability: Any) {
         fun resetInferenceCounters() { invoke("resetInferenceCounters") }
@@ -215,5 +368,11 @@ class MdxDoubleBufferInstrumentedTest {
             }
         }
     }
-    companion object { private val RUN_ID = Regex("[A-Za-z0-9._-]{1,80}") }
+    companion object {
+        private val RUN_ID = Regex("[A-Za-z0-9._-]{1,80}")
+        private val RUNTIME_COUNTERS = listOf(
+            "art.gc.gc-count", "art.gc.bytes-allocated", "art.gc.bytes-freed",
+            "art.gc.blocking-gc-count",
+        )
+    }
 }

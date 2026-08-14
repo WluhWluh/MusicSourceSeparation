@@ -365,12 +365,16 @@ class NativeLiteRtMdxPipeline {
 public:
     NativeLiteRtMdxPipeline(const char* modelPath, int fftSize, int hop,
                             int frequencies, int frames, int samples, int workers,
-                            int cpuThreads, bool boundedGpu)
+                            int cpuThreads, bool boundedGpu, int slotCount)
         : api(liteRtApi()),
           dsp(fftSize, hop, frequencies, frames, samples, workers, true),
-          boundedGpu(boundedGpu) {
+          boundedGpu(boundedGpu),
+          slotCount(slotCount) {
         if (cpuThreads < 1 || cpuThreads > 16) {
             throw std::invalid_argument("CPU thread count is outside 1..16");
+        }
+        if (slotCount < 1 || slotCount > 2) {
+            throw std::invalid_argument("slot count is outside 1..2");
         }
         try {
             initialize(modelPath, cpuThreads);
@@ -385,25 +389,36 @@ public:
     size_t tensorElements() const { return dsp.tensorElements(); }
     size_t channelSamples() const { return dsp.channelSamples(); }
 
-    void preprocess(const float* left, const float* right) {
-        ScopedBufferLock input(api, inputBuffer, 1, "LiteRtLockTensorBuffer(input)");
+    void preprocess(int slot, const float* left, const float* right) {
+        checkSlot(slot);
+        ScopedBufferLock input(api, inputBuffers[slot], 1, "LiteRtLockTensorBuffer(input)");
         dsp.preprocess(left, right, static_cast<float*>(input.get()));
         input.unlock("LiteRtUnlockTensorBuffer(input)");
     }
 
-    void run() {
-        api.check(api.runCompiledModel(compiledModel, 0, 1, &inputBuffer, 1, &outputBuffer),
+    void run(int slot) {
+        checkSlot(slot);
+        auto input = inputBuffers[slot];
+        auto output = outputBuffers[slot];
+        api.check(api.runCompiledModel(compiledModel, 0, 1, &input, 1, &output),
                   "LiteRtRunCompiledModel");
     }
 
-    void postprocess(float* left, float* right) {
-        ScopedBufferLock output(api, outputBuffer, 0, "LiteRtLockTensorBuffer(output)");
+    void postprocess(int slot, float* left, float* right) {
+        checkSlot(slot);
+        ScopedBufferLock output(api, outputBuffers[slot], 0, "LiteRtLockTensorBuffer(output)");
         dsp.postprocess(static_cast<const float*>(output.get()), left, right);
         output.unlock("LiteRtUnlockTensorBuffer(output)");
     }
 
 private:
     static constexpr size_t kRankedTensorTypeBytes = 72;
+
+    void checkSlot(int slot) const {
+        if (slot < 0 || slot >= slotCount) {
+            throw std::out_of_range("pipeline slot is outside configured range");
+        }
+    }
 
     void initialize(const char* modelPath, int cpuThreads) {
         api.check(api.createModelFromFile(modelPath, &model), "LiteRtCreateModelFromFile");
@@ -441,10 +456,14 @@ private:
         if (inputCount != 1 || outputCount != 1) {
             throw std::runtime_error("MDX LiteRT C profile requires one input and output");
         }
-        inputBuffer = createBuffer(subgraph, 0, true);
-        outputBuffer = createBuffer(subgraph, 0, false);
-        validatePackedSize(inputBuffer, tensorElements() * sizeof(float), "input");
-        validatePackedSize(outputBuffer, tensorElements() * sizeof(float), "output");
+        inputBuffers.reserve(slotCount);
+        outputBuffers.reserve(slotCount);
+        for (int slot = 0; slot < slotCount; ++slot) {
+            inputBuffers.push_back(createBuffer(subgraph, 0, true));
+            outputBuffers.push_back(createBuffer(subgraph, 0, false));
+            validatePackedSize(inputBuffers.back(), tensorElements() * sizeof(float), "input");
+            validatePackedSize(outputBuffers.back(), tensorElements() * sizeof(float), "output");
+        }
     }
 
     void addOpaqueToml(const char* identifier, const std::string& toml) {
@@ -493,14 +512,14 @@ private:
     }
 
     void cleanup() noexcept {
-        if (inputBuffer != nullptr) api.destroyBuffer(inputBuffer);
-        if (outputBuffer != nullptr) api.destroyBuffer(outputBuffer);
+        for (auto buffer : inputBuffers) if (buffer != nullptr) api.destroyBuffer(buffer);
+        for (auto buffer : outputBuffers) if (buffer != nullptr) api.destroyBuffer(buffer);
         if (compiledModel != nullptr) api.destroyCompiledModel(compiledModel);
         if (options != nullptr) api.destroyOptions(options);
         if (model != nullptr) api.destroyModel(model);
         if (environment != nullptr) api.destroyEnvironment(environment);
-        inputBuffer = nullptr;
-        outputBuffer = nullptr;
+        inputBuffers.clear();
+        outputBuffers.clear();
         compiledModel = nullptr;
         options = nullptr;
         model = nullptr;
@@ -510,12 +529,13 @@ private:
     LiteRt215Api& api;
     MdxPlan dsp;
     bool boundedGpu;
+    int slotCount;
     LiteRt215Api::Handle model = nullptr;
     LiteRt215Api::Handle options = nullptr;
     LiteRt215Api::Handle environment = nullptr;
     LiteRt215Api::Handle compiledModel = nullptr;
-    LiteRt215Api::Handle inputBuffer = nullptr;
-    LiteRt215Api::Handle outputBuffer = nullptr;
+    std::vector<LiteRt215Api::Handle> inputBuffers;
+    std::vector<LiteRt215Api::Handle> outputBuffers;
 };
 
 MdxPlan* fromHandle(jlong handle) {
@@ -586,13 +606,13 @@ extern "C" JNIEXPORT jlong JNICALL
 Java_com_example_musicsourceseparation_model_NativeLiteRtMdxPipeline_nativeCreate(
         JNIEnv* env, jobject, jstring modelPath, jint nFft, jint hopLength,
         jint dimF, jint dimT, jint chunkSize, jint workerCount, jint cpuThreads,
-        jboolean boundedGpu) {
+        jboolean boundedGpu, jint slotCount) {
     const char* path = env->GetStringUTFChars(modelPath, nullptr);
     if (path == nullptr) return 0;
     try {
         auto* pipeline = new NativeLiteRtMdxPipeline(
             path, nFft, hopLength, dimF, dimT, chunkSize, workerCount,
-            cpuThreads, boundedGpu == JNI_TRUE);
+            cpuThreads, boundedGpu == JNI_TRUE, slotCount);
         env->ReleaseStringUTFChars(modelPath, path);
         gLastError.clear();
         return reinterpret_cast<jlong>(pipeline);
@@ -605,7 +625,7 @@ Java_com_example_musicsourceseparation_model_NativeLiteRtMdxPipeline_nativeCreat
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_example_musicsourceseparation_model_NativeLiteRtMdxPipeline_nativePreprocessInput(
-        JNIEnv* env, jobject, jlong handle, jfloatArray leftArray,
+        JNIEnv* env, jobject, jlong handle, jint slot, jfloatArray leftArray,
         jfloatArray rightArray) {
     if (handle == 0) return JNI_FALSE;
     auto* pipeline = pipelineFromHandle(handle);
@@ -615,7 +635,7 @@ Java_com_example_musicsourceseparation_model_NativeLiteRtMdxPipeline_nativePrepr
         CriticalFloats left(env, leftArray, JNI_ABORT);
         CriticalFloats right(env, rightArray, JNI_ABORT);
         if (left.data == nullptr || right.data == nullptr) return JNI_FALSE;
-        pipeline->preprocess(left.data, right.data);
+        pipeline->preprocess(slot, left.data, right.data);
         gLastError.clear();
         return JNI_TRUE;
     } catch (const std::exception& error) {
@@ -626,10 +646,10 @@ Java_com_example_musicsourceseparation_model_NativeLiteRtMdxPipeline_nativePrepr
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_example_musicsourceseparation_model_NativeLiteRtMdxPipeline_nativeRun(
-        JNIEnv*, jobject, jlong handle) {
+        JNIEnv*, jobject, jlong handle, jint slot) {
     if (handle == 0) return JNI_FALSE;
     try {
-        pipelineFromHandle(handle)->run();
+        pipelineFromHandle(handle)->run(slot);
         gLastError.clear();
         return JNI_TRUE;
     } catch (const std::exception& error) {
@@ -640,7 +660,7 @@ Java_com_example_musicsourceseparation_model_NativeLiteRtMdxPipeline_nativeRun(
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_example_musicsourceseparation_model_NativeLiteRtMdxPipeline_nativePostprocessOutput(
-        JNIEnv* env, jobject, jlong handle, jfloatArray leftArray,
+        JNIEnv* env, jobject, jlong handle, jint slot, jfloatArray leftArray,
         jfloatArray rightArray) {
     if (handle == 0) return JNI_FALSE;
     auto* pipeline = pipelineFromHandle(handle);
@@ -650,7 +670,7 @@ Java_com_example_musicsourceseparation_model_NativeLiteRtMdxPipeline_nativePostp
         CriticalFloats left(env, leftArray, 0);
         CriticalFloats right(env, rightArray, 0);
         if (left.data == nullptr || right.data == nullptr) return JNI_FALSE;
-        pipeline->postprocess(left.data, right.data);
+        pipeline->postprocess(slot, left.data, right.data);
         gLastError.clear();
         return JNI_TRUE;
     } catch (const std::exception& error) {

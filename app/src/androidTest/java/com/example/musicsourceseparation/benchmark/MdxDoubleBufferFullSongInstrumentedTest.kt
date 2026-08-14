@@ -8,6 +8,7 @@ import android.os.SystemClock
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.example.musicsourceseparation.BuildConfig
 import com.example.musicsourceseparation.audio.AudioPcmDecoder
 import com.example.musicsourceseparation.audio.DecodedPcmAudio
 import com.example.musicsourceseparation.audio.WavFileWriter
@@ -63,6 +64,10 @@ class MdxDoubleBufferFullSongInstrumentedTest {
             .put("modelSha256", sha256(modelFile)).put("contractSha256", sha256(contractFile))
             .put("sourceSha256", sha256(audioFile)).put("backend", backend)
             .put("tensorBoundary", tensorBoundary)
+            .put("runtimeId", BuildConfig.BENCHMARK_RUNTIME_ID)
+            .put("runtimeArtifactSha256", BuildConfig.BENCHMARK_RUNTIME_ARTIFACT_SHA256)
+            .put("sourceRevision", BuildConfig.BENCHMARK_SOURCE_REVISION)
+            .put("sourceDirty", BuildConfig.BENCHMARK_SOURCE_DIRTY)
             .put("dspProfile", "native-packed-w4").put("doubleBufferSlots", 2)
             .put("device", JSONObject().put("model", Build.MODEL).put("soc", Build.SOC_MODEL))
         val thermal = context.getSystemService(android.os.PowerManager::class.java)
@@ -137,6 +142,7 @@ class MdxDoubleBufferFullSongInstrumentedTest {
             }
             fun run(slot: Int) { bounded?.beginInference(); try { model!!.run(listOf(inputs[slot]), listOf(outputs[slot])) } finally { bounded?.endInference() } }
             bounded?.resetInferenceCounters()
+            val countersBefore = runtimeCounters()
             val processStarted = now()
             timed("initialPrepare") { prepare(0, 0) }
             var previous: Future<*> = executor.submit { run(0) }
@@ -174,6 +180,7 @@ class MdxDoubleBufferFullSongInstrumentedTest {
                 .put("stagesMs", JSONObject(stage.mapValues { it.value / 1e6 }))
                 .put("modelOutput", fileEvidence(File(outputDir, "model-output.wav")))
                 .put("residualOutput", fileEvidence(File(outputDir, "residual.wav")))
+                .put("artRuntimeDelta", counterDelta(countersBefore, runtimeCounters()))
                 .put("memory", memoryEvidence()).put("availableAccelerators", JSONArray(environment!!.getAvailableAccelerators().map { it.name }.sorted()))
             bounded?.let { report.put("boundedGpuEvidence", it.evidence()) }
             val qnnIr = File(outputDir, "qnn-ir").walkTopDown().filter { it.isFile && it.length() > 0 }.map { JSONObject().put("path", it.relativeTo(outputDir).invariantSeparatorsPath).put("bytes", it.length()) }.toList()

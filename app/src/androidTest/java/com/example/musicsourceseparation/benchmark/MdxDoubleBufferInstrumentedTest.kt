@@ -72,6 +72,7 @@ class MdxDoubleBufferInstrumentedTest {
             .put("contractId", contract.getString("contractId"))
             .put("runtime", "LiteRT CompiledModel 2.1.5")
             .put("runtimeId", BuildConfig.BENCHMARK_RUNTIME_ID)
+            .put("runtimeArtifactSha256", BuildConfig.BENCHMARK_RUNTIME_ARTIFACT_SHA256)
             .put("sourceRevision", BuildConfig.BENCHMARK_SOURCE_REVISION)
             .put("sourceDirty", BuildConfig.BENCHMARK_SOURCE_DIRTY)
             .put("backend", backend).put("tensorBoundary", tensorBoundary)

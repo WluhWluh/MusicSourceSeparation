@@ -13,6 +13,7 @@ import com.example.musicsourceseparation.audio.AudioPcmDecoder
 import com.example.musicsourceseparation.audio.DecodedPcmAudio
 import com.example.musicsourceseparation.audio.WavFileWriter
 import com.example.musicsourceseparation.model.MdxDspConfig
+import com.example.musicsourceseparation.model.NativeLiteRtMdxPipeline
 import com.example.musicsourceseparation.model.NativeMdxDsp
 import com.google.ai.edge.litert.Accelerator
 import com.google.ai.edge.litert.CompiledModel
@@ -38,7 +39,9 @@ class MdxNativeFullSongInstrumentedTest {
         val audioFile = File(root, "audio-input/${requireNotNull(args.getString("audioFile"))}")
         val backend = args.getString("backend", "gpu-bounded")!!
         val profile = args.getString("dspProfile", "native-full")!!
-        require(profile == "native-full" || profile == "native-packed")
+        require(
+            profile in setOf("native-full", "native-packed", "native-packed-litert-c"),
+        )
         val contract = JSONObject(contractFile.readText())
         require(sha256(modelFile) == contract.getJSONObject("artifact").getString("sha256"))
         val dsp = contract.getJSONObject("dsp")
@@ -60,6 +63,34 @@ class MdxNativeFullSongInstrumentedTest {
             .put("sourceSha256", sha256(audioFile))
             .put("backend", backend)
             .put("dspProfile", profile)
+            .put(
+                "tensorBoundary",
+                if (profile == "native-packed-litert-c") {
+                    "native-managed-input-output-no-java-tensor-array"
+                } else {
+                    "tensor-buffer-write-float-read-float"
+                },
+            )
+            .put(
+                "nativeLiteRtOptions",
+                if (profile == "native-packed-litert-c") {
+                    JSONObject()
+                        .put("api", "LiteRT-2.1.5-C")
+                        .put("opaqueIdentifier", if (backend == "gpu-bounded") "gpu_options" else "xnnpack")
+                        .put(
+                            "opaqueToml",
+                            if (backend == "gpu-bounded") {
+                                "backend = 1\nprecision = 2\n" +
+                                    "kernel_batch_size = 1\n" +
+                                    "num_steps_of_command_buffer_preparations = 1\n"
+                            } else {
+                                "num_threads = 4\n"
+                            },
+                        )
+                } else {
+                    JSONObject.NULL
+                },
+            )
             .put("device", JSONObject().put("model", Build.MODEL).put("soc", Build.SOC_MODEL))
         val powerManager = context.getSystemService(PowerManager::class.java)
         report.put("thermalStatusStart", powerManager.currentThermalStatus)
@@ -81,19 +112,37 @@ class MdxNativeFullSongInstrumentedTest {
                     cpuOptions = CompiledModel.CpuOptions(4, null, null)
                 }
             }
-            val environment = Environment.create()
             val boundedRuntime = if (backend == "gpu-bounded") BoundedGpuRuntime.loadAndValidate() else null
+            val directPipelineMode = profile == "native-packed-litert-c"
+            val environment = if (directPipelineMode) null else Environment.create()
             val setupStarted = SystemClock.elapsedRealtimeNanos()
-            val model = CompiledModel.create(modelFile.absolutePath, options, environment)
-            val input = model.createInputBuffers().single()
-            val output = model.createOutputBuffers().single()
+            val model = environment?.let {
+                CompiledModel.create(modelFile.absolutePath, options, it)
+            }
+            val input = model?.createInputBuffers()?.single()
+            val output = model?.createOutputBuffers()?.single()
+            val directPipeline = if (directPipelineMode) {
+                NativeLiteRtMdxPipeline(
+                    config = config,
+                    modelPath = modelFile.absolutePath,
+                    cpuThreads = 4,
+                    workerCount = 4,
+                    backend = if (backend == "gpu-bounded") {
+                        NativeLiteRtMdxPipeline.Backend.BOUNDED_GPU
+                    } else {
+                        NativeLiteRtMdxPipeline.Backend.CPU
+                    },
+                )
+            } else {
+                null
+            }
             val setupMs = elapsedMs(setupStarted)
             val nativeMode = if (profile == "native-packed") {
                 NativeMdxDsp.Mode.PACKED_REAL
             } else {
                 NativeMdxDsp.Mode.FULL_COMPLEX
             }
-            val inputTensor = FloatArray(config.tensorElementCount)
+            val inputTensor = if (directPipelineMode) null else FloatArray(config.tensorElementCount)
             val separated = Array(2) { FloatArray(config.chunkSize) }
             val residual = Array(2) { FloatArray(config.chunkSize) }
             val pcm = ByteArray(config.generationSize * 4)
@@ -110,7 +159,8 @@ class MdxNativeFullSongInstrumentedTest {
             val windowCount = ceil(decoded.frameCount.toDouble() / config.generationSize).toInt()
             val processingStarted = SystemClock.elapsedRealtimeNanos()
             boundedRuntime?.resetInferenceCounters()
-            NativeMdxDsp(config, 4, nativeMode).use { nativeDsp ->
+            val nativeDsp = if (directPipelineMode) null else NativeMdxDsp(config, 4, nativeMode)
+            try {
                 WavFileWriter(modelStemFile, config.sampleRate, 2).use { modelWriter ->
                     WavFileWriter(residualFile, config.sampleRate, 2).use { residualWriter ->
                         for (windowIndex in 0 until windowCount) {
@@ -119,16 +169,49 @@ class MdxNativeFullSongInstrumentedTest {
                             val mix = timed("windowInput") {
                                 decoded.toStereoFloatContextWindow(generationStart - config.trim, config.chunkSize)
                             }
-                            timed("stft") { nativeDsp.waveformToNhwcTensorInto(mix, inputTensor) }
-                            timed("inputWrite") { input.writeFloat(inputTensor) }
+                            timed("stft") {
+                                if (directPipeline != null) {
+                                    directPipeline.preprocessInput(mix)
+                                } else {
+                                    requireNotNull(nativeDsp).waveformToNhwcTensorInto(
+                                        mix,
+                                        requireNotNull(inputTensor),
+                                    )
+                                }
+                            }
+                            timed("inputWrite") {
+                                if (directPipeline == null) {
+                                    requireNotNull(input).writeFloat(requireNotNull(inputTensor))
+                                }
+                            }
                             timed("invoke") {
                                 boundedRuntime?.beginInference()
-                                try { model.run(listOf(input), listOf(output)) } finally {
+                                try {
+                                    if (directPipeline != null) {
+                                        directPipeline.run()
+                                    } else {
+                                        requireNotNull(model).run(
+                                            listOf(requireNotNull(input)),
+                                            listOf(requireNotNull(output)),
+                                        )
+                                    }
+                                } finally {
                                     boundedRuntime?.endInference()
                                 }
                             }
-                            val outputTensor = timed("outputRead") { output.readFloat() }
-                            timed("iStftOla") { nativeDsp.nhwcTensorToWaveformInto(outputTensor, separated) }
+                            val outputTensor = timed("outputRead") {
+                                if (directPipeline == null) requireNotNull(output).readFloat() else null
+                            }
+                            timed("iStftOla") {
+                                if (directPipeline != null) {
+                                    directPipeline.postprocessOutputInto(separated)
+                                } else {
+                                    requireNotNull(nativeDsp).nhwcTensorToWaveformInto(
+                                        requireNotNull(outputTensor),
+                                        separated,
+                                    )
+                                }
+                            }
                             timed("residual") {
                                 val scale = dsp.getDouble("modelOutputScale").toFloat()
                                 for (channel in 0 until 2) for (sample in 0 until config.chunkSize) {
@@ -145,9 +228,12 @@ class MdxNativeFullSongInstrumentedTest {
                         }
                     }
                 }
+            } finally {
+                nativeDsp?.close()
+                directPipeline?.close()
             }
             val processingMs = elapsedMs(processingStarted)
-            input.close(); output.close(); model.close(); environment.close()
+            input?.close(); output?.close(); model?.close(); environment?.close()
             val stages = JSONObject()
             stageNanos.forEach { (name, nanos) -> stages.put(name, nanos / 1e6) }
             report.put("status", "complete")

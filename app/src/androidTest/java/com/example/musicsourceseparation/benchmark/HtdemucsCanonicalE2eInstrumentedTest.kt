@@ -30,6 +30,10 @@ class HtdemucsCanonicalE2eInstrumentedTest {
             .getString(HtdemucsCanonicalE2eBenchmark.ARG_THREADS)
             ?.toIntOrNull()
             ?: 4
+        val dspMode = HtdemucsCanonicalE2eBenchmark.DspMode.fromWireValue(
+            arguments.getString(HtdemucsCanonicalE2eBenchmark.ARG_DSP_MODE)
+                ?: "kotlin-jtransforms",
+        )
         val istftMode = HtdemucsDsp.IstftMode.fromWireValue(
             arguments.getString(HtdemucsCanonicalE2eBenchmark.ARG_ISTFT_MODE) ?: "serial",
         )
@@ -76,6 +80,7 @@ class HtdemucsCanonicalE2eInstrumentedTest {
                 durationSeconds = durationSeconds,
                 frameLimit = frameLimit,
                 threads = threads,
+                dspMode = dspMode,
                 istftMode = istftMode,
                 istftWorkers = istftWorkers,
                 validateIstftFloatParity = validateIstftFloatParity,

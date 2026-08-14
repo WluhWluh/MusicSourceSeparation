@@ -1,11 +1,17 @@
 #include <jni.h>
 
+#include <dlfcn.h>
+
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <complex>
+#include <cstdlib>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -17,6 +23,7 @@ namespace {
 constexpr float kPi = 3.14159265358979323846f;
 constexpr int kChannels = 2;
 constexpr int kComplexChannels = 4;
+thread_local std::string gLastError;
 
 int reflectIndex(int index, int size) {
     while (index < 0 || index >= size) {
@@ -78,6 +85,12 @@ public:
             }
         }
     }
+
+    size_t tensorElements() const {
+        return static_cast<size_t>(kComplexChannels) * dimF * dimT;
+    }
+
+    size_t channelSamples() const { return static_cast<size_t>(chunkSize); }
 
     void preprocess(const float* left, const float* right, float* tensor) {
         const float* channels[kChannels]{left, right};
@@ -194,9 +207,330 @@ private:
     pocketfft::shape_t axes;
 };
 
+// LiteRT 2.1.5 C API profile. The ranked tensor type storage is pinned to the
+// bundled 2.1.5 ABI; all other referenced objects are public opaque handles.
+class LiteRt215Api {
+public:
+    using Handle = void*;
+    using Status = int;
+    using PayloadDeleter = void (*)(void*);
+
+    LiteRt215Api() {
+        library = dlopen("libLiteRt.so", RTLD_NOW | RTLD_LOCAL);
+        if (library == nullptr) throw std::runtime_error(dlerror());
+        createModelFromFile = load<CreateModelFromFile>("LiteRtCreateModelFromFile");
+        destroyModel = load<DestroyHandle>("LiteRtDestroyModel");
+        getModelSubgraph = load<GetIndexedHandle>("LiteRtGetModelSubgraph");
+        getNumSubgraphInputs = load<GetCount>("LiteRtGetNumSubgraphInputs");
+        getNumSubgraphOutputs = load<GetCount>("LiteRtGetNumSubgraphOutputs");
+        getSubgraphInput = load<GetIndexedHandle>("LiteRtGetSubgraphInput");
+        getSubgraphOutput = load<GetIndexedHandle>("LiteRtGetSubgraphOutput");
+        getRankedTensorType = load<GetRankedTensorType>("LiteRtGetRankedTensorType");
+        createOptions = load<CreateHandle>("LiteRtCreateOptions");
+        destroyOptions = load<DestroyHandle>("LiteRtDestroyOptions");
+        setHardwareAccelerators =
+            load<SetHardwareAccelerators>("LiteRtSetOptionsHardwareAccelerators");
+        addOpaqueOptions = load<AddOpaqueOptions>("LiteRtAddOpaqueOptions");
+        createOpaqueOptions = load<CreateOpaqueOptions>("LiteRtCreateOpaqueOptions");
+        destroyOpaqueOptions = load<DestroyHandle>("LiteRtDestroyOpaqueOptions");
+        createEnvironment = load<CreateEnvironment>("LiteRtCreateEnvironment");
+        destroyEnvironment = load<DestroyHandle>("LiteRtDestroyEnvironment");
+        createCompiledModel = load<CreateCompiledModel>("LiteRtCreateCompiledModel");
+        destroyCompiledModel = load<DestroyHandle>("LiteRtDestroyCompiledModel");
+        getInputRequirements = load<GetBufferRequirements>(
+            "LiteRtGetCompiledModelInputBufferRequirements");
+        getOutputRequirements = load<GetBufferRequirements>(
+            "LiteRtGetCompiledModelOutputBufferRequirements");
+        createManagedBuffer = load<CreateManagedBuffer>(
+            "LiteRtCreateManagedTensorBufferFromRequirements");
+        destroyBuffer = load<DestroyHandle>("LiteRtDestroyTensorBuffer");
+        getPackedSize = load<GetPackedSize>("LiteRtGetTensorBufferPackedSize");
+        lockBuffer = load<LockBuffer>("LiteRtLockTensorBuffer");
+        unlockBuffer = load<UnlockBuffer>("LiteRtUnlockTensorBuffer");
+        runCompiledModel = load<RunCompiledModel>("LiteRtRunCompiledModel");
+        getStatusString = load<GetStatusString>("LiteRtGetStatusString");
+    }
+
+    LiteRt215Api(const LiteRt215Api&) = delete;
+    LiteRt215Api& operator=(const LiteRt215Api&) = delete;
+
+    void check(Status status, const char* operation) const {
+        if (status != 0) {
+            const char* detail = getStatusString(status);
+            throw std::runtime_error(std::string(operation) + " failed: " +
+                                     (detail == nullptr ? std::to_string(status) : detail));
+        }
+    }
+
+    using CreateModelFromFile = Status (*)(const char*, Handle*);
+    using DestroyHandle = void (*)(Handle);
+    using GetIndexedHandle = Status (*)(Handle, size_t, Handle*);
+    using GetCount = Status (*)(Handle, size_t*);
+    using GetRankedTensorType = Status (*)(Handle, void*);
+    using CreateHandle = Status (*)(Handle*);
+    using SetHardwareAccelerators = Status (*)(Handle, int);
+    using AddOpaqueOptions = Status (*)(Handle, Handle);
+    using CreateOpaqueOptions = Status (*)(const char*, void*, PayloadDeleter, Handle*);
+    using CreateEnvironment = Status (*)(int, const void*, Handle*);
+    using CreateCompiledModel = Status (*)(Handle, Handle, Handle, Handle*);
+    using GetBufferRequirements = Status (*)(Handle, size_t, size_t, Handle*);
+    using CreateManagedBuffer = Status (*)(Handle, const void*, Handle, Handle*);
+    using GetPackedSize = Status (*)(Handle, size_t*);
+    using LockBuffer = Status (*)(Handle, void**, int);
+    using UnlockBuffer = Status (*)(Handle);
+    using RunCompiledModel = Status (*)(Handle, size_t, size_t, Handle*, size_t, Handle*);
+    using GetStatusString = const char* (*)(Status);
+
+    CreateModelFromFile createModelFromFile;
+    DestroyHandle destroyModel;
+    GetIndexedHandle getModelSubgraph;
+    GetCount getNumSubgraphInputs;
+    GetCount getNumSubgraphOutputs;
+    GetIndexedHandle getSubgraphInput;
+    GetIndexedHandle getSubgraphOutput;
+    GetRankedTensorType getRankedTensorType;
+    CreateHandle createOptions;
+    DestroyHandle destroyOptions;
+    SetHardwareAccelerators setHardwareAccelerators;
+    AddOpaqueOptions addOpaqueOptions;
+    CreateOpaqueOptions createOpaqueOptions;
+    DestroyHandle destroyOpaqueOptions;
+    CreateEnvironment createEnvironment;
+    DestroyHandle destroyEnvironment;
+    CreateCompiledModel createCompiledModel;
+    DestroyHandle destroyCompiledModel;
+    GetBufferRequirements getInputRequirements;
+    GetBufferRequirements getOutputRequirements;
+    CreateManagedBuffer createManagedBuffer;
+    DestroyHandle destroyBuffer;
+    GetPackedSize getPackedSize;
+    LockBuffer lockBuffer;
+    UnlockBuffer unlockBuffer;
+    RunCompiledModel runCompiledModel;
+    GetStatusString getStatusString;
+
+private:
+    template <typename Function>
+    Function load(const char* name) {
+        dlerror();
+        void* symbol = dlsym(library, name);
+        const char* error = dlerror();
+        if (error != nullptr || symbol == nullptr) {
+            throw std::runtime_error(std::string("Missing LiteRT 2.1.5 symbol ") + name);
+        }
+        return reinterpret_cast<Function>(symbol);
+    }
+
+    // The handle intentionally remains open for the process lifetime.
+    void* library = nullptr;
+};
+
+LiteRt215Api& liteRtApi() {
+    static LiteRt215Api api;
+    return api;
+}
+
+class ScopedBufferLock {
+public:
+    ScopedBufferLock(LiteRt215Api& api, LiteRt215Api::Handle buffer, int write,
+                     const char* operation)
+        : api(api), buffer(buffer) {
+        api.check(api.lockBuffer(buffer, &data, write), operation);
+        locked = true;
+    }
+
+    ~ScopedBufferLock() {
+        if (locked) api.unlockBuffer(buffer);
+    }
+
+    ScopedBufferLock(const ScopedBufferLock&) = delete;
+    ScopedBufferLock& operator=(const ScopedBufferLock&) = delete;
+
+    void* get() const { return data; }
+
+    void unlock(const char* operation) {
+        if (!locked) return;
+        locked = false;
+        api.check(api.unlockBuffer(buffer), operation);
+    }
+
+private:
+    LiteRt215Api& api;
+    LiteRt215Api::Handle buffer;
+    void* data = nullptr;
+    bool locked = false;
+};
+
+class NativeLiteRtMdxPipeline {
+public:
+    NativeLiteRtMdxPipeline(const char* modelPath, int fftSize, int hop,
+                            int frequencies, int frames, int samples, int workers,
+                            int cpuThreads, bool boundedGpu)
+        : api(liteRtApi()),
+          dsp(fftSize, hop, frequencies, frames, samples, workers, true),
+          boundedGpu(boundedGpu) {
+        if (cpuThreads < 1 || cpuThreads > 16) {
+            throw std::invalid_argument("CPU thread count is outside 1..16");
+        }
+        try {
+            initialize(modelPath, cpuThreads);
+        } catch (...) {
+            cleanup();
+            throw;
+        }
+    }
+
+    ~NativeLiteRtMdxPipeline() { cleanup(); }
+
+    size_t tensorElements() const { return dsp.tensorElements(); }
+    size_t channelSamples() const { return dsp.channelSamples(); }
+
+    void preprocess(const float* left, const float* right) {
+        ScopedBufferLock input(api, inputBuffer, 1, "LiteRtLockTensorBuffer(input)");
+        dsp.preprocess(left, right, static_cast<float*>(input.get()));
+        input.unlock("LiteRtUnlockTensorBuffer(input)");
+    }
+
+    void run() {
+        api.check(api.runCompiledModel(compiledModel, 0, 1, &inputBuffer, 1, &outputBuffer),
+                  "LiteRtRunCompiledModel");
+    }
+
+    void postprocess(float* left, float* right) {
+        ScopedBufferLock output(api, outputBuffer, 0, "LiteRtLockTensorBuffer(output)");
+        dsp.postprocess(static_cast<const float*>(output.get()), left, right);
+        output.unlock("LiteRtUnlockTensorBuffer(output)");
+    }
+
+private:
+    static constexpr size_t kRankedTensorTypeBytes = 72;
+
+    void initialize(const char* modelPath, int cpuThreads) {
+        api.check(api.createModelFromFile(modelPath, &model), "LiteRtCreateModelFromFile");
+        api.check(api.createOptions(&options), "LiteRtCreateOptions");
+        const int accelerator = boundedGpu ? 2 : 1;
+        api.check(api.setHardwareAccelerators(options, accelerator),
+                  boundedGpu ? "LiteRtSetOptionsHardwareAccelerators(GPU)" :
+                               "LiteRtSetOptionsHardwareAccelerators(CPU)");
+
+        const std::string identifier = boundedGpu ? "gpu_options" : "xnnpack";
+        // bss.2 redirects the Kotlin command-buffer preparation field to its
+        // bounded OpenCL kernel batch. C TOML bypasses that JNI redirect, so
+        // retain the public field and set its effective kernel batch explicitly.
+        const std::string toml = boundedGpu
+            ? "backend = 1\nprecision = 2\nkernel_batch_size = 1\n"
+              "num_steps_of_command_buffer_preparations = 1\n"
+            : "num_threads = " + std::to_string(cpuThreads) + "\n";
+        addOpaqueToml(identifier.c_str(), toml);
+
+        api.check(api.createEnvironment(0, nullptr, &environment),
+                  "LiteRtCreateEnvironment");
+        api.check(api.createCompiledModel(environment, model, options, &compiledModel),
+                  "LiteRtCreateCompiledModel");
+        api.destroyOptions(options);
+        options = nullptr;
+
+        LiteRt215Api::Handle subgraph = nullptr;
+        api.check(api.getModelSubgraph(model, 0, &subgraph), "LiteRtGetModelSubgraph");
+        size_t inputCount = 0;
+        size_t outputCount = 0;
+        api.check(api.getNumSubgraphInputs(subgraph, &inputCount),
+                  "LiteRtGetNumSubgraphInputs");
+        api.check(api.getNumSubgraphOutputs(subgraph, &outputCount),
+                  "LiteRtGetNumSubgraphOutputs");
+        if (inputCount != 1 || outputCount != 1) {
+            throw std::runtime_error("MDX LiteRT C profile requires one input and output");
+        }
+        inputBuffer = createBuffer(subgraph, 0, true);
+        outputBuffer = createBuffer(subgraph, 0, false);
+        validatePackedSize(inputBuffer, tensorElements() * sizeof(float), "input");
+        validatePackedSize(outputBuffer, tensorElements() * sizeof(float), "output");
+    }
+
+    void addOpaqueToml(const char* identifier, const std::string& toml) {
+        void* payload = std::malloc(toml.size() + 1);
+        if (payload == nullptr) throw std::bad_alloc();
+        std::memcpy(payload, toml.c_str(), toml.size() + 1);
+        LiteRt215Api::Handle opaqueOptions = nullptr;
+        const auto createStatus = api.createOpaqueOptions(
+            identifier, payload, +[](void* value) { std::free(value); }, &opaqueOptions);
+        if (createStatus != 0) std::free(payload);
+        api.check(createStatus, "LiteRtCreateOpaqueOptions");
+        const auto addStatus = api.addOpaqueOptions(options, opaqueOptions);
+        if (addStatus != 0) api.destroyOpaqueOptions(opaqueOptions);
+        api.check(addStatus, "LiteRtAddOpaqueOptions");
+    }
+
+    LiteRt215Api::Handle createBuffer(LiteRt215Api::Handle subgraph, size_t index,
+                                      bool input) {
+        LiteRt215Api::Handle tensor = nullptr;
+        auto getTensor = input ? api.getSubgraphInput : api.getSubgraphOutput;
+        api.check(getTensor(subgraph, index, &tensor),
+                  input ? "LiteRtGetSubgraphInput" : "LiteRtGetSubgraphOutput");
+        alignas(8) std::array<std::byte, kRankedTensorTypeBytes> tensorType{};
+        api.check(api.getRankedTensorType(tensor, tensorType.data()),
+                  "LiteRtGetRankedTensorType");
+        LiteRt215Api::Handle requirements = nullptr;
+        auto getRequirements = input ? api.getInputRequirements : api.getOutputRequirements;
+        api.check(getRequirements(compiledModel, 0, index, &requirements),
+                  input ? "LiteRtGetCompiledModelInputBufferRequirements" :
+                          "LiteRtGetCompiledModelOutputBufferRequirements");
+        LiteRt215Api::Handle buffer = nullptr;
+        api.check(api.createManagedBuffer(environment, tensorType.data(), requirements, &buffer),
+                  "LiteRtCreateManagedTensorBufferFromRequirements");
+        return buffer;
+    }
+
+    void validatePackedSize(LiteRt215Api::Handle buffer, size_t expected,
+                            const char* label) {
+        size_t actual = 0;
+        api.check(api.getPackedSize(buffer, &actual), "LiteRtGetTensorBufferPackedSize");
+        if (actual != expected) {
+            throw std::runtime_error(std::string(label) + " packed byte size " +
+                                     std::to_string(actual) + " != " +
+                                     std::to_string(expected));
+        }
+    }
+
+    void cleanup() noexcept {
+        if (inputBuffer != nullptr) api.destroyBuffer(inputBuffer);
+        if (outputBuffer != nullptr) api.destroyBuffer(outputBuffer);
+        if (compiledModel != nullptr) api.destroyCompiledModel(compiledModel);
+        if (options != nullptr) api.destroyOptions(options);
+        if (model != nullptr) api.destroyModel(model);
+        if (environment != nullptr) api.destroyEnvironment(environment);
+        inputBuffer = nullptr;
+        outputBuffer = nullptr;
+        compiledModel = nullptr;
+        options = nullptr;
+        model = nullptr;
+        environment = nullptr;
+    }
+
+    LiteRt215Api& api;
+    MdxPlan dsp;
+    bool boundedGpu;
+    LiteRt215Api::Handle model = nullptr;
+    LiteRt215Api::Handle options = nullptr;
+    LiteRt215Api::Handle environment = nullptr;
+    LiteRt215Api::Handle compiledModel = nullptr;
+    LiteRt215Api::Handle inputBuffer = nullptr;
+    LiteRt215Api::Handle outputBuffer = nullptr;
+};
+
 MdxPlan* fromHandle(jlong handle) {
     return reinterpret_cast<MdxPlan*>(static_cast<intptr_t>(handle));
 }
+
+NativeLiteRtMdxPipeline* pipelineFromHandle(jlong handle) {
+    return reinterpret_cast<NativeLiteRtMdxPipeline*>(static_cast<intptr_t>(handle));
+}
+
+bool hasLength(JNIEnv* env, jfloatArray array, size_t expected) {
+    return array != nullptr && static_cast<size_t>(env->GetArrayLength(array)) == expected;
+}
+
+void setLastError(const std::exception& error) { gLastError = error.what(); }
 }  // namespace
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -246,4 +580,93 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_example_musicsourceseparation_model_NativeMdxDsp_nativeDestroy(
         JNIEnv*, jobject, jlong handle) {
     delete fromHandle(handle);
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_example_musicsourceseparation_model_NativeLiteRtMdxPipeline_nativeCreate(
+        JNIEnv* env, jobject, jstring modelPath, jint nFft, jint hopLength,
+        jint dimF, jint dimT, jint chunkSize, jint workerCount, jint cpuThreads,
+        jboolean boundedGpu) {
+    const char* path = env->GetStringUTFChars(modelPath, nullptr);
+    if (path == nullptr) return 0;
+    try {
+        auto* pipeline = new NativeLiteRtMdxPipeline(
+            path, nFft, hopLength, dimF, dimT, chunkSize, workerCount,
+            cpuThreads, boundedGpu == JNI_TRUE);
+        env->ReleaseStringUTFChars(modelPath, path);
+        gLastError.clear();
+        return reinterpret_cast<jlong>(pipeline);
+    } catch (const std::exception& error) {
+        env->ReleaseStringUTFChars(modelPath, path);
+        setLastError(error);
+        return 0;
+    }
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_example_musicsourceseparation_model_NativeLiteRtMdxPipeline_nativePreprocessInput(
+        JNIEnv* env, jobject, jlong handle, jfloatArray leftArray,
+        jfloatArray rightArray) {
+    if (handle == 0) return JNI_FALSE;
+    auto* pipeline = pipelineFromHandle(handle);
+    if (!hasLength(env, leftArray, pipeline->channelSamples()) ||
+        !hasLength(env, rightArray, pipeline->channelSamples())) return JNI_FALSE;
+    try {
+        CriticalFloats left(env, leftArray, JNI_ABORT);
+        CriticalFloats right(env, rightArray, JNI_ABORT);
+        if (left.data == nullptr || right.data == nullptr) return JNI_FALSE;
+        pipeline->preprocess(left.data, right.data);
+        gLastError.clear();
+        return JNI_TRUE;
+    } catch (const std::exception& error) {
+        setLastError(error);
+        return JNI_FALSE;
+    }
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_example_musicsourceseparation_model_NativeLiteRtMdxPipeline_nativeRun(
+        JNIEnv*, jobject, jlong handle) {
+    if (handle == 0) return JNI_FALSE;
+    try {
+        pipelineFromHandle(handle)->run();
+        gLastError.clear();
+        return JNI_TRUE;
+    } catch (const std::exception& error) {
+        setLastError(error);
+        return JNI_FALSE;
+    }
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_example_musicsourceseparation_model_NativeLiteRtMdxPipeline_nativePostprocessOutput(
+        JNIEnv* env, jobject, jlong handle, jfloatArray leftArray,
+        jfloatArray rightArray) {
+    if (handle == 0) return JNI_FALSE;
+    auto* pipeline = pipelineFromHandle(handle);
+    if (!hasLength(env, leftArray, pipeline->channelSamples()) ||
+        !hasLength(env, rightArray, pipeline->channelSamples())) return JNI_FALSE;
+    try {
+        CriticalFloats left(env, leftArray, 0);
+        CriticalFloats right(env, rightArray, 0);
+        if (left.data == nullptr || right.data == nullptr) return JNI_FALSE;
+        pipeline->postprocess(left.data, right.data);
+        gLastError.clear();
+        return JNI_TRUE;
+    } catch (const std::exception& error) {
+        setLastError(error);
+        return JNI_FALSE;
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_musicsourceseparation_model_NativeLiteRtMdxPipeline_nativeDestroy(
+        JNIEnv*, jobject, jlong handle) {
+    delete pipelineFromHandle(handle);
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_example_musicsourceseparation_model_NativeLiteRtMdxPipeline_nativeLastError(
+        JNIEnv* env, jobject) {
+    return env->NewStringUTF(gLastError.c_str());
 }

@@ -46,6 +46,7 @@ class MdxDoubleBufferInstrumentedTest {
         val runId = args.getString("runId") ?: "run-${System.currentTimeMillis()}"
         require(RUN_ID.matches(runId))
         val context = ApplicationProvider.getApplicationContext<Context>()
+        val thermal = context.getSystemService(android.os.PowerManager::class.java)
         val root = File(requireNotNull(context.getExternalFilesDir(null)), "benchmark")
         val modelFile = File(root, "models/$modelName")
         val contractFile = File(root, "contracts/$contractName")
@@ -77,6 +78,7 @@ class MdxDoubleBufferInstrumentedTest {
             .put("sourceDirty", BuildConfig.BENCHMARK_SOURCE_DIRTY)
             .put("backend", backend).put("tensorBoundary", tensorBoundary)
             .put("runs", runs).put("warmups", warmups)
+            .put("thermalStatusStart", thermal.currentThermalStatus)
             .put("device", JSONObject().put("manufacturer", Build.MANUFACTURER)
                 .put("model", Build.MODEL).put("socManufacturer", Build.SOC_MANUFACTURER)
                 .put("socModel", Build.SOC_MODEL).put("sdk", Build.VERSION.SDK_INT)
@@ -92,6 +94,7 @@ class MdxDoubleBufferInstrumentedTest {
                     .put("message", error.message ?: JSONObject.NULL)
                     .put("stack", error.stackTraceToString())
             }
+            report.put("thermalStatusEnd", thermal.currentThermalStatus)
             File(resultDir, "report.json").writeText(report.toString(2))
             check(report.getString("status") == "complete") { report.toString() }
             return
@@ -164,6 +167,7 @@ class MdxDoubleBufferInstrumentedTest {
             executor.shutdownNow(); outputs.forEach { it.close() }; inputs.forEach { it.close() }
             model?.close(); environment?.close(); dsps.forEach { it.close() }
         }
+        report.put("thermalStatusEnd", thermal.currentThermalStatus)
         File(resultDir, "report.json").writeText(report.toString(2))
         check(report.getString("status") == "complete") { report.toString() }
     }

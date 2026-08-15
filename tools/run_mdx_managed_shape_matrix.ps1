@@ -26,7 +26,7 @@ if ($RunId -notmatch '^[A-Za-z0-9._-]{1,80}$') {
 }
 
 function Invoke-Adb {
-    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
+    param([string[]]$Arguments)
     & adb -s $Device @Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "adb failed: $($Arguments -join ' ')"
@@ -46,7 +46,7 @@ function Push-VerifiedFile {
     if ($actualSha -ne $ExpectedSha) {
         throw "Local SHA mismatch for ${LocalPath}: $actualSha"
     }
-    Invoke-Adb push $LocalPath $RemotePath
+    Invoke-Adb -Arguments @("push", $LocalPath, $RemotePath)
     $remoteLine = (& adb -s $Device shell sha256sum $RemotePath).Trim()
     if ($LASTEXITCODE -ne 0) {
         throw "Unable to hash $RemotePath on device."
@@ -63,11 +63,14 @@ if ($LASTEXITCODE -ne 0 -or $deviceState -ne "device") {
 }
 
 if (-not $SkipInstall) {
-    Invoke-Adb install -r $AppApk
-    Invoke-Adb install -r $TestApk
+    Invoke-Adb -Arguments @("install", "-r", $AppApk)
+    Invoke-Adb -Arguments @("install", "-r", $TestApk)
 }
 
-Invoke-Adb shell mkdir -p "$packageRoot/models" "$packageRoot/contracts" "$packageRoot/matrices"
+Invoke-Adb -Arguments @(
+    "shell", "mkdir", "-p",
+    "$packageRoot/models", "$packageRoot/contracts", "$packageRoot/matrices"
+)
 foreach ($entry in $matrix.models) {
     $contractPath = Join-Path $BssTfliteRoot "contracts\v2\$($entry.contractFile)"
     $modelPath = Join-Path $BssTfliteRoot "artifacts\all-candidates-fp32\$($entry.modelFile)"
@@ -87,18 +90,23 @@ Push-VerifiedFile $MatrixFile "$packageRoot/matrices/$([IO.Path]::GetFileName($M
 
 $testClass = "com.example.musicsourceseparation.benchmark.MdxManagedBufferShapeMatrixInstrumentedTest#runAllShapes"
 $runner = "com.example.musicsourceseparation.test/androidx.test.runner.AndroidJUnitRunner"
-Invoke-Adb shell am instrument -w -r `
-    -e class $testClass `
-    -e matrixFile ([IO.Path]::GetFileName($MatrixFile)) `
-    -e warmups $Warmups `
-    -e runs $Runs `
-    -e runId $RunId `
+$instrumentArgs = @(
+    "shell", "am", "instrument", "-w", "-r",
+    "-e", "class", $testClass,
+    "-e", "matrixFile", [IO.Path]::GetFileName($MatrixFile),
+    "-e", "warmups", $Warmups.ToString(),
+    "-e", "runs", $Runs.ToString(),
+    "-e", "runId", $RunId,
     $runner
+)
+Invoke-Adb -Arguments $instrumentArgs
 
 $resultRoot = Join-Path $PSScriptRoot "..\.tmp\mdx-managed-buffer-shape-matrix"
 New-Item -ItemType Directory -Force -Path $resultRoot | Out-Null
 $localReport = Join-Path $resultRoot "$($Device.Replace(':', '-'))-$RunId.json"
-Invoke-Adb pull "$packageRoot/mdx-managed-buffer-shape-matrix/$RunId/report.json" $localReport
+Invoke-Adb -Arguments @(
+    "pull", "$packageRoot/mdx-managed-buffer-shape-matrix/$RunId/report.json", $localReport
+)
 $report = Get-Content -LiteralPath $localReport -Raw | ConvertFrom-Json
 if ($report.status -ne "complete" -or $report.qualification -ne "qualified" -or
     $report.completedShapes -ne 13 -or $report.runtimeArtifactSha256 -ne $runtimeSha) {

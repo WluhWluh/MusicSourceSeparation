@@ -117,6 +117,29 @@ Both complete outputs are byte-identical to the established Java two-slot baseli
 | Model stem | 48,280,564 | `f92f45c52a4902763eae031f80c8ad8b499296ee1fdf56318224988d9a24553a` |
 | Residual stem | 48,280,564 | `4af386eefae21c7fb7f9f04bf17d0aa15bbdb37af594053c0b4ebf91d7f08fe4` |
 
+## 100-window create/run/close stability
+
+Revision `961c8b7` adds a lifecycle runner that performs five complete native pipeline
+lifecycles. Each cycle creates one CompiledModel and two managed input/output pairs, runs
+two warmups and 20 measured two-slot windows, validates every output float, then closes the
+pipeline. The 100 measured windows therefore cover five model and buffer create/close
+boundaries rather than one long-lived session.
+
+| Device | Result | Thermal | After-close PSS growth | Native-heap growth |
+|---|---|---:|---:|---:|
+| S25 | 100/100, qualified | 0 -> 0 | +3,225 KiB | +36,176 B |
+| S10 | 100/100, qualified | 0 -> 0 | +6,249 KiB | -3,207,072 B |
+
+Both devices produced the same full-output FNV-1a hash in all five cycles. Every cycle
+recorded 2,540 bounded dispatches and 2,540 waits. All values were finite. S25 cycle means
+ranged from 299.68 to 304.85 ms/window. The first S10 cycle was 2,645.95 ms/window; cycles
+two through five ranged from 2,417.97 to 2,485.62 ms/window with no monotonic slowdown.
+
+The runner explicitly requests GC after each close, so its one or two recorded GC events
+per cycle are lifecycle cleanup evidence and are not comparable to the zero-GC short-run
+measurement phase. Both after-close trends are far inside the frozen 64 MiB PSS and 16 MiB
+native-heap growth limits.
+
 ## Decision
 
 The converged native-managed two-slot path passes the 9662 bounded-GPU experimental gate:
@@ -129,7 +152,6 @@ The converged native-managed two-slot path passes the 9662 bounded-GPU experimen
 - S25 paired processing time improves, including under a hot condition.
 
 Keep `native-packed` as the single native DSP candidate; do not add a product-time
-native-full/native-packed selector. Before application integration, complete a 100-window
-create/run/close stability batch and run all 13 qualified MDX shapes through the same
-two-slot managed-buffer boundary. QNN needs a separate C API extension and must remain a
-later experiment.
+native-full/native-packed selector. Before application integration, run all 13 qualified
+MDX shapes through the same two-slot managed-buffer boundary. QNN needs a separate C API
+extension and must remain a later experiment.

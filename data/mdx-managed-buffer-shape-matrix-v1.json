@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 1,
+  "matrixId": "mdx-managed-buffer-all13-v1",
+  "contractSchemaVersion": 2,
+  "models": [
+    {
+      "modelId": "kuielab_b_drums",
+      "modelFile": "kuielab_b_drums_static_float32.tflite",
+      "contractFile": "kuielab_b_drums.json",
+      "sha256": "cbe947a5242c680a5e484aa0d3b857e6087cce5a32b7b1b61e823d47240638eb",
+      "nFft": 4096,
+      "hopLength": 1024,
+      "dimF": 2048,
+      "dimTPower": 7
+    },
+    {
+      "modelId": "kuielab_a_drums",
+      "modelFile": "kuielab_a_drums_static_float32.tflite",
+      "contractFile": "kuielab_a_drums.json",
+      "sha256": "28fb8bafb783ccc9659fae4d4a8924941d1eab8e141ef2000cf4da237241bb1f",
+      "nFft": 4096,
+      "hopLength": 1024,
+      "dimF": 2048,
+      "dimTPower": 9
+    },
+    {
+      "modelId": "uvr_mdxnet_inst_main",
+      "modelFile": "UVR-MDX-NET-Inst_Main_static_float32.tflite",
+      "contractFile": "uvr_mdxnet_inst_main.json",
+      "sha256": "8901458e2874aee6defbb922b8e34dec6109665c54707116bc0e4d21dd2983bc",
+      "nFft": 5120,
+      "hopLength": 1024,
+      "dimF": 2048,
+      "dimTPower": 8
+    },
+    {
+      "modelId": "uvr_mdxnet_inst_hq_4",
+      "modelFile": "UVR-MDX-NET-Inst_HQ_4_static_float32.tflite",
+      "contractFile": "uvr_mdxnet_inst_hq_4.json",
+      "sha256": "5f091562bd0297ff2223015a219d12cc1136a9d54df975680ff4eb239629c742",
+      "nFft": 5120,
+      "hopLength": 1024,
+      "dimF": 2560,
+      "dimTPower": 8
+    },
+    {
+      "modelId": "uvr_mdxnet_3_9662",
+      "modelFile": "UVR_MDXNET_3_9662_static_float32.tflite",
+      "contractFile": "uvr_mdxnet_3_9662.json",
+      "sha256": "f74eee1ac06845a7cf277416138b19a6203f34316a3a74b2bde19acbfb2f8378",
+      "nFft": 6144,
+      "hopLength": 1024,
+      "dimF": 2048,
+      "dimTPower": 8
+    },
+    {
+      "modelId": "uvr_mdxnet_inst_hq_1",
+      "modelFile": "UVR-MDX-NET-Inst_HQ_1_static_float32.tflite",
+      "contractFile": "uvr_mdxnet_inst_hq_1.json",
+      "sha256": "eca068aa4ee9f00c37ae2838dd4eaef51981e93a9352cf7609b7a6f8e596a8e3",
+      "nFft": 6144,
+      "hopLength": 1024,
+      "dimF": 3072,
+      "dimTPower": 8
+    },
+    {
+      "modelId": "kuielab_a_vocals",
+      "modelFile": "kuielab_a_vocals_static_float32.tflite",
+      "contractFile": "kuielab_a_vocals.json",
+      "sha256": "066517da5cfdc67a348c08249753d4c4e16923800790dca1edcb5fd370681750",
+      "nFft": 6144,
+      "hopLength": 1024,
+      "dimF": 2048,
+      "dimTPower": 9
+    },
+    {
+      "modelId": "reverb_hq_by_foxjoy",
+      "modelFile": "Reverb_HQ_By_FoxJoy_static_float32.tflite",
+      "contractFile": "reverb_hq_by_foxjoy.json",
+      "sha256": "94ada8c869418f67fa916d5eea1944b9153040731be7e5ce635b190a1c6b3e34",
+      "nFft": 6144,
+      "hopLength": 1024,
+      "dimF": 3072,
+      "dimTPower": 9
+    },
+    {
+      "modelId": "kim_inst",
+      "modelFile": "Kim_Inst_static_float32.tflite",
+      "contractFile": "kim_inst.json",
+      "sha256": "fd3ca5bcb6568d893be5f049de8804278ee669303749d6fb3010bbeaeae4d288",
+      "nFft": 7680,
+      "hopLength": 1024,
+      "dimF": 3072,
+      "dimTPower": 8
+    },
+    {
+      "modelId": "kuielab_b_other",
+      "modelFile": "kuielab_b_other_static_float32.tflite",
+      "contractFile": "kuielab_b_other.json",
+      "sha256": "c11e06e6858956a7e27a413d37d3e933e2d62fd0ee8f66df3276a61169109044",
+      "nFft": 8192,
+      "hopLength": 1024,
+      "dimF": 2048,
+      "dimTPower": 8
+    },
+    {
+      "modelId": "kuielab_a_other",
+      "modelFile": "kuielab_a_other_static_float32.tflite",
+      "contractFile": "kuielab_a_other.json",
+      "sha256": "c23a824468749a154aff73897bcb8ef37d98a99535543884ed39f18b8d49cbc8",
+      "nFft": 8192,
+      "hopLength": 1024,
+      "dimF": 2048,
+      "dimTPower": 9
+    },
+    {
+      "modelId": "kuielab_b_bass",
+      "modelFile": "kuielab_b_bass_static_float32.tflite",
+      "contractFile": "kuielab_b_bass.json",
+      "sha256": "9654f3f5cad4727e3b70a9d26dc74742b2bafd5cd75fc538c6ceb1673961bc79",
+      "nFft": 16384,
+      "hopLength": 1024,
+      "dimF": 2048,
+      "dimTPower": 8
+    },
+    {
+      "modelId": "kuielab_a_bass",
+      "modelFile": "kuielab_a_bass_static_float32.tflite",
+      "contractFile": "kuielab_a_bass.json",
+      "sha256": "17bb6777ecb7478677b247eaea49d7e8ce6538d951d04f3c01b6e6b750b1134a",
+      "nFft": 16384,
+      "hopLength": 1024,
+      "dimF": 2048,
+      "dimTPower": 9
+    }
+  ]
+}

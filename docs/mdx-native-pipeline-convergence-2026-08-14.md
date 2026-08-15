@@ -55,6 +55,27 @@ S25 improved in both orders. S10 changed direction and has a much larger spread,
 batch establishes S10 compatibility and memory behavior, not a stable RTF improvement.
 A temperature-controlled repeated S10 batch is required before making a performance claim.
 
+### S10 cold-state repeat
+
+Revision `ef4403b` added thermal status to the short-run report. Three new paired repeats
+then ran from separate processes with two warmups and ten measured windows per sequential
+and two-slot phase. Every profile recorded thermal status `0 -> 0`; the order alternated
+native/Java, Java/native, native/Java.
+
+| Repeat | Java tensor two-slot | Native managed two-slot | Native change |
+|---|---:|---:|---:|
+| 1 | 2,379.93 ms/window | 2,585.44 ms/window | +8.6% |
+| 2 | 2,383.53 ms/window | 2,418.04 ms/window | +1.45% |
+| 3 | 2,452.98 ms/window | 2,416.64 ms/window | -1.48% |
+| Median | 2,383.53 ms/window | 2,418.04 ms/window | +1.45% |
+
+The cold batch resolves the earlier direction-changing S10 result: managed buffers should
+be treated as approximately performance-neutral with a small median regression, not as an
+S10 RTF optimization. The memory result is stable. Every Java profile allocated about
+160.5 MiB and ran eight GCs; every native-managed profile allocated 279,856 bytes and ran
+zero GCs. Mean PSS was 558,932 KiB for Java and 508,835 KiB for native-managed, a 48.9 MiB
+reduction.
+
 The second run added matched ART and memory evidence:
 
 | Device | Boundary | ART allocated | GC count | PSS | Native heap |
@@ -108,7 +129,7 @@ The converged native-managed two-slot path passes the 9662 bounded-GPU experimen
 - S25 paired processing time improves, including under a hot condition.
 
 Keep `native-packed` as the single native DSP candidate; do not add a product-time
-native-full/native-packed selector. Before application integration, run a cool-device S10
-repeat, a 100-window create/run/close stability batch, and all 13 qualified MDX shapes
-through the same two-slot managed-buffer boundary. QNN needs a separate C API extension and
-must remain a later experiment.
+native-full/native-packed selector. Before application integration, complete a 100-window
+create/run/close stability batch and run all 13 qualified MDX shapes through the same
+two-slot managed-buffer boundary. QNN needs a separate C API extension and must remain a
+later experiment.

@@ -140,6 +140,52 @@ per cycle are lifecycle cleanup evidence and are not comparable to the zero-GC s
 measurement phase. Both after-close trends are far inside the frozen 64 MiB PSS and 16 MiB
 native-heap growth limits.
 
+## All-shape real-model gate
+
+Revision `b9b0d0c` freezes `mdx-managed-buffer-all13-v1` and adds an instrumentation runner
+plus a host driver. The matrix selects one published v2 artifact for every unique MDX DSP
+shape. The host verifies local and device SHA-256 for 517 MiB of models, contracts, and the
+matrix before starting instrumentation. The runner independently verifies every contract,
+model SHA, and shape, creates one model with two managed buffer pairs, runs one warmup and
+two measured two-slot windows, scans every output float, compares the two slot hashes, and
+closes the pipeline before advancing.
+
+Matrix SHA-256:
+`152b5b610a96091b7e900cc52c0bf668e4bac4f6146eef6b686d691358a9cef8`.
+
+| Shape (FFT / dimF / frames) | Representative | S25 mean | S10 mean |
+|---|---|---:|---:|
+| 4096 / 2048 / 128 | Kuielab B Drums | 188.27 ms | 804.68 ms |
+| 4096 / 2048 / 512 | Kuielab A Drums | 809.51 ms | 9,107.98 ms |
+| 5120 / 2048 / 256 | Inst Main | 617.21 ms | 4,292.26 ms |
+| 5120 / 2560 / 256 | Inst HQ4 | 860.79 ms | 4,306.00 ms |
+| 6144 / 2048 / 256 | 9662 | 351.87 ms | 2,625.17 ms |
+| 6144 / 3072 / 256 | Inst HQ1 | 1,434.66 ms | 6,850.83 ms |
+| 6144 / 2048 / 512 | Kuielab A Vocals | 778.66 ms | 8,568.26 ms |
+| 6144 / 3072 / 512 | Reverb HQ | 3,402.55 ms | 21,439.41 ms |
+| 7680 / 3072 / 256 | Kim Inst | 1,272.08 ms | 6,508.28 ms |
+| 8192 / 2048 / 256 | Kuielab B Other | 388.84 ms | 2,525.64 ms |
+| 8192 / 2048 / 512 | Kuielab A Other | 900.42 ms | 8,213.58 ms |
+| 16384 / 2048 / 256 | Kuielab B Bass | 446.81 ms | 2,502.40 ms |
+| 16384 / 2048 / 512 | Kuielab A Bass | 814.61 ms | 8,099.76 ms |
+
+Both devices qualified 13/13 shapes and 26/26 measured windows. Every output was finite,
+the two managed slots produced identical full-output hashes, and every shape recorded equal
+positive dispatch/wait counts: 194 for 4096/128, 278 for the 3072-frequency/HQ models, and
+254 for the remaining graphs. S10 stayed at thermal status `0 -> 0`. S25 started at status 2
+and ended at 3; its timings are load observations, not a cool-device performance baseline.
+
+After-close matrix PSS grew 10,969 KiB on S25 and 22,989 KiB on S10. Native heap grew
+299,632 bytes on S25 and decreased 5,867,504 bytes on S10. Both pass the 128 MiB PSS and
+32 MiB native-heap limits. Retained raw report SHA-256 values are
+`e1c24d19bbce86d68587a31fbedbe86f283c07fdaf9364255f061b9e5f982cef` for S25 and
+`a812b3abcf11462d95b928b72b07d19e303251e3af17790359148d98769e9791` for S10.
+
+The cold S10 figures also bound product expectations: 512-frame and 3072-frequency HQ
+models can take 8-21 seconds per window on bounded GPU. Passing the managed-buffer gate
+means the shared pipeline is compatible; it does not make those shapes suitable for
+real-time use.
+
 ## Decision
 
 The converged native-managed two-slot path passes the 9662 bounded-GPU experimental gate:
@@ -152,6 +198,7 @@ The converged native-managed two-slot path passes the 9662 bounded-GPU experimen
 - S25 paired processing time improves, including under a hot condition.
 
 Keep `native-packed` as the single native DSP candidate; do not add a product-time
-native-full/native-packed selector. Before application integration, run all 13 qualified
-MDX shapes through the same two-slot managed-buffer boundary. QNN needs a separate C API
-extension and must remain a later experiment.
+native-full/native-packed selector. The experiment-level managed-buffer convergence gate is
+now complete on S25 and S10: cold repeat, repeated lifecycle, and every real-model shape
+pass. Application lifecycle and playback integration remain separate work. QNN needs a
+separate C API extension and must remain a later experiment.

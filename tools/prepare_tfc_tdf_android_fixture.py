@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import platform
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -84,6 +85,9 @@ def main() -> int:
     args = parse_args()
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    bundled_model = output_dir / args.tflite.name
+    if args.tflite.resolve() != bundled_model:
+        shutil.copy2(args.tflite.resolve(), bundled_model)
     audio, sample_rate = load_audio(args.audio.resolve())
     start_sample = int(round(args.start_seconds * sample_rate))
     segment = audio[start_sample : start_sample + DEFAULT_CONFIG.useful_samples]
@@ -139,9 +143,9 @@ def main() -> int:
             "right.imag",
         ],
         "model": {
-            "file": args.tflite.name,
-            "bytes": args.tflite.stat().st_size,
-            "sha256": sha256_file(args.tflite),
+            "file": bundled_model.name,
+            "bytes": bundled_model.stat().st_size,
+            "sha256": sha256_file(bundled_model),
             "inputName": str(input_detail["name"]),
             "outputName": str(output_detail["name"]),
             "runtimeShapeNhwc": [1, 1025, 128, 4],

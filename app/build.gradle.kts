@@ -32,6 +32,9 @@ val sourceDirty = providers.gradleProperty("benchmarkSourceDirty").orElse("unkno
 val runtimeId = providers.gradleProperty("benchmarkRuntimeId").orElse(
     if (liteRtAar == null) "com.google.ai.edge.litert:litert:2.1.5" else "local-litert-aar",
 ).get()
+val runtimeVersion = providers.gradleProperty("benchmarkRuntimeVersion").orElse(
+    if (liteRtAar == null) "2.1.5" else "unknown",
+).get()
 val runtimeArtifactSha256 = providers.gradleProperty("benchmarkRuntimeArtifactSha256").orNull
     ?: liteRtAar?.let { sha256(file(it)) }
     ?: "maven-unresolved"
@@ -50,7 +53,7 @@ android {
         buildConfigField("String", "BENCHMARK_SOURCE_REVISION", buildConfigString(sourceRevision))
         buildConfigField("String", "BENCHMARK_SOURCE_DIRTY", buildConfigString(sourceDirty))
         buildConfigField("String", "BENCHMARK_RUNTIME_ID", buildConfigString(runtimeId))
-        buildConfigField("String", "BENCHMARK_RUNTIME_VERSION", buildConfigString("2.1.5"))
+        buildConfigField("String", "BENCHMARK_RUNTIME_VERSION", buildConfigString(runtimeVersion))
         buildConfigField(
             "String",
             "BENCHMARK_RUNTIME_ARTIFACT_SHA256",
@@ -156,7 +159,9 @@ dependencies {
     }
     // Historical x86 benchmark artifact. Canonical builds are published by
     // https://github.com/WluhWluh/bss-litert-android.
-    implementation(files("libs/litert-2.1.5-x86.aar"))
+    if (liteRtAar == null) {
+        implementation(files("libs/litert-2.1.5-x86.aar"))
+    }
     implementation("com.github.wendykierp:JTransforms:3.1")
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.26.0")
 

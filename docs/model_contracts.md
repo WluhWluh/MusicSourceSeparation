@@ -461,3 +461,24 @@ Android implication:
 - The current Android app resamples decoded input audio to `44100 Hz` before MDX inference when the source file uses another sample rate.
 - Current separated WAV outputs are written at `44100 Hz`.
 - Personal-test APK builds include this ONNX file from the local ignored `models/uvr-mdx` directory as an Android asset, then copy it into app-private storage before creating an ONNX Runtime session.
+
+## Compact TFC-TDF external-DSP candidate
+
+The public default TFC-TDF vocal checkpoint now has a project-owned,
+neural-core-only FP32 export. This candidate is separate from the MDX schema-v2
+and HTDemucs contracts. Its ONNX boundary is NCHW `[1,4,1025,128]`; its TFLite
+boundary is NHWC `[1,1025,128,4]`. Both use the feature order
+`left.real, right.real, left.imag, right.imag`. The model directly maps complex
+spectra to vocals, while host DSP supplies periodic-Hann STFT/iSTFT and derives
+instrumental as the mixture residual.
+
+Strict checkpoint loading, PyTorch/ONNX/TFLite tensor parity, a PyTorch DSP
+oracle, and 30-second plus full-song audio parity have passed. The approximately
+3.99 MB FlatBuffer has no custom operators. This is host admission for a device
+and listening experiment, not Android performance, quality, delegate, or
+product-support evidence. MUSDB18's educational/non-commercial training-data
+restriction must be reassessed before commercial or store use.
+
+The complete source identity, DSP windowing contract, artifact hashes,
+measurements, commands, and decision boundary are recorded in
+`tfc-tdf-default-compact-candidate-2026-08-17.md`.

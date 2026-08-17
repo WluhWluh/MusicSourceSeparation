@@ -1,6 +1,7 @@
 # TFC-TDF default compact candidate
 
-Status: provenance and executable contract frozen; export and validation pending
+Status: host export, tensor parity, and full-song audio parity passed; device
+execution and separation quality are not established
 
 This experiment evaluates the public TFC-TDF default vocal checkpoint as an
 extremely small two-stem candidate. The generated graph contains only the
@@ -86,3 +87,114 @@ Generated checkpoints, ONNX/TFLite files, tensors, reports, and audio outputs
 must remain under ignored `models/`, `data/`, or `outputs/` directories. Only
 the reproducible scripts, dependency lock, contract, and summarized results
 belong in Git.
+
+## Reproducible tools
+
+The Python 3.12 environment is pinned by
+`requirements-tfc-tdf-export.txt`. The three stages are:
+
+```text
+python tools/export_tfc_tdf_default_candidate.py --checkpoint <checkpoint>
+python tools/convert_tfc_tdf_default_tflite.py --checkpoint <checkpoint>
+python tools/validate_tfc_tdf_default_audio.py \
+  --checkpoint <checkpoint> --audio <stereo-audio>
+```
+
+The export tool verifies the checkpoint byte count and SHA-256 before using a
+minimal pickle compatibility shim for its historical Lightning
+`AttributeDict`. It rejects any hyperparameter, state key, or tensor shape that
+does not match this exact checkpoint. The converter operates on an ONNX work
+copy because onnx2tf may simplify its input in place. It appends an explicit
+NHWC output adapter to that work copy, leaving the canonical NCHW ONNX source
+unchanged.
+
+## Frozen generated artifacts
+
+The following artifacts were generated with Python 3.12.10, PyTorch
+2.11.0+cpu, ONNX 1.20.1, ONNX Runtime 1.26.0, onnx2tf 2.6.6, TensorFlow
+2.20.0, and ai-edge-litert 2.1.2:
+
+| Artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `tfc_tdf_default_vocals_core_fp32.onnx` | 3,991,252 | `ad1c5dcdf59630a6b130fb76aa39561b79c4896d36c9cba1074065435d7acc07` |
+| `tfc_tdf_default_vocals_core_fp32.tflite` | 3,989,856 | `0ee7bbc0bd5a1194745ebf4df1753ba6ef32a256cbb55fca8098a43912591f5e` |
+
+The Lightning checkpoint has 353 state tensors. The export consumes all 352
+`spec2spec.*` tensors with strict loading and excludes only
+`stft.stft.window`. The neural core contains 990,164 FP32 state values
+(3,960,656 bytes) and 56 scalar int64 BatchNorm counters. The ONNX graph has
+192 nodes and no STFT/iSTFT operators.
+
+The FP32 FlatBuffer has one subgraph, 150 operators, 373 tensors, and no custom
+operators. Both public tensors are `[1,1025,128,4]` NHWC FP32. The observed
+operator inventory is 40 `CONV_2D`, 31 `CONCATENATION`, 24 `ADD`, 16
+`TRANSPOSE`, 14 `BATCH_MATMUL`, 14 `MUL`, 7 `RELU`, 3 `TRANSPOSE_CONV`, and 1
+`PAD`.
+
+Generated reports and fixtures are local at:
+
+```text
+models/tfc-tdf/default-compact/onnx-export-report.json
+models/tfc-tdf/default-compact/tflite-conversion-report.json
+outputs/tfc-tdf-default-validation/audio-validation-report.json
+```
+
+## Tensor parity
+
+Three deterministic random tensors passed a 95 dB / `1e-5` gate:
+
+| Comparison | Minimum SNR | Maximum absolute error |
+| --- | ---: | ---: |
+| PyTorch vs ONNX | 101.233 dB | `2.801419e-6` |
+| PyTorch vs TFLite | 100.983 dB | `3.099442e-6` |
+| ONNX vs TFLite | 101.602 dB | `3.308058e-6` |
+
+The real-audio DSP oracle independently compared the NumPy host path with
+PyTorch. STFT parity was 135.921 dB with `1.525879e-5` maximum error; iSTFT
+parity was 136.024 dB with `2.384186e-7` maximum error. The NumPy and PyTorch
+round trips measured 139.298 dB and 137.477 dB respectively. This also
+executable-proves the less obvious feature order
+`left.real, right.real, left.imag, right.imag`.
+
+## Audio parity
+
+The source was a local stereo 44.1 kHz, 261.013-second listening sample. It is
+not part of Git. Its identities are:
+
+```text
+source bytes:              35,351,663
+source SHA-256:            8ff6b5f84deade9ddc9060ff3702dca80cb3aa304bb06eb99e479fa2d92a424b
+decoded samples:           11,510,688
+decoded FP32 PCM SHA-256:  3fbefbfd19fec935b58697588f98dbc6cc8271dc09e13f74b691332095aa14be
+```
+
+The first 30 seconds used 12 windows; the full song used 97. All pairwise
+vocals and residual-instrumental comparisons passed the 90 dB / `1e-4` audio
+gate. The most relevant PyTorch-versus-TFLite results are:
+
+| Fixture | Stem | SNR | Maximum absolute error |
+| --- | --- | ---: | ---: |
+| 30 seconds | vocals | 128.108 dB | `3.278256e-7` |
+| 30 seconds | instrumental | 137.171 dB | `3.576279e-7` |
+| full song | vocals | 127.492 dB | `7.450581e-7` |
+| full song | instrumental | 135.406 dB | `7.450581e-7` |
+
+For every backend, `vocals + instrumental` reconstructed the input within
+`5.960465e-8`. The ignored output directory contains PCM16 FLAC renders for
+all three backends; the report binds both each FLAC and its pre-encoding FP32
+audio.
+
+Host inference time for the full song was 41.84 seconds for PyTorch, 36.84
+seconds for ONNX Runtime, and 123.32 seconds for LiteRT, plus 5.05 seconds of
+shared/reconstruction DSP. These desktop observations only establish that the
+small graph executes; they are not Android latency, power, or delegate
+evidence.
+
+## Decision boundary
+
+The compact candidate is admitted to an Android CPU/GPU feasibility and
+listening experiment. It is not yet a product model. Host parity does not
+establish vocal-removal quality, device real-time behavior, LiteRT 2.2.0
+compatibility, GPU delegation, or thermal behavior. Redistribution and any
+commercial/store use also remain blocked on a fresh review of the MUSDB18
+training-data restriction.

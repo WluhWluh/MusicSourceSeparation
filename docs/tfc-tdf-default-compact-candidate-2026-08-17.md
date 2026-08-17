@@ -198,3 +198,18 @@ establish vocal-removal quality, device real-time behavior, LiteRT 2.2.0
 compatibility, GPU delegation, or thermal behavior. Redistribution and any
 commercial/store use also remain blocked on a fresh review of the MUSDB18
 training-data restriction.
+
+## Listening assessment
+
+The local full-song renders were reviewed before device benchmarking. The
+instrumental sounded slightly cleaner than Flamingo's causal-model output when
+that player was adjusted for complete vocal suppression. It remained much
+worse than Booming SS's current default MDX 9662 model, with clearly audible
+vocal residue. The result is nevertheless suitable for an experimental,
+lightweight model intended for casual everyday sing-along use; it is not a
+replacement for the default quality route.
+
+No audible difference was found among the PyTorch, ONNX, and TFLite renders.
+This listening observation is consistent with the measured conversion parity,
+but it remains one listener's assessment on the local sample rather than an
+objective separation-quality score.

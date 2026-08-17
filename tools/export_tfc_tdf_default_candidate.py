@@ -230,8 +230,8 @@ def main() -> int:
             "inputLayout": "NCHW",
             "inputFeatureOrder": [
                 "left.real",
-                "left.imag",
                 "right.real",
+                "left.imag",
                 "right.imag",
             ],
             "inputShape": list(input_shape),

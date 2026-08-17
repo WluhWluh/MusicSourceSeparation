@@ -43,7 +43,7 @@ the neural-core artifact.
 | Sample rate | `44100` Hz |
 | STFT | `n_fft=2048`, `hop_length=1024`, periodic Hann, centered, reflect padding |
 | Input/output | FP32 `[1,4,1025,128]` NCHW at the ONNX boundary |
-| Feature order | `left.real, left.imag, right.real, right.imag` |
+| Feature order | `left.real, right.real, left.imag, right.imag` |
 | TFLite boundary | FP32 `[1,1025,128,4]` NHWC |
 | Estimation mode | direct complex mapping, not a mask |
 | Stem reconstruction | vocals from model; instrumental is `mixture - vocals` |
@@ -67,8 +67,9 @@ The upstream evaluation path defines these exact assembly rules:
   ascending offset order, and finally truncated to the source length.
 
 The upstream complex packing is frequency/frame/complex/channel before being
-flattened and transposed. Consequently each neural input frequency point is
-ordered exactly as `left.real, left.imag, right.real, right.imag`.
+flattened and transposed. The complex axis precedes the channel axis before
+flattening, so each neural input frequency point is ordered exactly as
+`left.real, right.real, left.imag, right.imag`.
 
 ## Required evidence
 

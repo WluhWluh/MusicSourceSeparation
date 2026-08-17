@@ -13,6 +13,17 @@ assembly were implemented with reference to
 under Apache-2.0. The local NumPy and Kotlin implementations are maintained in
 this repository and retain this attribution.
 
+The compact TFC-TDF candidate and its neural-core export are derived from
+[`ws-choi/ISMIR2020_U_Nets_SVS`](https://github.com/ws-choi/ISMIR2020_U_Nets_SVS)
+at commit `aafcb69c43675713b86cd4f96eb659cf7eb55d16`, licensed under the MIT
+License, copyright (c) 2020 ws-choi. The local model definition preserves that
+notice. The public pretrained checkpoint was trained on MUSDB18. MUSDB18 is
+recorded by [Zenodo record 1117372](https://doi.org/10.5281/zenodo.1117372) as
+`other-nc` and is provided for educational purposes only; its material may not
+be used commercially without express permission from the copyright holders.
+Neither the upstream MIT notice nor this repository's Apache-2.0 license
+relicenses the MUSDB18 training audio or overrides those restrictions.
+
 ## Runtime and build dependencies
 
 The project directly or transitively uses the following software. Consult the

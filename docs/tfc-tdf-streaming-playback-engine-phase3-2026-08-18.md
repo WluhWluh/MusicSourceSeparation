@@ -105,10 +105,17 @@ com.example.musicsourceseparation.streaming.NonCausalStreamingSeparatedPlaybackE
 - `app/src/main/java/com/example/musicsourceseparation/streaming/MediaCodecStreamingAudioReader.kt`
 - `app/src/test/java/com/example/musicsourceseparation/streaming/NonCausalStreamingSeparatedPlaybackEngineTest.kt`
 
-## Next phase
+## Phase 4 result
 
-The next phase should bind a real TFC-TDF LiteRT 2.2.0 CPU/GPU session to the
-factory, add a real STFT/iSTFT postprocess implementation, and run the reader
-and engine on S25 with a real local song. It should measure first wet-block
-latency, sustained realtime margin, seek latency, decoder timestamp drift,
-thermal behavior, and memory before any product playback integration.
+The real TFC-TDF LiteRT 2.2.0 CPU/GPU session, centered STFT/iSTFT DSP, and
+MediaCodec read-ahead path were measured on an S25 with a local MP3. Both
+backends completed a 30-second real-time run with a seek, no late windows, and
+no discarded epoch outputs. Bounded GPU execution reported positive dispatch
+and event-wait evidence in both generations. The full metrics, resource
+samples, input identities, and limitations are recorded in
+`tfc-tdf-streaming-performance-phase4-2026-08-18.md`.
+
+The result qualifies this isolated data-plane prototype for an integration
+experiment, not for default product exposure. The next boundary is to feed
+the engine from the real Media3 renderer and service lifecycle, while first
+reducing the current per-window allocation and memory peak.

@@ -1,0 +1,371 @@
+package com.example.musicsourceseparation.streaming
+
+import android.content.Context
+import android.media.AudioFormat
+import android.media.MediaCodec
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import android.net.Uri
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import kotlin.math.roundToLong
+
+/**
+ * A second, analysis-only decoder. It owns its extractor and codec and exposes
+ * sequential absolute-frame reads. A non-sequential read recreates the codec
+ * at the requested timestamp and discards decoder preroll until the exact
+ * requested frame is reached.
+ *
+ * This class is intentionally not used by Media3 or the existing WAV/FLAC
+ * cache path. All calls are expected on the engine's analysis executor.
+ */
+class MediaCodecStreamingAudioReader(
+    context: Context,
+    private val uri: Uri,
+) : StreamingAudioReader {
+    private val appContext = context.applicationContext
+    private val stateLock = Any()
+    private val metadata = readMetadata(appContext, uri)
+
+    override val sampleRate: Int = metadata.sampleRate
+    override val channelCount: Int = 2
+    override val frameCount: Long = metadata.frameCount
+
+    private var extractor: MediaExtractor? = null
+    private var codec: MediaCodec? = null
+    private var inputEnded = false
+    private var outputEnded = false
+    private var outputEncoding = AudioFormat.ENCODING_PCM_16BIT
+    private var decoderFrameCursor = 0L
+    private var seekTarget = 0L
+    private var nextFrame = 0L
+    private var pending = FloatArray(0)
+    private var pendingOffsetFrames = 0
+    private var closed = false
+
+    init {
+        require(sampleRate == SAMPLE_RATE) {
+            "Analysis reader requires 44,100 Hz output, got $sampleRate"
+        }
+        require(metadata.sourceChannels in 1..2) {
+            "Analysis reader requires mono or stereo source, got ${metadata.sourceChannels} channels"
+        }
+    }
+
+    override fun read(startSample: Long, frameCount: Int): FloatArray {
+        require(startSample >= 0) { "startSample must not be negative" }
+        require(frameCount > 0) { "frameCount must be positive" }
+        require(startSample + frameCount <= this.frameCount) {
+            "Read exceeds audio duration"
+        }
+
+        synchronized(stateLock) {
+            check(!closed) { "Reader is closed" }
+            if (startSample != nextFrame || codec == null) {
+                resetDecoder(startSample)
+            }
+            val output = FloatArray(frameCount * CHANNEL_COUNT)
+            var copiedFrames = 0
+            while (copiedFrames < frameCount) {
+                val available = pendingFrameCount()
+                if (available > 0) {
+                    val copied = minOf(frameCount - copiedFrames, available)
+                    pending.copyInto(
+                        output,
+                        copiedFrames * CHANNEL_COUNT,
+                        pendingOffsetFrames * CHANNEL_COUNT,
+                        (pendingOffsetFrames + copied) * CHANNEL_COUNT,
+                    )
+                    pendingOffsetFrames += copied
+                    copiedFrames += copied
+                    nextFrame += copied
+                    if (pendingFrameCount() == 0) {
+                        pending = FloatArray(0)
+                        pendingOffsetFrames = 0
+                    }
+                } else {
+                    check(!outputEnded) { "Decoder ended before requested frames" }
+                    decodeOne()
+                }
+            }
+            return output
+        }
+    }
+
+    override fun close() {
+        synchronized(stateLock) {
+            if (closed) return
+            closed = true
+            releaseDecoder()
+            pending = FloatArray(0)
+            pendingOffsetFrames = 0
+        }
+    }
+
+    private fun resetDecoder(startSample: Long) {
+        releaseDecoder()
+        val newExtractor = MediaExtractor()
+        var newCodec: MediaCodec? = null
+        try {
+            newExtractor.setDataSource(appContext, uri, null)
+            val track = findAudioTrack(newExtractor)
+            require(track >= 0) { "No audio track was found" }
+            newExtractor.selectTrack(track)
+            val format = newExtractor.getTrackFormat(track)
+            val mime = format.getString(MediaFormat.KEY_MIME)
+                ?: error("Audio track has no MIME type")
+            newCodec = MediaCodec.createDecoderByType(mime)
+            newCodec.configure(format, null, null, 0)
+            val seekUs = startSample * 1_000_000L / sampleRate
+            newExtractor.seekTo(seekUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+            newCodec.start()
+            extractor = newExtractor
+            codec = newCodec
+            inputEnded = false
+            outputEnded = false
+            outputEncoding = format.optionalInteger(MediaFormat.KEY_PCM_ENCODING)
+                ?: AudioFormat.ENCODING_PCM_16BIT
+            decoderFrameCursor = 0L
+            seekTarget = startSample
+            nextFrame = startSample
+            pending = FloatArray(0)
+            pendingOffsetFrames = 0
+        } catch (throwable: Throwable) {
+            newCodec?.let { activeCodec ->
+                try {
+                    activeCodec.stop()
+                } catch (_: Throwable) {
+                    // The codec may not have reached the started state.
+                }
+                activeCodec.release()
+            }
+            try {
+                newExtractor.release()
+            } catch (_: Throwable) {
+                // Preserve the original decoder setup failure.
+            }
+            throw throwable
+        }
+    }
+
+    private fun decodeOne() {
+        val activeCodec = checkNotNull(codec)
+        val activeExtractor = checkNotNull(extractor)
+        val info = MediaCodec.BufferInfo()
+        while (true) {
+            if (!inputEnded) {
+                val inputIndex = activeCodec.dequeueInputBuffer(TIMEOUT_US)
+                if (inputIndex >= 0) {
+                    val inputBuffer = activeCodec.getInputBuffer(inputIndex)
+                        ?: error("Decoder returned a null input buffer")
+                    val size = activeExtractor.readSampleData(inputBuffer, 0)
+                    if (size < 0) {
+                        activeCodec.queueInputBuffer(
+                            inputIndex,
+                            0,
+                            0,
+                            0L,
+                            MediaCodec.BUFFER_FLAG_END_OF_STREAM,
+                        )
+                        inputEnded = true
+                    } else {
+                        activeCodec.queueInputBuffer(
+                            inputIndex,
+                            0,
+                            size,
+                            activeExtractor.sampleTime,
+                            0,
+                        )
+                        activeExtractor.advance()
+                    }
+                }
+            }
+
+            when (val outputIndex = activeCodec.dequeueOutputBuffer(info, TIMEOUT_US)) {
+                MediaCodec.INFO_TRY_AGAIN_LATER -> continue
+                MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                    val outputFormat = activeCodec.outputFormat
+                    val outputRate = outputFormat.optionalInteger(MediaFormat.KEY_SAMPLE_RATE)
+                    require(outputRate == null || outputRate == sampleRate) {
+                        "Decoder output rate changed to $outputRate"
+                    }
+                    val outputChannels = outputFormat.optionalInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                    require(outputChannels == null || outputChannels in 1..2) {
+                        "Decoder output channel count changed to $outputChannels"
+                    }
+                    outputEncoding = outputFormat.optionalInteger(MediaFormat.KEY_PCM_ENCODING)
+                        ?: outputEncoding
+                }
+                else -> {
+                    if (outputIndex < 0) continue
+                    try {
+                        if (info.size > 0) {
+                            val outputBuffer = activeCodec.getOutputBuffer(outputIndex)
+                                ?: error("Decoder returned a null output buffer")
+                            val values = decodePcm(outputBuffer, info, outputEncoding)
+                            val frameCount = values.size / CHANNEL_COUNT
+                            val timestampFrame = if (info.presentationTimeUs >= 0) {
+                                (info.presentationTimeUs * sampleRate / 1_000_000.0).roundToLong()
+                            } else {
+                                decoderFrameCursor
+                            }
+                            decoderFrameCursor = maxOf(
+                                decoderFrameCursor,
+                                timestampFrame + frameCount,
+                            )
+                            appendFromTarget(timestampFrame, values)
+                        }
+                        if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
+                            outputEnded = true
+                        }
+                    } finally {
+                        activeCodec.releaseOutputBuffer(outputIndex, false)
+                    }
+                    return
+                }
+            }
+        }
+    }
+
+    private fun appendFromTarget(frameStart: Long, values: FloatArray) {
+        val frameCount = values.size / CHANNEL_COUNT
+        val frameEnd = frameStart + frameCount
+        if (frameEnd <= seekTarget) return
+        val clippedStart = maxOf(frameStart, seekTarget)
+        val offsetFrames = (clippedStart - frameStart).toInt()
+        val clipped = if (offsetFrames == 0) {
+            values
+        } else {
+            values.copyOfRange(offsetFrames * CHANNEL_COUNT, values.size)
+        }
+        if (pendingFrameCount() > 0) {
+            val expectedStart = seekTarget + pendingOffsetFrames + pendingFrameCount()
+            require(expectedStart == clippedStart) {
+                "Decoder output timestamp gap: expected $expectedStart, got $clippedStart"
+            }
+            pending += clipped
+        } else {
+            pending = clipped
+            pendingOffsetFrames = 0
+        }
+    }
+
+    private fun decodePcm(
+        buffer: ByteBuffer,
+        info: MediaCodec.BufferInfo,
+        encoding: Int,
+    ): FloatArray {
+        val duplicate = buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+        duplicate.position(info.offset)
+        duplicate.limit(info.offset + info.size)
+        val sourceChannels = metadata.sourceChannels
+        val sourceValues = when (encoding) {
+            AudioFormat.ENCODING_PCM_16BIT -> {
+                val values = ShortArray(duplicate.remaining() / 2)
+                duplicate.asShortBuffer().get(values)
+                FloatArray(values.size) { index -> values[index] / 32768f }
+            }
+            AudioFormat.ENCODING_PCM_FLOAT -> {
+                val values = FloatArray(duplicate.remaining() / 4)
+                duplicate.asFloatBuffer().get(values)
+                values
+            }
+            AudioFormat.ENCODING_PCM_8BIT -> {
+                FloatArray(duplicate.remaining()) {
+                    ((duplicate.get().toInt() and 0xFF) - 128) / 128f
+                }
+            }
+            else -> error("Unsupported decoder PCM encoding: $encoding")
+        }
+        require(sourceValues.size % sourceChannels == 0) {
+            "PCM output is not aligned to source channels"
+        }
+        if (sourceChannels == CHANNEL_COUNT) return sourceValues
+        val frames = sourceValues.size
+        val stereo = FloatArray(frames * CHANNEL_COUNT)
+        for (frame in 0 until frames) {
+            val value = sourceValues[frame]
+            stereo[frame * CHANNEL_COUNT] = value
+            stereo[frame * CHANNEL_COUNT + 1] = value
+        }
+        return stereo
+    }
+
+    private fun pendingFrameCount(): Int {
+        return pending.size / CHANNEL_COUNT - pendingOffsetFrames
+    }
+
+    private fun releaseDecoder() {
+        codec?.let { activeCodec ->
+            try {
+                activeCodec.stop()
+            } catch (_: Throwable) {
+                // Codec may already have been interrupted or released.
+            }
+            activeCodec.release()
+        }
+        codec = null
+        extractor?.release()
+        extractor = null
+        inputEnded = false
+        outputEnded = false
+    }
+
+    private fun findAudioTrack(extractor: MediaExtractor): Int {
+        for (index in 0 until extractor.trackCount) {
+            val mime = extractor.getTrackFormat(index).getString(MediaFormat.KEY_MIME)
+                ?: continue
+            if (mime.startsWith("audio/")) return index
+        }
+        return -1
+    }
+
+    private data class Metadata(
+        val sampleRate: Int,
+        val sourceChannels: Int,
+        val frameCount: Long,
+    )
+
+    private companion object {
+        const val SAMPLE_RATE = 44_100
+        const val CHANNEL_COUNT = 2
+        const val TIMEOUT_US = 10_000L
+
+        fun readMetadata(context: Context, uri: Uri): Metadata {
+            val extractor = MediaExtractor()
+            try {
+                extractor.setDataSource(context, uri, null)
+                var selected: MediaFormat? = null
+                for (index in 0 until extractor.trackCount) {
+                    val format = extractor.getTrackFormat(index)
+                    val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
+                    if (mime.startsWith("audio/")) {
+                        selected = format
+                        break
+                    }
+                }
+                val format = selected ?: error("No audio track was found")
+                val rate = format.optionalInteger(MediaFormat.KEY_SAMPLE_RATE)
+                    ?: error("Audio track has no sample rate")
+                val channels = format.optionalInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                    ?: error("Audio track has no channel count")
+                val durationUs = if (format.containsKey(MediaFormat.KEY_DURATION)) {
+                    format.getLong(MediaFormat.KEY_DURATION)
+                } else {
+                    error("Audio track has no duration")
+                }
+                return Metadata(
+                    sampleRate = rate,
+                    sourceChannels = channels,
+                    frameCount = maxOf(1L, (durationUs * rate / 1_000_000.0).roundToLong()),
+                )
+            } finally {
+                extractor.release()
+            }
+        }
+
+        fun MediaFormat.optionalInteger(key: String): Int? {
+            return if (containsKey(key)) getInteger(key) else null
+        }
+    }
+}

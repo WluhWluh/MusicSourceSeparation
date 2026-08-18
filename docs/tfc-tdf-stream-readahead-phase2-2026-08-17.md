@@ -124,7 +124,7 @@ Implemented in:
 - `tests/test_tfc_tdf_stream_simulator.py`
 
 This phase does not yet perform actual TFC-TDF STFT/iSTFT, LiteRT inference,
-compressed Android decoding, Media3 integration, or device timing. The host
-read budget is a deterministic scheduling control, not a disk-throughput
-benchmark. The next phase should connect this reader to the real host DSP
-pipeline and verify numerical parity and sustained window production.
+Media3 integration, or device timing. The host read budget is a deterministic
+scheduling control, not a disk-throughput benchmark. Phase 3 adds the Android
+engine and a concrete MediaCodec reader; the remaining device validation is
+documented in `tfc-tdf-streaming-playback-engine-phase3-2026-08-18.md`.

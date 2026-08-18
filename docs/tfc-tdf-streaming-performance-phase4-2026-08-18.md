@@ -51,6 +51,9 @@ indicator for this prototype.
 
 ## S25 results
 
+This first table is the frozen pre-reuse baseline. The later session-reuse
+section records the optimized runs.
+
 | Metric | CPU 4 threads | bounded GPU |
 | --- | ---: | ---: |
 | First wet block ready | 1,073 ms | 1,115 ms |
@@ -126,9 +129,8 @@ The following are ordered by expected impact for this data path:
 
 1. Keep `Environment`, `CompiledModel`, tensor buffers, and the bounded GPU
    runtime alive for the current model/accelerator. Seek should reset the input
-   and wet rings and advance the epoch, not recreate the session. The trace
-   gives an upper-bound saving of about 442 ms on GPU and only about 8 ms on
-   CPU for this run.
+   and wet rings and advance the epoch, not recreate the session. This option
+   is implemented and measured below.
 2. Keep the analysis decoder alive and use a safe decoder flush/seek path, or
    feed the analysis ring from PCM already decoded by the Media3 side. This
    targets the 39-44 ms first-fill cost and avoids repeated extractor/codec
@@ -149,19 +151,41 @@ The following are ordered by expected impact for this data path:
    selection has a much larger effect than audio-thread or block-selector
    micro-optimizations.
 
-As a projection, retaining the GPU session could move this S25 seek path from
-about 697 ms toward roughly 250-300 ms before decoder and product-integration
-changes. That is an arithmetic upper-bound estimate, not a product benchmark.
-The corresponding CPU path would remain near 700 ms unless its model inference
-is optimized. With a persistent decoder and a shared PCM read-ahead, the GPU
-path could plausibly approach the 200 ms range, but this needs a dedicated
-implementation and measurement.
+## Session reuse result
+
+The engine now retains the session when model and accelerator identity remain
+unchanged. It still opens a replacement after a model/accelerator switch and
+closes the active session after processing failure or engine close. The same
+single analysis executor serializes all session calls.
+
+| Metric | CPU before | CPU reused | GPU before | GPU reused |
+| --- | ---: | ---: | ---: | ---: |
+| Session open count | 2 | 1 | 2 | 1 |
+| Post-seek setup | 8.22 ms | 0 ms | 442.40 ms | 0 ms |
+| Input fill span | 44.91 ms | 63.76 ms | 49.60 ms | 60.41 ms |
+| First post-seek window | 611.61 ms | 498.32 ms | 148.91 ms | 143.99 ms |
+| Window end to wet selection | 16.66 ms | 18.62 ms | 22.26 ms | 21.30 ms |
+| Seek return to wet selection | 719.53 ms | 580.70 ms | 696.77 ms | 225.69 ms |
+
+GPU seek-to-wet latency fell by 471.07 ms, or 67.6 percent. CPU fell by
+138.83 ms, or 19.3 percent. The CPU improvement is larger than its former
+8.22 ms setup slice because reuse also avoided a cold first invocation: its
+post-seek inference dropped from 583.64 ms to 470.79 ms. Initial cold-start
+latency stayed near 1.1 seconds, as expected; session reuse targets seek and
+later generations, not the first model load.
+
+The reused GPU run processed all 17 windows through one session, reported
+`1,802` bounded OpenCL dispatches and event waits, and finished with zero late
+windows and zero discarded epoch outputs. Thermal status remained `0 -> 0`.
+The measured 225.69 ms result is better than the prior 250-300 ms projection.
+Further reduction now depends mainly on the roughly 60 ms input-fill span,
+144 ms first-window processing, and one 21 ms playback block boundary.
 
 ## Resource observations
 
 The instrumented report records start/end PSS and GC counters; the external
-poller records the in-run peak. Values below are from the final CPU and GPU
-runs, not from the earlier exploratory runs.
+poller records the in-run peak. Values below are from the frozen pre-reuse CPU
+and GPU baseline runs, not from the earlier exploratory runs.
 
 | Resource | CPU 4 threads | bounded GPU |
 | --- | ---: | ---: |
@@ -208,6 +232,8 @@ outputs/tfc-tdf-streaming-s25/s25-gpu-bounded-20260818-r2/report.json
 outputs/tfc-tdf-streaming-s25/s25-gpu-bounded-20260818-r2/host-resource-samples.jsonl
 outputs/tfc-tdf-streaming-s25/s25-cpu-seek-trace-20260818-r2/report.json
 outputs/tfc-tdf-streaming-s25/s25-gpu-seek-trace-20260818/report.json
+outputs/tfc-tdf-streaming-s25/s25-cpu-session-reuse-20260818/report.json
+outputs/tfc-tdf-streaming-s25/s25-gpu-session-reuse-20260818/report.json
 ```
 
 These directories are ignored local evidence. The report's output SHA-256 is

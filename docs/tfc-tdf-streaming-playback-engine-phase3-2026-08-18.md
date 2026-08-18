@@ -54,11 +54,15 @@ single-thread executor serializes old and new reader access, while epoch
 checks provide logical cancellation even when a model invocation does not
 honor interruption immediately.
 
-The inference factory opens one session per generation and reuses it for all
-windows in that generation. `StreamingAccelerator.CPU` and `.GPU` are explicit
-factory inputs. The current repository does not yet provide a TFC-TDF-specific
-LiteRT session implementation; this boundary is intentionally injected so the
-same scheduler can be connected to the audited LiteRT CPU/GPU profiles later.
+The engine retains one inference session across start and seek generations
+when the model and accelerator identity are unchanged. It closes and replaces
+that session for a model/accelerator switch, a processing failure, or engine
+close. This keeps LiteRT environment, compiled graph, and tensor allocation
+out of the seek critical path while preserving serialized session access.
+`StreamingAccelerator.CPU` and `.GPU` are explicit factory inputs. The current
+repository does not yet provide a product TFC-TDF playback integration; the
+session boundary remains injected so the scheduler can be connected to the
+audited LiteRT CPU/GPU profiles.
 
 ## Android read-ahead decoder
 

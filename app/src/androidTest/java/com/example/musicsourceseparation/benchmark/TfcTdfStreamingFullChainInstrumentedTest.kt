@@ -410,6 +410,10 @@ class TfcTdfStreamingFullChainInstrumentedTest {
         private val inputBuffer: TensorBuffer
         private val outputBuffer: TensorBuffer
         private val dsp = TfcTdfStreamingDsp()
+        private val reusableStftTensor = FloatArray(TfcTdfStreamingDsp.TENSOR_ELEMENTS)
+        private val reusableReconstructed = FloatArray(
+            TfcTdfStreamingDsp.INPUT_SAMPLES * TfcTdfStreamingDsp.CHANNELS,
+        )
         private val gpuRuntime = if (boundedGpu && accelerator == StreamingAccelerator.GPU) {
             BoundedGpuRuntime.loadAndValidate()
         } else null
@@ -465,10 +469,10 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             val cpuStart = Process.getElapsedCpuTime()
             val threadCpuStart = Debug.threadCpuTimeNanos()
             val stftStart = SystemClock.elapsedRealtimeNanos()
-            val tensor = dsp.stftNhwc(inputPcm)
+            dsp.stftNhwcInto(inputPcm, reusableStftTensor)
             val stftElapsed = SystemClock.elapsedRealtimeNanos() - stftStart
             stftNanos.addAndGet(stftElapsed)
-            inputBuffer.writeFloat(tensor)
+            inputBuffer.writeFloat(reusableStftTensor)
             val inferenceStart = SystemClock.elapsedRealtimeNanos()
             gpuRuntime?.beginInference()
             try {
@@ -480,14 +484,14 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             inferenceNanos.addAndGet(inferenceElapsed)
             val outputTensor = outputBuffer.readFloat()
             val istftStart = SystemClock.elapsedRealtimeNanos()
-            val reconstructed = dsp.istftInterleaved(outputTensor)
+            dsp.istftInterleavedInto(outputTensor, reusableReconstructed)
             val istftElapsed = SystemClock.elapsedRealtimeNanos() - istftStart
             istftNanos.addAndGet(istftElapsed)
             val valid = FloatArray(actualSamples * TfcTdfStreamingDsp.CHANNELS)
             val sourceOffset = model.trimSamples * TfcTdfStreamingDsp.CHANNELS
             for (index in valid.indices) {
                 valid[index] = inputPcm[sourceOffset + index] -
-                    reconstructed[sourceOffset + index]
+                    reusableReconstructed[sourceOffset + index]
             }
             val totalElapsed = SystemClock.elapsedRealtimeNanos() - totalStart
             totalNanos.addAndGet(totalElapsed)
@@ -519,6 +523,13 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             .put("totalWallMs", totalNanos.get() / 1_000_000.0)
             .put("workerCpuMs", workerCpuMillis.get().toDouble())
             .put("workerThreadCpuMs", workerThreadCpuNanos.get() / 1_000_000.0)
+            .put("dspWorkspaceReuse", true)
+            .put("tensorBufferReuse", true)
+            .put("outputTensorReadAllocates", true)
+            .put(
+                "reusableWorkspaceBytes",
+                (reusableStftTensor.size + reusableReconstructed.size) * Float.SIZE_BYTES,
+            )
             .put("inferenceRtf", inferenceNanos.get() / 1_000_000_000.0 /
                 max(1, windows.get()) / (model.usefulSamples.toDouble() / TfcTdfStreamingDsp.SAMPLE_RATE))
             .put("gpuEvidence", gpuRuntime?.evidence() ?: JSONObject.NULL)

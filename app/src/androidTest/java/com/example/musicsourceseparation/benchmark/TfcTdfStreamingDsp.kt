@@ -24,7 +24,14 @@ internal class TfcTdfStreamingDsp {
     }
 
     fun stftNhwc(inputInterleaved: FloatArray): FloatArray {
+        val tensor = FloatArray(TENSOR_ELEMENTS)
+        stftNhwcInto(inputInterleaved, tensor)
+        return tensor
+    }
+
+    fun stftNhwcInto(inputInterleaved: FloatArray, tensor: FloatArray) {
         require(inputInterleaved.size == INPUT_SAMPLES * CHANNELS)
+        require(tensor.size == TENSOR_ELEMENTS)
         for (channel in 0 until CHANNELS) {
             val channelPadded = padded[channel]
             for (index in channelPadded.indices) {
@@ -33,7 +40,6 @@ internal class TfcTdfStreamingDsp {
             }
         }
 
-        val tensor = FloatArray(TENSOR_ELEMENTS)
         for (channel in 0 until CHANNELS) {
             val realChannel = channel
             val imaginaryChannel = channel + CHANNELS
@@ -54,11 +60,17 @@ internal class TfcTdfStreamingDsp {
                 }
             }
         }
-        return tensor
     }
 
     fun istftInterleaved(tensorNhwc: FloatArray): FloatArray {
+        val output = FloatArray(INPUT_SAMPLES * CHANNELS)
+        istftInterleavedInto(tensorNhwc, output)
+        return output
+    }
+
+    fun istftInterleavedInto(tensorNhwc: FloatArray, output: FloatArray) {
         require(tensorNhwc.size == TENSOR_ELEMENTS)
+        require(output.size == INPUT_SAMPLES * CHANNELS)
         inversePadded.forEach { it.fill(0f) }
         for (channel in 0 until CHANNELS) {
             val realChannel = channel
@@ -86,7 +98,6 @@ internal class TfcTdfStreamingDsp {
             }
         }
 
-        val output = FloatArray(INPUT_SAMPLES * CHANNELS)
         for (sample in 0 until INPUT_SAMPLES) {
             val paddedIndex = CENTER_PAD + sample
             val divisor = windowSum[paddedIndex]
@@ -98,7 +109,6 @@ internal class TfcTdfStreamingDsp {
                 }
             }
         }
-        return output
     }
 
     private fun tensorIndex(frequency: Int, frame: Int, channel: Int): Int {

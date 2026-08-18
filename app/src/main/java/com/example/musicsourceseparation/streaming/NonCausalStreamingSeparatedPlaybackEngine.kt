@@ -144,6 +144,9 @@ class NonCausalStreamingSeparatedPlaybackEngine(
 
     private var workerFuture: Future<*>? = null
     private var pendingRequest: AnalysisRequest? = null
+    // Owned by the resident analysis worker; reused across generations when
+    // the model input shape is unchanged.
+    private var reusableAnalysisInput: FloatArray? = null
 
     @Volatile
     private var reusableSession: SessionHolder? = null
@@ -271,6 +274,7 @@ class NonCausalStreamingSeparatedPlaybackEngine(
             Thread.currentThread().interrupt()
         }
         closeReusableSession()
+        reusableAnalysisInput = null
         reader.close()
         currentModel = null
     }
@@ -333,6 +337,12 @@ class NonCausalStreamingSeparatedPlaybackEngine(
         var nextWindowIndex = analysisStart / model.usefulSamples
         val inputCapacity = (maxInputWindows + 1L) * model.usefulSamples
         val inputRing = InputRing(inputCapacity.toInt())
+        val inputSize = model.inputSamples * CHANNEL_COUNT
+        val input = if (reusableAnalysisInput?.size == inputSize) {
+            requireNotNull(reusableAnalysisInput)
+        } else {
+            FloatArray(inputSize).also { reusableAnalysisInput = it }
+        }
         val session = try {
             acquireSession(model, accelerator)
         } catch (throwable: Throwable) {
@@ -396,9 +406,16 @@ class NonCausalStreamingSeparatedPlaybackEngine(
                         continue
                     }
                     if (windowEnd > processLimit) break
-                    val valid = inputRing.read(windowStart, actual) ?: break
-                    val input = FloatArray(model.inputSamples * CHANNEL_COUNT)
-                    valid.copyInto(input, model.trimSamples * CHANNEL_COUNT)
+                    input.fill(0f)
+                    if (!inputRing.readInto(
+                            startFrame = windowStart,
+                            frameCount = actual,
+                            destination = input,
+                            destinationOffsetFrames = model.trimSamples,
+                        )
+                    ) {
+                        break
+                    }
                     val wet = try {
                         session.process(input, actual).also { output ->
                             require(output.size == actual * CHANNEL_COUNT) {
@@ -541,20 +558,28 @@ class NonCausalStreamingSeparatedPlaybackEngine(
             maxFrames = maxOf(maxFrames, totalFrames())
         }
 
-        fun read(startFrame: Long, frameCount: Int): FloatArray? {
+        fun readInto(
+            startFrame: Long,
+            frameCount: Int,
+            destination: FloatArray,
+            destinationOffsetFrames: Int = 0,
+        ): Boolean {
             require(frameCount > 0)
-            val output = FloatArray(frameCount * CHANNEL_COUNT)
+            require(destinationOffsetFrames >= 0)
+            require(
+                destinationOffsetFrames + frameCount <= destination.size / CHANNEL_COUNT,
+            )
             var position = startFrame
             var remaining = frameCount
-            var outputOffset = 0
+            var outputOffset = destinationOffsetFrames * CHANNEL_COUNT
             for (block in blocks) {
                 if (block.endSample <= position) continue
-                if (block.startFrame > position) return null
+                if (block.startFrame > position) return false
                 val offset = (position - block.startFrame).toInt()
                 val available = block.frameCount - offset
                 val copied = min(remaining, available)
                 block.samples.copyInto(
-                    output,
+                    destination,
                     outputOffset,
                     offset * CHANNEL_COUNT,
                     (offset + copied) * CHANNEL_COUNT,
@@ -562,9 +587,9 @@ class NonCausalStreamingSeparatedPlaybackEngine(
                 position += copied
                 remaining -= copied
                 outputOffset += copied * CHANNEL_COUNT
-                if (remaining == 0) return output
+                if (remaining == 0) return true
             }
-            return null
+            return false
         }
 
         fun discardBefore(positionFrame: Long) {

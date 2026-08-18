@@ -1,7 +1,8 @@
 # TFC-TDF default compact candidate
 
-Status: host export, tensor parity, and full-song audio parity passed; device
-execution and separation quality are not established
+Status: host export, tensor parity, full-song audio parity, and S25 LiteRT
+2.2.0 CPU/GPU tensor execution passed; product separation quality is not
+established
 
 This experiment evaluates the public TFC-TDF default vocal checkpoint as an
 extremely small two-stem candidate. The generated graph contains only the
@@ -184,6 +185,20 @@ For every backend, `vocals + instrumental` reconstructed the input within
 all three backends; the report binds both each FLAC and its pre-encoding FP32
 audio.
 
+## S25 LiteRT 2.2.0 tensor benchmark
+
+The real-song first-window fixture passed on a Galaxy S25 with the frozen
+`2.2.0-bss.2` runtime. CPU XNNPACK measured `1,710.948 ms`, `875.520 ms`,
+`453.117 ms`, and `358.977 ms` total median per invocation at 1, 2, 4, and 8
+threads respectively. The bounded FP32 OpenCL GPU measured `77.959 ms` and
+`98.912 ms` total median in two independent cold sessions, with setup costs of
+`696.95 ms` and `527.99 ms`. Both GPU sessions reported `1,060` dispatches and
+`1,060` event waits, so the result is verified GPU execution rather than an
+unobserved CPU fallback. All runs passed the scale-aware 90 dB numerical gate.
+
+The complete run table, hashes, resource observations, and limitations are in
+`android-litert220-tfc-tdf-s25-2026-08-17.md`.
+
 Host inference time for the full song was 41.84 seconds for PyTorch, 36.84
 seconds for ONNX Runtime, and 123.32 seconds for LiteRT, plus 5.05 seconds of
 shared/reconstruction DSP. These desktop observations only establish that the
@@ -193,11 +208,12 @@ evidence.
 ## Decision boundary
 
 The compact candidate is admitted to an Android CPU/GPU feasibility and
-listening experiment. It is not yet a product model. Host parity does not
-establish vocal-removal quality, device real-time behavior, LiteRT 2.2.0
-compatibility, GPU delegation, or thermal behavior. Redistribution and any
-commercial/store use also remain blocked on a fresh review of the MUSDB18
-training-data restriction.
+listening experiment. S25 tensor execution with LiteRT 2.2.0 and bounded GPU
+delegation is now established for the real first-window fixture, but this is
+not yet a product model. The benchmark does not establish full-song real-time
+behavior, sustained thermal behavior, or end-to-end audio memory use.
+Redistribution and any commercial/store use also remain blocked on a fresh
+review of the MUSDB18 training-data restriction.
 
 ## Listening assessment
 

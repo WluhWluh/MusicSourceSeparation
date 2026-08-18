@@ -107,7 +107,7 @@ class MediaCodecStreamingAudioReader(
         val newExtractor = MediaExtractor()
         var newCodec: MediaCodec? = null
         try {
-            newExtractor.setDataSource(appContext, uri, null)
+            newExtractor.setStreamingDataSource(appContext, uri)
             val track = findAudioTrack(newExtractor)
             require(track >= 0) { "No audio track was found" }
             newExtractor.selectTrack(track)
@@ -334,7 +334,7 @@ class MediaCodecStreamingAudioReader(
         fun readMetadata(context: Context, uri: Uri): Metadata {
             val extractor = MediaExtractor()
             try {
-                extractor.setDataSource(context, uri, null)
+                extractor.setStreamingDataSource(context, uri)
                 var selected: MediaFormat? = null
                 for (index in 0 until extractor.trackCount) {
                     val format = extractor.getTrackFormat(index)
@@ -366,6 +366,14 @@ class MediaCodecStreamingAudioReader(
 
         fun MediaFormat.optionalInteger(key: String): Int? {
             return if (containsKey(key)) getInteger(key) else null
+        }
+
+        fun MediaExtractor.setStreamingDataSource(context: Context, uri: Uri) {
+            if (uri.scheme == "file") {
+                setDataSource(requireNotNull(uri.path) { "File Uri has no path" })
+            } else {
+                setDataSource(context, uri, null)
+            }
         }
     }
 }

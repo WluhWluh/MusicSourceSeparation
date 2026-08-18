@@ -3,6 +3,7 @@ package com.example.musicsourceseparation.streaming
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
@@ -75,6 +76,10 @@ data class StreamingEngineSnapshot(
     val readFrameCount: Long,
     val maxInputRingSamples: Long,
     val wetWindowCount: Int,
+    val wetStartSample: Long?,
+    val wetEndSample: Long?,
+    val wetLeadSamples: Long,
+    val readAheadDecodeWallNanos: Long,
 )
 
 /**
@@ -117,6 +122,7 @@ class NonCausalStreamingSeparatedPlaybackEngine(
     private val lateWindowCount = AtomicLong(0)
     private val readCallCount = AtomicLong(0)
     private val readFrameCount = AtomicLong(0)
+    private val readAheadDecodeWallNanos = AtomicLong(0)
     private val maxInputRingSamples = AtomicLong(0)
     private val lifecycleLock = Any()
 
@@ -209,9 +215,12 @@ class NonCausalStreamingSeparatedPlaybackEngine(
 
     fun snapshot(): StreamingEngineSnapshot {
         val snapshot = wetSnapshot.get()
+        val currentPlaybackSample = playbackSample.get()
+        val wetStartSample = snapshot.windows.firstOrNull()?.startSample
+        val wetEndSample = snapshot.windows.lastOrNull()?.endSample
         return StreamingEngineSnapshot(
             epoch = epoch.get(),
-            playbackSample = playbackSample.get(),
+            playbackSample = currentPlaybackSample,
             active = currentModel != null && !closed.get(),
             publishedWindowCount = publishedWindowCount.get(),
             discardedEpochOutputCount = discardedEpochOutputCount.get(),
@@ -220,6 +229,10 @@ class NonCausalStreamingSeparatedPlaybackEngine(
             readFrameCount = readFrameCount.get(),
             maxInputRingSamples = maxInputRingSamples.get(),
             wetWindowCount = snapshot.windows.size,
+            wetStartSample = wetStartSample,
+            wetEndSample = wetEndSample,
+            wetLeadSamples = maxOf(0L, (wetEndSample ?: currentPlaybackSample) - currentPlaybackSample),
+            readAheadDecodeWallNanos = readAheadDecodeWallNanos.get(),
         )
     }
 
@@ -233,7 +246,13 @@ class NonCausalStreamingSeparatedPlaybackEngine(
             analysisFuture = null
         }
         analysisExecutor.shutdownNow()
+        try {
+            analysisExecutor.awaitTermination(5, TimeUnit.SECONDS)
+        } catch (interrupted: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
         reader.close()
+        currentModel = null
     }
 
     private fun restartLocked(
@@ -291,7 +310,9 @@ class NonCausalStreamingSeparatedPlaybackEngine(
                         readChunkSamples.toLong(),
                         readHorizon - readCursor,
                     ).toInt()
+                    val readStarted = System.nanoTime()
                     val chunk = reader.read(readCursor, count)
+                    readAheadDecodeWallNanos.addAndGet(System.nanoTime() - readStarted)
                     require(chunk.size == count * CHANNEL_COUNT) {
                         "Reader returned ${chunk.size} values for $count frames"
                     }

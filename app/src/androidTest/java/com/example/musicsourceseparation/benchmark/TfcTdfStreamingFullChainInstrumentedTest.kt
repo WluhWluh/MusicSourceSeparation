@@ -46,6 +46,12 @@ class TfcTdfStreamingFullChainInstrumentedTest {
         val backend = args.getString("backend", "cpu")!!
         require(backend == "cpu" || backend == "gpu-bounded")
         val threads = args.getString("threads", "4")!!.toInt().coerceIn(1, 16)
+        val dspProfile = args.getString("dspProfile", "kotlin-jtransforms")!!
+        require(dspProfile in setOf("kotlin-jtransforms", "native-full", "native-packed"))
+        val dspWorkers = args.getString("dspWorkers", "1")!!.toInt()
+            .coerceIn(1, com.example.musicsourceseparation.model.NativeTfcTdfDsp.MAX_WORKERS)
+        val postprocessMode = args.getString("postprocess", "separate")!!
+        require(postprocessMode == "separate" || postprocessMode == "fused")
         val runId = safeName(args.getString("runId", backend)!!)
         val sourceName = safeName(requireNotNull(args.getString("sourceFile")))
         val modelName = safeName(requireNotNull(args.getString("modelFile")))
@@ -83,6 +89,10 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             .put("runId", runId)
             .put("backend", backend)
             .put("threads", threads)
+            .put("dsp", JSONObject()
+                .put("profile", dspProfile)
+                .put("workers", dspWorkers)
+                .put("postprocess", postprocessMode))
             .put("model", fileIdentity(modelFile))
             .put("source", fileIdentity(sourceFile))
             .put("runtime", JSONObject()
@@ -115,6 +125,9 @@ class TfcTdfStreamingFullChainInstrumentedTest {
                 modelFile = modelFile,
                 threads = threads,
                 backend = backend,
+                dspProfile = dspProfile,
+                dspWorkers = dspWorkers,
+                postprocessMode = postprocessMode,
                 trace = trace,
             )
             engine = NonCausalStreamingSeparatedPlaybackEngine(
@@ -325,6 +338,9 @@ class TfcTdfStreamingFullChainInstrumentedTest {
         private val modelFile: File,
         private val threads: Int,
         private val backend: String,
+        private val dspProfile: String,
+        private val dspWorkers: Int,
+        private val postprocessMode: String,
         private val trace: StreamingSeekTrace,
     ) : StreamingInferenceSessionFactory {
         private val lock = Any()
@@ -343,6 +359,9 @@ class TfcTdfStreamingFullChainInstrumentedTest {
                 threads = threads,
                 accelerator = accelerator,
                 boundedGpu = backend == "gpu-bounded",
+                dspProfile = dspProfile,
+                dspWorkers = dspWorkers,
+                postprocessMode = postprocessMode,
                 processCount = processCount,
                 sessionOrdinal = sessionOrdinal,
                 trace = trace,
@@ -398,6 +417,9 @@ class TfcTdfStreamingFullChainInstrumentedTest {
         threads: Int,
         accelerator: StreamingAccelerator,
         boundedGpu: Boolean,
+        dspProfile: String,
+        dspWorkers: Int,
+        private val postprocessMode: String,
         private val processCount: AtomicInteger,
         private val sessionOrdinal: Int,
         private val trace: StreamingSeekTrace,
@@ -409,7 +431,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
         private val compiledModel: CompiledModel
         private val inputBuffer: TensorBuffer
         private val outputBuffer: TensorBuffer
-        private val dsp = TfcTdfStreamingDsp()
+        private val dsp: TfcTdfDspSession = createTfcDsp(dspProfile, dspWorkers)
         private val reusableStftTensor = FloatArray(TfcTdfStreamingDsp.TENSOR_ELEMENTS)
         private val reusableReconstructed = FloatArray(
             TfcTdfStreamingDsp.INPUT_SAMPLES * TfcTdfStreamingDsp.CHANNELS,
@@ -483,16 +505,26 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             val inferenceElapsed = SystemClock.elapsedRealtimeNanos() - inferenceStart
             inferenceNanos.addAndGet(inferenceElapsed)
             val outputTensor = outputBuffer.readFloat()
+            val valid = FloatArray(actualSamples * TfcTdfStreamingDsp.CHANNELS)
             val istftStart = SystemClock.elapsedRealtimeNanos()
-            dsp.istftInterleavedInto(outputTensor, reusableReconstructed)
+            if (postprocessMode == "fused") {
+                dsp.istftResidualInto(
+                    outputTensor,
+                    inputPcm,
+                    model.trimSamples,
+                    actualSamples,
+                    valid,
+                )
+            } else {
+                dsp.istftInterleavedInto(outputTensor, reusableReconstructed)
+                val sourceOffset = model.trimSamples * TfcTdfStreamingDsp.CHANNELS
+                for (index in valid.indices) {
+                    valid[index] = inputPcm[sourceOffset + index] -
+                        reusableReconstructed[sourceOffset + index]
+                }
+            }
             val istftElapsed = SystemClock.elapsedRealtimeNanos() - istftStart
             istftNanos.addAndGet(istftElapsed)
-            val valid = FloatArray(actualSamples * TfcTdfStreamingDsp.CHANNELS)
-            val sourceOffset = model.trimSamples * TfcTdfStreamingDsp.CHANNELS
-            for (index in valid.indices) {
-                valid[index] = inputPcm[sourceOffset + index] -
-                    reusableReconstructed[sourceOffset + index]
-            }
             val totalElapsed = SystemClock.elapsedRealtimeNanos() - totalStart
             totalNanos.addAndGet(totalElapsed)
             workerCpuMillis.addAndGet(Process.getElapsedCpuTime() - cpuStart)
@@ -524,6 +556,9 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             .put("workerCpuMs", workerCpuMillis.get().toDouble())
             .put("workerThreadCpuMs", workerThreadCpuNanos.get() / 1_000_000.0)
             .put("dspWorkspaceReuse", true)
+            .put("dspProfile", dsp.profileId)
+            .put("dspWorkerCount", dsp.workerCount)
+            .put("postprocessMode", postprocessMode)
             .put("tensorBufferReuse", true)
             .put("outputTensorReadAllocates", true)
             .put(
@@ -539,6 +574,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             closed = true
             inputBuffer.close()
             outputBuffer.close()
+            dsp.close()
             compiledModel.close()
             environment.close()
         }
@@ -847,4 +883,17 @@ class TfcTdfStreamingFullChainInstrumentedTest {
     private fun safeName(value: String): String = value.also {
         require(it.matches(Regex("[A-Za-z0-9._-]+")) && it != "." && it != "..")
     }
+}
+
+private fun createTfcDsp(profile: String, workers: Int): TfcTdfDspSession = when (profile) {
+    "kotlin-jtransforms" -> TfcTdfStreamingDsp()
+    "native-full" -> NativeTfcTdfStreamingDsp(
+        workers,
+        com.example.musicsourceseparation.model.NativeTfcTdfDsp.Mode.FULL_COMPLEX,
+    )
+    "native-packed" -> NativeTfcTdfStreamingDsp(
+        workers,
+        com.example.musicsourceseparation.model.NativeTfcTdfDsp.Mode.PACKED_REAL,
+    )
+    else -> error("Unsupported TFC-TDF DSP profile: $profile")
 }

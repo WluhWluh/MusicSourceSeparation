@@ -4,8 +4,25 @@ import org.jtransforms.fft.FloatFFT_1D
 import kotlin.math.PI
 import kotlin.math.cos
 
+internal interface TfcTdfDspSession : AutoCloseable {
+    val profileId: String
+    val workerCount: Int
+
+    fun stftNhwcInto(inputInterleaved: FloatArray, tensor: FloatArray)
+
+    fun istftInterleavedInto(tensorNhwc: FloatArray, output: FloatArray)
+
+    fun istftResidualInto(
+        tensorNhwc: FloatArray,
+        inputInterleaved: FloatArray,
+        trimSamples: Int,
+        actualSamples: Int,
+        output: FloatArray,
+    )
+}
+
 /** TFC-TDF centered STFT/iSTFT contract used by the Phase 4 device benchmark. */
-internal class TfcTdfStreamingDsp {
+internal class TfcTdfStreamingDsp : TfcTdfDspSession {
     private val fft = FloatFFT_1D(N_FFT.toLong())
     private val hann = FloatArray(N_FFT) { index ->
         (0.5 - 0.5 * cos(2.0 * PI * index / N_FFT)).toFloat()
@@ -14,6 +31,7 @@ internal class TfcTdfStreamingDsp {
     private val forwardBuffer = FloatArray(N_FFT * 2)
     private val inverseBuffer = FloatArray(N_FFT * 2)
     private val inversePadded = Array(CHANNELS) { FloatArray(PADDED_SAMPLES) }
+    private val residualReconstructed = FloatArray(INPUT_SAMPLES * CHANNELS)
     private val windowSum = FloatArray(PADDED_SAMPLES).also { sum ->
         for (frame in 0 until FRAMES) {
             val start = frame * HOP_LENGTH
@@ -29,7 +47,10 @@ internal class TfcTdfStreamingDsp {
         return tensor
     }
 
-    fun stftNhwcInto(inputInterleaved: FloatArray, tensor: FloatArray) {
+    override val profileId: String = "kotlin-jtransforms-full-complex"
+    override val workerCount: Int = 1
+
+    override fun stftNhwcInto(inputInterleaved: FloatArray, tensor: FloatArray) {
         require(inputInterleaved.size == INPUT_SAMPLES * CHANNELS)
         require(tensor.size == TENSOR_ELEMENTS)
         for (channel in 0 until CHANNELS) {
@@ -68,7 +89,7 @@ internal class TfcTdfStreamingDsp {
         return output
     }
 
-    fun istftInterleavedInto(tensorNhwc: FloatArray, output: FloatArray) {
+    override fun istftInterleavedInto(tensorNhwc: FloatArray, output: FloatArray) {
         require(tensorNhwc.size == TENSOR_ELEMENTS)
         require(output.size == INPUT_SAMPLES * CHANNELS)
         inversePadded.forEach { it.fill(0f) }
@@ -111,6 +132,27 @@ internal class TfcTdfStreamingDsp {
         }
     }
 
+    override fun istftResidualInto(
+        tensorNhwc: FloatArray,
+        inputInterleaved: FloatArray,
+        trimSamples: Int,
+        actualSamples: Int,
+        output: FloatArray,
+    ) {
+        require(trimSamples >= 0)
+        require(actualSamples >= 0)
+        require(trimSamples + actualSamples <= INPUT_SAMPLES)
+        require(output.size == actualSamples * CHANNELS)
+        istftInterleavedInto(tensorNhwc, residualReconstructed)
+        val sourceOffset = trimSamples * CHANNELS
+        for (index in output.indices) {
+            output[index] = inputInterleaved[sourceOffset + index] -
+                residualReconstructed[sourceOffset + index]
+        }
+    }
+
+    override fun close() = Unit
+
     private fun tensorIndex(frequency: Int, frame: Int, channel: Int): Int {
         return (frequency * FRAMES + frame) * COMPLEX_CHANNELS + channel
     }
@@ -142,4 +184,38 @@ internal class TfcTdfStreamingDsp {
         private const val CENTER_PAD = N_FFT / 2
         private const val PADDED_SAMPLES = INPUT_SAMPLES + N_FFT
     }
+}
+
+internal class NativeTfcTdfStreamingDsp(
+    override val workerCount: Int,
+    private val mode: com.example.musicsourceseparation.model.NativeTfcTdfDsp.Mode,
+) : TfcTdfDspSession {
+    private val delegate = com.example.musicsourceseparation.model.NativeTfcTdfDsp(
+        workerCount = workerCount,
+        mode = mode,
+    )
+
+    override val profileId: String = "${mode.profileId}-workers-$workerCount"
+
+    override fun stftNhwcInto(inputInterleaved: FloatArray, tensor: FloatArray) =
+        delegate.stftNhwcInto(inputInterleaved, tensor)
+
+    override fun istftInterleavedInto(tensorNhwc: FloatArray, output: FloatArray) =
+        delegate.istftInterleavedInto(tensorNhwc, output)
+
+    override fun istftResidualInto(
+        tensorNhwc: FloatArray,
+        inputInterleaved: FloatArray,
+        trimSamples: Int,
+        actualSamples: Int,
+        output: FloatArray,
+    ) = delegate.istftResidualInto(
+        tensorNhwc,
+        inputInterleaved,
+        trimSamples,
+        actualSamples,
+        output,
+    )
+
+    override fun close() = delegate.close()
 }

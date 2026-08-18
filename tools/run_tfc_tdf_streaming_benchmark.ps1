@@ -4,6 +4,12 @@ param(
     [string]$Backend = "cpu",
     [ValidateRange(1, 16)]
     [int]$Threads = 4,
+    [ValidateSet("kotlin-jtransforms", "native-full", "native-packed")]
+    [string]$DspProfile = "kotlin-jtransforms",
+    [ValidateRange(1, 4)]
+    [int]$DspWorkers = 1,
+    [ValidateSet("separate", "fused")]
+    [string]$Postprocess = "separate",
     [ValidateRange(5, 120)]
     [double]$PlaybackSeconds = 30,
     [ValidateRange(0, 119)]
@@ -152,6 +158,9 @@ New-Item -ItemType Directory -Path $outputRoot | Out-Null
     serial = $Serial
     backend = $Backend
     threads = $Threads
+    dspProfile = $DspProfile
+    dspWorkers = $DspWorkers
+    postprocess = $Postprocess
     runtimeAar = [ordered]@{ path = $RuntimeAar; bytes = (Get-Item $RuntimeAar).Length; sha256 = $runtimeSha }
     model = [ordered]@{ path = $ModelFile; bytes = (Get-Item $ModelFile).Length; sha256 = $modelSha }
     source = [ordered]@{ path = $SourceAudio; bytes = (Get-Item $SourceAudio).Length; sha256 = $sourceSha }
@@ -184,6 +193,9 @@ $instrumentArguments = @(
     "-e", "class", $testClass,
     "-e", "backend", $Backend,
     "-e", "threads", $Threads.ToString(),
+    "-e", "dspProfile", $DspProfile,
+    "-e", "dspWorkers", $DspWorkers.ToString(),
+    "-e", "postprocess", $Postprocess,
     "-e", "runId", $RunId,
     "-e", "sourceFile", $sourceName,
     "-e", "modelFile", $modelName,

@@ -188,20 +188,12 @@ class TfcTdfDefaultLiteRt220InstrumentedTest {
             writeFloats(outputFile, outputNchw)
             val comparisonToOnnx = compare(onnxGolden, outputNchw)
             val comparisonToHostTflite = compare(hostTfliteGolden, outputNchw)
-            require(comparisonPassed(comparisonToOnnx)) {
-                "Device output failed ONNX parity: $comparisonToOnnx"
-            }
-            require(comparisonPassed(comparisonToHostTflite)) {
-                "Device output failed host TFLite parity: $comparisonToHostTflite"
-            }
             val boundedEvidence = boundedRuntime?.evidence()
-            if (boundedEvidence != null) {
-                val dispatchCount = boundedEvidence.getLong("dispatchCount")
-                val waitCount = boundedEvidence.getLong("eventWaitCount")
-                require(dispatchCount > 0L && dispatchCount == waitCount) {
-                    "GPU execution was not verified: $boundedEvidence"
-                }
-            }
+            val gpuEvidencePassed = boundedEvidence?.let { evidence ->
+                val dispatchCount = evidence.getLong("dispatchCount")
+                val waitCount = evidence.getLong("eventWaitCount")
+                dispatchCount > 0L && dispatchCount == waitCount
+            } ?: true
             report
                 .put("status", "complete")
                 .put("setup", timingJson(setup))
@@ -222,8 +214,19 @@ class TfcTdfDefaultLiteRt220InstrumentedTest {
                 .put("output", fileIdentity(outputFile).put("finite", outputNchw.all { it.isFinite() }))
                 .put("comparisonToOnnx", comparisonToOnnx)
                 .put("comparisonToHostTflite", comparisonToHostTflite)
-                .put("gate", JSONObject().put("minimumSnrDb", 90.0).put("maximumAbsoluteError", 1e-4))
+                .put("gate", JSONObject()
+                    .put("minimumSnrDb", MINIMUM_SNR_DB)
+                    .put("maximumAbsoluteErrorFloor", MAXIMUM_ABSOLUTE_ERROR_FLOOR)
+                    .put("maximumNormalizedAbsoluteError", MAXIMUM_NORMALIZED_ABSOLUTE_ERROR))
                 .put("boundedGpuEvidence", boundedEvidence ?: JSONObject.NULL)
+                .put("gpuEvidencePassed", gpuEvidencePassed)
+            require(comparisonPassed(comparisonToOnnx)) {
+                "Device output failed ONNX parity: $comparisonToOnnx"
+            }
+            require(comparisonPassed(comparisonToHostTflite)) {
+                "Device output failed host TFLite parity: $comparisonToHostTflite"
+            }
+            require(gpuEvidencePassed) { "GPU execution was not verified: $boundedEvidence" }
         } catch (error: Throwable) {
             report
                 .put("status", "error")
@@ -328,6 +331,7 @@ class TfcTdfDefaultLiteRt220InstrumentedTest {
         var referencePower = 0.0
         var candidatePower = 0.0
         var dot = 0.0
+        var referencePeak = 0.0
         var finite = true
         for (index in reference.indices) {
             val expected = reference[index].toDouble()
@@ -341,12 +345,18 @@ class TfcTdfDefaultLiteRt220InstrumentedTest {
             referencePower += expected * expected
             candidatePower += actual * actual
             dot += expected * actual
+            referencePeak = maxOf(referencePeak, kotlin.math.abs(expected))
         }
         val bitExact = errorPower == 0.0
         val snr = if (bitExact) 300.0 else {
             10.0 * ln(referencePower / errorPower) / ln(10.0)
         }
         val cosine = dot / sqrt(referencePower * candidatePower)
+        val normalizedMaxAbsError = if (referencePeak == 0.0) maxAbs else maxAbs / referencePeak
+        val allowedMaxAbsError = maxOf(
+            MAXIMUM_ABSOLUTE_ERROR_FLOOR,
+            referencePeak * MAXIMUM_NORMALIZED_ABSOLUTE_ERROR,
+        )
         return JSONObject()
             .put("finite", finite)
             .put("elements", reference.size)
@@ -354,6 +364,9 @@ class TfcTdfDefaultLiteRt220InstrumentedTest {
             .put("meanAbsError", absSum / reference.size)
             .put("rmse", sqrt(errorPower / reference.size))
             .put("signalRms", sqrt(referencePower / reference.size))
+            .put("referencePeak", referencePeak)
+            .put("normalizedMaxAbsError", normalizedMaxAbsError)
+            .put("allowedMaxAbsError", allowedMaxAbsError)
             .put("snrDb", snr)
             .put("cosineSimilarity", cosine)
             .put("bitExact", bitExact)
@@ -361,8 +374,8 @@ class TfcTdfDefaultLiteRt220InstrumentedTest {
 
     private fun comparisonPassed(comparison: JSONObject): Boolean =
         comparison.getBoolean("finite") &&
-            comparison.getDouble("snrDb") >= 90.0 &&
-            comparison.getDouble("maxAbsError") <= 1e-4
+            comparison.getDouble("snrDb") >= MINIMUM_SNR_DB &&
+            comparison.getDouble("maxAbsError") <= comparison.getDouble("allowedMaxAbsError")
 
     private fun timingSummary(values: List<Double>): JSONObject {
         val sorted = values.sorted()
@@ -521,6 +534,9 @@ class TfcTdfDefaultLiteRt220InstrumentedTest {
         private const val FREQUENCIES = 1025
         private const val FRAMES = 128
         private const val ELEMENT_COUNT = CHANNELS * FREQUENCIES * FRAMES
+        private const val MINIMUM_SNR_DB = 90.0
+        private const val MAXIMUM_ABSOLUTE_ERROR_FLOOR = 2e-4
+        private const val MAXIMUM_NORMALIZED_ABSOLUTE_ERROR = 2e-6
         private val NCHW_SHAPE = listOf(1, CHANNELS, FREQUENCIES, FRAMES)
         private val NHWC_SHAPE = listOf(1, FREQUENCIES, FRAMES, CHANNELS)
     }

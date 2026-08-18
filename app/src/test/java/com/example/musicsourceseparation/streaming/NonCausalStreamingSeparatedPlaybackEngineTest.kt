@@ -88,12 +88,19 @@ class NonCausalStreamingSeparatedPlaybackEngineTest {
             assertEquals(2, snapshot.epoch)
             assertTrue(snapshot.discardedEpochOutputCount > 0)
             assertEquals(1, factory.openCount.get())
+            assertEquals(1, snapshot.analysisWorkerStartCount)
+            assertEquals(2, snapshot.analysisCommandCount)
+            assertEquals(2, snapshot.analysisCommandTakeCount)
 
             val publishedAfterFirstSeek = snapshot.publishedWindowCount
             engine.seek(model.usefulSamples.toLong() * 2 + 123)
             assertTrue(await { engine.snapshot().publishedWindowCount > publishedAfterFirstSeek })
-            assertEquals(3, engine.snapshot().epoch)
+            val secondSeekSnapshot = engine.snapshot()
+            assertEquals(3, secondSeekSnapshot.epoch)
             assertEquals(1, factory.openCount.get())
+            assertEquals(1, secondSeekSnapshot.analysisWorkerStartCount)
+            assertEquals(3, secondSeekSnapshot.analysisCommandCount)
+            assertEquals(3, secondSeekSnapshot.analysisCommandTakeCount)
         } finally {
             engine.close()
         }

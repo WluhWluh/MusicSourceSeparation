@@ -96,6 +96,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             .put("gcStart", gcEvidence())
 
         var playbackReader: MediaCodecStreamingAudioReader? = null
+        var analysisMediaReader: MediaCodecStreamingAudioReader? = null
         var analysisReader: StreamingAudioReader? = null
         var engine: NonCausalStreamingSeparatedPlaybackEngine? = null
         var factory: MeasuredLiteRtSessionFactory? = null
@@ -104,8 +105,9 @@ class TfcTdfStreamingFullChainInstrumentedTest {
         val trace = StreamingSeekTrace(wallStart)
         try {
             playbackReader = MediaCodecStreamingAudioReader(context, android.net.Uri.fromFile(sourceFile))
+            analysisMediaReader = MediaCodecStreamingAudioReader(context, android.net.Uri.fromFile(sourceFile))
             analysisReader = TracingAudioReader(
-                delegate = MediaCodecStreamingAudioReader(context, android.net.Uri.fromFile(sourceFile)),
+                delegate = requireNotNull(analysisMediaReader),
                 trace = trace,
             )
             require(playbackReader.frameCount == analysisReader.frameCount)
@@ -230,6 +232,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             playbackReader.close()
             playbackReader = null
             val factoryReport = requireNotNull(factory).report()
+            val decoderReport = analysisMediaReader?.stats()
             val elapsedWallMs = elapsedMs(wallStart, SystemClock.elapsedRealtimeNanos())
             val audioSeconds = logicalFrames.toDouble() / TfcTdfStreamingDsp.SAMPLE_RATE
             val fullChainWallMs = factoryReport.getDouble("fullChainWallMs")
@@ -281,7 +284,17 @@ class TfcTdfStreamingFullChainInstrumentedTest {
                     .put("readFrameCount", finalSnapshot.readFrameCount)
                     .put("maxInputRingSamples", finalSnapshot.maxInputRingSamples)
                     .put("wetWindowCount", finalSnapshot.wetWindowCount)
-                    .put("readAheadDecodeWallMs", finalSnapshot.readAheadDecodeWallNanos / 1_000_000.0))
+                    .put("readAheadDecodeWallMs", finalSnapshot.readAheadDecodeWallNanos / 1_000_000.0)
+                    .put("analysisWorkerStartCount", finalSnapshot.analysisWorkerStartCount)
+                    .put("analysisCommandCount", finalSnapshot.analysisCommandCount)
+                    .put("analysisCommandTakeCount", finalSnapshot.analysisCommandTakeCount))
+                .put("analysisDecoder", JSONObject()
+                    .put("codecCreateCount", decoderReport?.codecCreateCount ?: JSONObject.NULL)
+                    .put("codecFlushCount", decoderReport?.codecFlushCount ?: JSONObject.NULL)
+                    .put("codecReleaseCount", decoderReport?.codecReleaseCount ?: JSONObject.NULL)
+                    .put("decoderSeekCount", decoderReport?.decoderSeekCount ?: JSONObject.NULL)
+                    .put("flushWallMs", decoderReport?.flushWallNanos?.div(1_000_000.0)
+                        ?: JSONObject.NULL))
                 .put("resources", resourceSamples)
                 .put("thermalStatusEnd", powerManager.currentThermalStatus)
                 .put("batteryTemperatureDeciCEnd", batteryTemperatureDeciC(context))

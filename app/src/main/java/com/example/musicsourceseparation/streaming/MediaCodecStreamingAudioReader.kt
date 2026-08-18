@@ -10,11 +10,19 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.roundToLong
 
+data class MediaCodecStreamingAudioReaderStats(
+    val codecCreateCount: Int,
+    val codecFlushCount: Int,
+    val codecReleaseCount: Int,
+    val decoderSeekCount: Int,
+    val flushWallNanos: Long,
+)
+
 /**
  * A second, analysis-only decoder. It owns its extractor and codec and exposes
- * sequential absolute-frame reads. A non-sequential read recreates the codec
- * at the requested timestamp and discards decoder preroll until the exact
- * requested frame is reached.
+ * sequential absolute-frame reads. A non-sequential read first seeks the
+ * existing extractor and flushes the existing codec. If that operation is not
+ * supported by a device codec, it falls back to recreating the decoder.
  *
  * This class is intentionally not used by Media3 or the existing WAV/FLAC
  * cache path. All calls are expected on the engine's analysis executor.
@@ -42,6 +50,11 @@ class MediaCodecStreamingAudioReader(
     private var pending = FloatArray(0)
     private var pendingOffsetFrames = 0
     private var closed = false
+    private var codecCreateCount = 0
+    private var codecFlushCount = 0
+    private var codecReleaseCount = 0
+    private var decoderSeekCount = 0
+    private var flushWallNanos = 0L
 
     init {
         require(sampleRate == SAMPLE_RATE) {
@@ -102,7 +115,49 @@ class MediaCodecStreamingAudioReader(
         }
     }
 
+    fun stats(): MediaCodecStreamingAudioReaderStats = synchronized(stateLock) {
+        MediaCodecStreamingAudioReaderStats(
+            codecCreateCount = codecCreateCount,
+            codecFlushCount = codecFlushCount,
+            codecReleaseCount = codecReleaseCount,
+            decoderSeekCount = decoderSeekCount,
+            flushWallNanos = flushWallNanos,
+        )
+    }
+
     private fun resetDecoder(startSample: Long) {
+        decoderSeekCount++
+        val activeExtractor = extractor
+        val activeCodec = codec
+        if (activeExtractor != null && activeCodec != null) {
+            val flushStarted = System.nanoTime()
+            try {
+                activeCodec.flush()
+                activeExtractor.seekTo(
+                    startSample * 1_000_000L / sampleRate,
+                    MediaExtractor.SEEK_TO_CLOSEST_SYNC,
+                )
+                // flush() returns a running decoder to MediaCodec's flushed
+                // executing sub-state; calling start() here is invalid.
+                codecFlushCount++
+                flushWallNanos += System.nanoTime() - flushStarted
+                inputEnded = false
+                outputEnded = false
+                decoderFrameCursor = 0L
+                seekTarget = startSample
+                nextFrame = startSample
+                pending = FloatArray(0)
+                pendingOffsetFrames = 0
+                return
+            } catch (_: Throwable) {
+                flushWallNanos += System.nanoTime() - flushStarted
+                releaseDecoder()
+            }
+        }
+        createDecoder(startSample)
+    }
+
+    private fun createDecoder(startSample: Long) {
         releaseDecoder()
         val newExtractor = MediaExtractor()
         var newCodec: MediaCodec? = null
@@ -121,6 +176,7 @@ class MediaCodecStreamingAudioReader(
             newCodec.start()
             extractor = newExtractor
             codec = newCodec
+            codecCreateCount++
             inputEnded = false
             outputEnded = false
             outputEncoding = format.optionalInteger(MediaFormat.KEY_PCM_ENCODING)
@@ -297,15 +353,24 @@ class MediaCodecStreamingAudioReader(
 
     private fun releaseDecoder() {
         codec?.let { activeCodec ->
+            codecReleaseCount++
             try {
                 activeCodec.stop()
             } catch (_: Throwable) {
                 // Codec may already have been interrupted or released.
             }
-            activeCodec.release()
+            try {
+                activeCodec.release()
+            } catch (_: Throwable) {
+                // Preserve the surrounding lifecycle operation.
+            }
         }
         codec = null
-        extractor?.release()
+        try {
+            extractor?.release()
+        } catch (_: Throwable) {
+            // Preserve the surrounding lifecycle operation.
+        }
         extractor = null
         inputEnded = false
         outputEnded = false

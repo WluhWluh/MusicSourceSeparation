@@ -7,6 +7,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 import kotlin.math.min
 
 enum class StreamingAccelerator {
@@ -80,6 +82,9 @@ data class StreamingEngineSnapshot(
     val wetEndSample: Long?,
     val wetLeadSamples: Long,
     val readAheadDecodeWallNanos: Long,
+    val analysisWorkerStartCount: Long,
+    val analysisCommandCount: Long,
+    val analysisCommandTakeCount: Long,
 )
 
 /**
@@ -124,7 +129,12 @@ class NonCausalStreamingSeparatedPlaybackEngine(
     private val readFrameCount = AtomicLong(0)
     private val readAheadDecodeWallNanos = AtomicLong(0)
     private val maxInputRingSamples = AtomicLong(0)
+    private val analysisWorkerStartCount = AtomicLong(0)
+    private val analysisCommandCount = AtomicLong(0)
+    private val analysisCommandTakeCount = AtomicLong(0)
     private val lifecycleLock = Any()
+    private val commandLock = ReentrantLock()
+    private val commandReady = commandLock.newCondition()
 
     @Volatile
     private var currentModel: StreamingModelConfig? = null
@@ -132,7 +142,8 @@ class NonCausalStreamingSeparatedPlaybackEngine(
     @Volatile
     private var currentAccelerator: StreamingAccelerator = StreamingAccelerator.CPU
 
-    private var analysisFuture: Future<*>? = null
+    private var workerFuture: Future<*>? = null
+    private var pendingRequest: AnalysisRequest? = null
 
     @Volatile
     private var reusableSession: SessionHolder? = null
@@ -236,6 +247,9 @@ class NonCausalStreamingSeparatedPlaybackEngine(
             wetEndSample = wetEndSample,
             wetLeadSamples = maxOf(0L, (wetEndSample ?: currentPlaybackSample) - currentPlaybackSample),
             readAheadDecodeWallNanos = readAheadDecodeWallNanos.get(),
+            analysisWorkerStartCount = analysisWorkerStartCount.get(),
+            analysisCommandCount = analysisCommandCount.get(),
+            analysisCommandTakeCount = analysisCommandTakeCount.get(),
         )
     }
 
@@ -245,8 +259,10 @@ class NonCausalStreamingSeparatedPlaybackEngine(
             enabled.set(false)
             epoch.incrementAndGet()
             wetSnapshot.set(WetSnapshot.EMPTY)
-            analysisFuture?.cancel(true)
-            analysisFuture = null
+            commandLock.withLock {
+                pendingRequest = null
+                commandReady.signalAll()
+            }
         }
         analysisExecutor.shutdownNow()
         try {
@@ -265,23 +281,53 @@ class NonCausalStreamingSeparatedPlaybackEngine(
         accelerator: StreamingAccelerator,
     ) {
         val generation = epoch.incrementAndGet()
-        analysisFuture?.cancel(true)
         wetSnapshot.set(WetSnapshot.EMPTY)
         playbackSample.set(startSample)
         currentModel = model
         currentAccelerator = accelerator
         enabled.set(true)
-        analysisFuture = analysisExecutor.submit {
-            analyze(generation, startSample, model, accelerator)
+        commandLock.withLock {
+            pendingRequest = AnalysisRequest(generation, startSample, model, accelerator)
+            analysisCommandCount.incrementAndGet()
+            if (workerFuture == null || workerFuture?.isDone == true) {
+                workerFuture = analysisExecutor.submit {
+                    analysisWorkerLoop()
+                }
+            }
+            commandReady.signalAll()
         }
     }
 
-    private fun analyze(
-        generation: Long,
-        startSample: Long,
-        model: StreamingModelConfig,
-        accelerator: StreamingAccelerator,
-    ) {
+    private fun analysisWorkerLoop() {
+        analysisWorkerStartCount.incrementAndGet()
+        while (!closed.get()) {
+            val request = takeAnalysisRequest() ?: return
+            analyze(request)
+        }
+    }
+
+    private fun takeAnalysisRequest(): AnalysisRequest? {
+        commandLock.withLock {
+            while (!closed.get() && pendingRequest == null) {
+                try {
+                    commandReady.await()
+                } catch (interrupted: InterruptedException) {
+                    if (closed.get()) return null
+                }
+            }
+            if (closed.get()) return null
+            val request = pendingRequest ?: return null
+            pendingRequest = null
+            analysisCommandTakeCount.incrementAndGet()
+            return request
+        }
+    }
+
+    private fun analyze(request: AnalysisRequest) {
+        val generation = request.generation
+        val startSample = request.startSample
+        val model = request.model
+        val accelerator = request.accelerator
         val analysisStart = (startSample / model.usefulSamples) * model.usefulSamples
         var readCursor = analysisStart
         var nextWindowIndex = analysisStart / model.usefulSamples
@@ -561,6 +607,13 @@ class NonCausalStreamingSeparatedPlaybackEngine(
         val model: StreamingModelConfig,
         val accelerator: StreamingAccelerator,
         val session: StreamingInferenceSession,
+    )
+
+    private data class AnalysisRequest(
+        val generation: Long,
+        val startSample: Long,
+        val model: StreamingModelConfig,
+        val accelerator: StreamingAccelerator,
     )
 
     private class WetSnapshot(val windows: Array<WetWindow>) {

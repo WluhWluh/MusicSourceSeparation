@@ -649,13 +649,16 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             val seekStart = seekStartedNanos
             val seekEnd = seekReturnedNanos
             val wetSelection = firstWetSelectionNanos
-            val secondSetup = sessionSetups.firstOrNull { it.ordinal == 1 }
-            val firstPostSeekWindow = windowProcesses.firstOrNull {
-                it.sessionOrdinal == 1 && it.windowIndex == 0
+            val postSeekSetup = seekEnd?.let { boundary ->
+                sessionSetups.firstOrNull { it.startNanos >= boundary }
             }
-            val readsBeforeWindow = if (secondSetup != null && firstPostSeekWindow != null) {
+            val firstPostSeekWindow = seekEnd?.let { boundary ->
+                windowProcesses.firstOrNull { it.startNanos >= boundary }
+            }
+            val analysisStart = postSeekSetup?.endNanos ?: seekEnd
+            val readsBeforeWindow = if (analysisStart != null && firstPostSeekWindow != null) {
                 readerReads.filter {
-                    it.startNanos >= secondSetup.endNanos &&
+                    it.startNanos >= analysisStart &&
                         it.endNanos <= firstPostSeekWindow.startNanos
                 }
             } else {
@@ -663,11 +666,12 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             }
             val readWallNanos = readsBeforeWindow.sumOf { it.endNanos - it.startNanos }
             val readFrameCount = readsBeforeWindow.sumOf { it.frameCount.toLong() }
-            val analysisSpanNanos = if (secondSetup != null && firstPostSeekWindow != null) {
-                firstPostSeekWindow.startNanos - secondSetup.endNanos
+            val analysisSpanNanos = if (analysisStart != null && firstPostSeekWindow != null) {
+                firstPostSeekWindow.startNanos - analysisStart
             } else {
                 null
             }
+            val firstRead = readsBeforeWindow.firstOrNull()
 
             return JSONObject()
                 .put("seekCallWallMs", seekCallWallMs ?: JSONObject.NULL)
@@ -677,18 +681,24 @@ class TfcTdfStreamingFullChainInstrumentedTest {
                 .put("seekReturnToWetSelectionMs", if (seekEnd != null && wetSelection != null) {
                     (wetSelection - seekEnd) / 1_000_000.0
                 } else JSONObject.NULL)
-                .put("secondSessionSetupStartAfterSeekReturnMs", if (seekEnd != null && secondSetup != null) {
-                    (secondSetup.startNanos - seekEnd) / 1_000_000.0
-                } else JSONObject.NULL)
-                .put("secondSessionSetupWallMs", secondSetup?.let {
+                .put("sessionReused", postSeekSetup == null && firstPostSeekWindow != null)
+                .put("secondSessionSetupStartAfterSeekReturnMs", if (seekEnd != null && postSeekSetup != null) {
+                    (postSeekSetup.startNanos - seekEnd) / 1_000_000.0
+                } else 0.0)
+                .put("secondSessionSetupWallMs", postSeekSetup?.let {
                     (it.endNanos - it.startNanos) / 1_000_000.0
-                } ?: JSONObject.NULL)
-                .put("secondSessionSetupEndAfterSeekReturnMs", if (seekEnd != null && secondSetup != null) {
-                    (secondSetup.endNanos - seekEnd) / 1_000_000.0
+                } ?: 0.0)
+                .put("secondSessionSetupEndAfterSeekReturnMs", if (seekEnd != null && postSeekSetup != null) {
+                    (postSeekSetup.endNanos - seekEnd) / 1_000_000.0
+                } else 0.0)
+                .put("firstReaderReadStartAfterSeekReturnMs", if (seekEnd != null && firstRead != null) {
+                    (firstRead.startNanos - seekEnd) / 1_000_000.0
                 } else JSONObject.NULL)
                 .put("readerReadCountBeforeFirstWindow", readsBeforeWindow.size)
                 .put("readerReadFramesBeforeFirstWindow", readFrameCount)
                 .put("readerReadWallMsBeforeFirstWindow", readWallNanos / 1_000_000.0)
+                .put("analysisStartToFirstWindowStartMs", analysisSpanNanos?.let { it / 1_000_000.0 }
+                    ?: JSONObject.NULL)
                 .put("setupEndToFirstWindowStartMs", analysisSpanNanos?.let { it / 1_000_000.0 }
                     ?: JSONObject.NULL)
                 .put("firstPostSeekWindowStartWallMs", firstPostSeekWindow?.let {

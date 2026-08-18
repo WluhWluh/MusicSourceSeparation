@@ -50,8 +50,8 @@ interface StreamingAudioReader : AutoCloseable {
 }
 
 /**
- * A reusable CPU/GPU model session. The engine opens one session per
- * generation and reuses it for every window in that generation.
+ * A reusable CPU/GPU model session. The engine reuses one session across
+ * generations while the model and accelerator identity stay unchanged.
  */
 interface StreamingInferenceSession : AutoCloseable {
     /** Returns only the valid, unpadded stereo output for actualSamples. */
@@ -134,6 +134,9 @@ class NonCausalStreamingSeparatedPlaybackEngine(
 
     private var analysisFuture: Future<*>? = null
 
+    @Volatile
+    private var reusableSession: SessionHolder? = null
+
     /** Starts a new analysis generation at startSample. */
     fun start(
         startSample: Long = 0,
@@ -153,7 +156,7 @@ class NonCausalStreamingSeparatedPlaybackEngine(
         enabled.set(value)
     }
 
-    /** Rebuilds the analysis session from the window containing targetSample. */
+    /** Starts a fresh analysis generation from the window containing targetSample. */
     fun seek(targetSample: Long) {
         requirePosition(targetSample)
         synchronized(lifecycleLock) {
@@ -251,6 +254,7 @@ class NonCausalStreamingSeparatedPlaybackEngine(
         } catch (interrupted: InterruptedException) {
             Thread.currentThread().interrupt()
         }
+        closeReusableSession()
         reader.close()
         currentModel = null
     }
@@ -284,7 +288,7 @@ class NonCausalStreamingSeparatedPlaybackEngine(
         val inputCapacity = (maxInputWindows + 1L) * model.usefulSamples
         val inputRing = InputRing(inputCapacity.toInt())
         val session = try {
-            sessionFactory.open(model, accelerator)
+            acquireSession(model, accelerator)
         } catch (throwable: Throwable) {
             if (isCurrent(generation)) {
                 currentModel = null
@@ -349,9 +353,15 @@ class NonCausalStreamingSeparatedPlaybackEngine(
                     val valid = inputRing.read(windowStart, actual) ?: break
                     val input = FloatArray(model.inputSamples * CHANNEL_COUNT)
                     valid.copyInto(input, model.trimSamples * CHANNEL_COUNT)
-                    val wet = session.process(input, actual)
-                    require(wet.size == actual * CHANNEL_COUNT) {
-                        "Session returned ${wet.size} values for $actual frames"
+                    val wet = try {
+                        session.process(input, actual).also { output ->
+                            require(output.size == actual * CHANNEL_COUNT) {
+                                "Session returned ${output.size} values for $actual frames"
+                            }
+                        }
+                    } catch (throwable: Throwable) {
+                        discardSession(session)
+                        throw throwable
                     }
                     if (!isCurrent(generation)) {
                         discardedEpochOutputCount.incrementAndGet()
@@ -379,12 +389,42 @@ class NonCausalStreamingSeparatedPlaybackEngine(
                 currentModel = null
                 wetSnapshot.set(WetSnapshot.EMPTY)
             }
-        } finally {
-            try {
-                session.close()
-            } catch (_: Throwable) {
-                // A failed session must not take down the playback path.
+        }
+    }
+
+    private fun acquireSession(
+        model: StreamingModelConfig,
+        accelerator: StreamingAccelerator,
+    ): StreamingInferenceSession {
+        reusableSession?.let { holder ->
+            if (holder.model == model && holder.accelerator == accelerator) {
+                return holder.session
             }
+        }
+        closeReusableSession()
+        return sessionFactory.open(model, accelerator).also { session ->
+            reusableSession = SessionHolder(model, accelerator, session)
+        }
+    }
+
+    private fun discardSession(session: StreamingInferenceSession) {
+        val holder = reusableSession
+        if (holder?.session !== session) return
+        reusableSession = null
+        try {
+            session.close()
+        } catch (_: Throwable) {
+            // Preserve the original processing failure.
+        }
+    }
+
+    private fun closeReusableSession() {
+        val holder = reusableSession ?: return
+        reusableSession = null
+        try {
+            holder.session.close()
+        } catch (_: Throwable) {
+            // Session cleanup must not prevent reader or engine cleanup.
         }
     }
 
@@ -516,6 +556,12 @@ class NonCausalStreamingSeparatedPlaybackEngine(
     ) {
         val endSample: Long get() = startSample + samples.size / CHANNEL_COUNT
     }
+
+    private data class SessionHolder(
+        val model: StreamingModelConfig,
+        val accelerator: StreamingAccelerator,
+        val session: StreamingInferenceSession,
+    )
 
     private class WetSnapshot(val windows: Array<WetWindow>) {
         fun copy(startSample: Long, frameCount: Int, destination: FloatArray): Boolean {

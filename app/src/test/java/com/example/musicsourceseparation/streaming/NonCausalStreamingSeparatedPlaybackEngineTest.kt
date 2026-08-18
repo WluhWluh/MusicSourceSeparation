@@ -87,10 +87,41 @@ class NonCausalStreamingSeparatedPlaybackEngineTest {
             val snapshot = engine.snapshot()
             assertEquals(2, snapshot.epoch)
             assertTrue(snapshot.discardedEpochOutputCount > 0)
-            assertTrue(factory.openCount.get() >= 2)
+            assertEquals(1, factory.openCount.get())
+
+            val publishedAfterFirstSeek = snapshot.publishedWindowCount
+            engine.seek(model.usefulSamples.toLong() * 2 + 123)
+            assertTrue(await { engine.snapshot().publishedWindowCount > publishedAfterFirstSeek })
+            assertEquals(3, engine.snapshot().epoch)
+            assertEquals(1, factory.openCount.get())
         } finally {
             engine.close()
         }
+    }
+
+    @Test
+    fun modelOrAcceleratorSwitchClosesAndReplacesReusableSession() {
+        val factory = RecordingFactory()
+        val reader = FakeReader(frameCount = model.usefulSamples * 5)
+        val engine = NonCausalStreamingSeparatedPlaybackEngine(reader, factory)
+        val replacement = model.copy(modelId = "tfc-tdf-replacement")
+        try {
+            engine.start(model = model, accelerator = StreamingAccelerator.GPU)
+            assertTrue(await { factory.processCount.get() > 0 })
+
+            engine.switchModel(replacement, StreamingAccelerator.GPU)
+            assertTrue(await { factory.openCount.get() == 2 })
+            assertEquals(1, factory.closeCount.get())
+            assertEquals(replacement, factory.lastModel)
+
+            engine.switchModel(replacement, StreamingAccelerator.CPU)
+            assertTrue(await { factory.openCount.get() == 3 })
+            assertEquals(2, factory.closeCount.get())
+            assertEquals(StreamingAccelerator.CPU, factory.lastAccelerator)
+        } finally {
+            engine.close()
+        }
+        assertEquals(3, factory.closeCount.get())
     }
 
     @Test
@@ -173,7 +204,10 @@ class NonCausalStreamingSeparatedPlaybackEngineTest {
         private val processGate: CountDownLatch? = null,
     ) : StreamingInferenceSessionFactory {
         val openCount = AtomicInteger(0)
+        val closeCount = AtomicInteger(0)
         val processCount = AtomicInteger(0)
+        @Volatile
+        var lastModel: StreamingModelConfig? = null
         @Volatile
         var lastAccelerator: StreamingAccelerator? = null
 
@@ -182,6 +216,7 @@ class NonCausalStreamingSeparatedPlaybackEngineTest {
             accelerator: StreamingAccelerator,
         ): StreamingInferenceSession {
             openCount.incrementAndGet()
+            lastModel = model
             lastAccelerator = accelerator
             return object : StreamingInferenceSession {
                 override fun process(inputPcm: FloatArray, actualSamples: Int): FloatArray {
@@ -206,7 +241,9 @@ class NonCausalStreamingSeparatedPlaybackEngineTest {
                         }
                 }
 
-                override fun close() = Unit
+                override fun close() {
+                    closeCount.incrementAndGet()
+                }
             }
         }
     }

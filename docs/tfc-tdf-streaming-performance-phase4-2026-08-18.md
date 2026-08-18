@@ -88,6 +88,75 @@ profile `gpu-opencl-bounded-fp32-v1`, `1,802` dispatches, and `1,802` event
 waits. This is a verified bounded GPU run, not an inference result that merely
 requested a GPU accelerator.
 
+## Seek latency decomposition
+
+The benchmark has a second trace run which records the critical path after the
+seek request. The values below are from separate 30-second S25 runs using the
+same source and seek position. The small difference between the two totals and
+the earlier baseline is normal scheduling variance.
+
+| Seek stage | CPU 4 threads | bounded GPU |
+| --- | ---: | ---: |
+| `seek()` call itself | 0.31 ms | 0.18 ms |
+| Seek return to new worker/session start | 38.14 ms | 33.59 ms |
+| Second session initialization | 8.22 ms | 442.40 ms |
+| Session end to first window process start | 44.91 ms | 49.60 ms |
+| Of that, MediaCodec read wall time | 39.42 ms | 44.19 ms |
+| First window STFT | 12.49 ms | 13.97 ms |
+| First window LiteRT inference | 583.64 ms | 108.37 ms |
+| First window iSTFT | 12.46 ms | 19.84 ms |
+| Remaining first-window processing | about 2.98 ms | about 6.73 ms |
+| Window end to wet block selection | 16.66 ms | 22.26 ms |
+| Total seek return to wet selection | 719.53 ms | 696.77 ms |
+
+The analysis reader performed eight reads totaling 131,072 frames before the
+first post-seek window. The useful model window is 119,808 frames, so this is
+the expected bounded read-ahead plus decoder granularity rather than a full-song
+decode. The `seek()` API is not the bottleneck. On CPU, the first window's
+inference dominates. On GPU, rebuilding the second `CompiledModel` session
+dominates.
+
+These measurements also explain why CPU and GPU seek totals happened to be
+similar despite very different steady-state inference speed. They should not
+be interpreted as equal backend seek performance.
+
+## Latency reduction options
+
+The following are ordered by expected impact for this data path:
+
+1. Keep `Environment`, `CompiledModel`, tensor buffers, and the bounded GPU
+   runtime alive for the current model/accelerator. Seek should reset the input
+   and wet rings and advance the epoch, not recreate the session. The trace
+   gives an upper-bound saving of about 442 ms on GPU and only about 8 ms on
+   CPU for this run.
+2. Keep the analysis decoder alive and use a safe decoder flush/seek path, or
+   feed the analysis ring from PCM already decoded by the Media3 side. This
+   targets the 39-44 ms first-fill cost and avoids repeated extractor/codec
+   setup. WAV/FLAC random access may be cheaper than MP3, but must be measured
+   separately.
+3. Replace cancellation plus executor resubmission with a persistent analysis
+   worker receiving an epoch/seek command. The current handoff costs about
+   34-38 ms. Old results can still be rejected by epoch without stopping the
+   worker thread.
+4. Start decoder refill and any unavoidable session initialization in parallel
+   on bounded workers. This can overlap part of the roughly 50 ms input-fill
+   span, but it is secondary to GPU session reuse.
+5. Reuse STFT, iSTFT, tensor, and residual buffers. This primarily reduces
+   memory pressure and GC; the measured first-window DSP portion is only about
+   25-34 ms, so it will not by itself remove the 720 ms delay.
+6. For CPU-only devices, reduce the first-window model cost or use a smaller
+   streaming model. The current CPU inference slice is about 584 ms, so model
+   selection has a much larger effect than audio-thread or block-selector
+   micro-optimizations.
+
+As a projection, retaining the GPU session could move this S25 seek path from
+about 697 ms toward roughly 250-300 ms before decoder and product-integration
+changes. That is an arithmetic upper-bound estimate, not a product benchmark.
+The corresponding CPU path would remain near 700 ms unless its model inference
+is optimized. With a persistent decoder and a shared PCM read-ahead, the GPU
+path could plausibly approach the 200 ms range, but this needs a dedicated
+implementation and measurement.
+
 ## Resource observations
 
 The instrumented report records start/end PSS and GC counters; the external
@@ -137,6 +206,8 @@ outputs/tfc-tdf-streaming-s25/s25-cpu-4t-20260818-r3/report.json
 outputs/tfc-tdf-streaming-s25/s25-cpu-4t-20260818-r3/host-resource-samples.jsonl
 outputs/tfc-tdf-streaming-s25/s25-gpu-bounded-20260818-r2/report.json
 outputs/tfc-tdf-streaming-s25/s25-gpu-bounded-20260818-r2/host-resource-samples.jsonl
+outputs/tfc-tdf-streaming-s25/s25-cpu-seek-trace-20260818-r2/report.json
+outputs/tfc-tdf-streaming-s25/s25-gpu-seek-trace-20260818/report.json
 ```
 
 These directories are ignored local evidence. The report's output SHA-256 is

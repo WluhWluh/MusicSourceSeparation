@@ -15,6 +15,7 @@ import com.example.musicsourceseparation.BuildConfig
 import com.example.musicsourceseparation.streaming.MediaCodecStreamingAudioReader
 import com.example.musicsourceseparation.streaming.NonCausalStreamingSeparatedPlaybackEngine
 import com.example.musicsourceseparation.streaming.StreamingAccelerator
+import com.example.musicsourceseparation.streaming.StreamingAudioReader
 import com.example.musicsourceseparation.streaming.StreamingInferenceSession
 import com.example.musicsourceseparation.streaming.StreamingInferenceSessionFactory
 import com.example.musicsourceseparation.streaming.StreamingModelConfig
@@ -95,19 +96,24 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             .put("gcStart", gcEvidence())
 
         var playbackReader: MediaCodecStreamingAudioReader? = null
-        var analysisReader: MediaCodecStreamingAudioReader? = null
+        var analysisReader: StreamingAudioReader? = null
         var engine: NonCausalStreamingSeparatedPlaybackEngine? = null
         var factory: MeasuredLiteRtSessionFactory? = null
         val processCpuStart = Process.getElapsedCpuTime()
         val wallStart = SystemClock.elapsedRealtimeNanos()
+        val trace = StreamingSeekTrace(wallStart)
         try {
             playbackReader = MediaCodecStreamingAudioReader(context, android.net.Uri.fromFile(sourceFile))
-            analysisReader = MediaCodecStreamingAudioReader(context, android.net.Uri.fromFile(sourceFile))
+            analysisReader = TracingAudioReader(
+                delegate = MediaCodecStreamingAudioReader(context, android.net.Uri.fromFile(sourceFile)),
+                trace = trace,
+            )
             require(playbackReader.frameCount == analysisReader.frameCount)
             factory = MeasuredLiteRtSessionFactory(
                 modelFile = modelFile,
                 threads = threads,
                 backend = backend,
+                trace = trace,
             )
             engine = NonCausalStreamingSeparatedPlaybackEngine(
                 reader = analysisReader,
@@ -156,9 +162,13 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             while (logicalPosition < logicalFrames) {
                 if (!seekDone && logicalPosition >= seekAtFrame) {
                     val seekStarted = SystemClock.elapsedRealtimeNanos()
+                    trace.markSeekStarted(seekStarted)
                     engine.seek(seekTargetFrame)
+                    val seekReturned = SystemClock.elapsedRealtimeNanos()
+                    trace.markSeekReturned(seekReturned)
                     sourcePosition = seekTargetFrame
                     seekRequestWallMs = elapsedMs(wallStart, seekStarted)
+                    trace.seekCallWallMs = elapsedMs(seekStarted, seekReturned)
                     seekDone = true
                 }
                 val frameCount = min(blockSamples.toLong(), logicalFrames - logicalPosition).toInt()
@@ -179,6 +189,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
                     }
                     if (seekDone && seekWetWallMs == null) {
                         seekWetWallMs = elapsedMs(wallStart, SystemClock.elapsedRealtimeNanos())
+                        trace.markFirstWetSelection(SystemClock.elapsedRealtimeNanos())
                     }
                 } else {
                     dryBlocks.incrementAndGet()
@@ -246,7 +257,8 @@ class TfcTdfStreamingFullChainInstrumentedTest {
                     .put("playbackDecodeWallMs", decodeWallNanos.get() / 1_000_000.0)
                     .put("blockSelectionWallMs", selectionWallNanos.get() / 1_000_000.0)
                     .put("engine", factoryReport)
-                    .put("fullChainRtf", fullChainWallMs / 1_000.0 / audioSeconds))
+                    .put("fullChainRtf", fullChainWallMs / 1_000.0 / audioSeconds)
+                    .put("seekBreakdown", trace.report(seekWetWallMs)))
                 .put("wetLead", JSONObject()
                     .put("samples", JSONArray(leadSamples))
                     .put("minimumSamples", leadSamples.minOrNull() ?: 0L)
@@ -300,6 +312,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
         private val modelFile: File,
         private val threads: Int,
         private val backend: String,
+        private val trace: StreamingSeekTrace,
     ) : StreamingInferenceSessionFactory {
         private val lock = Any()
         private val sessions = ArrayList<MeasuredLiteRtSession>()
@@ -310,6 +323,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             model: StreamingModelConfig,
             accelerator: StreamingAccelerator,
         ): StreamingInferenceSession {
+            val sessionOrdinal = openCount.getAndIncrement()
             val session = MeasuredLiteRtSession(
                 modelFile = modelFile,
                 model = model,
@@ -317,9 +331,10 @@ class TfcTdfStreamingFullChainInstrumentedTest {
                 accelerator = accelerator,
                 boundedGpu = backend == "gpu-bounded",
                 processCount = processCount,
+                sessionOrdinal = sessionOrdinal,
+                trace = trace,
             )
             synchronized(lock) { sessions += session }
-            openCount.incrementAndGet()
             return session
         }
 
@@ -371,6 +386,8 @@ class TfcTdfStreamingFullChainInstrumentedTest {
         accelerator: StreamingAccelerator,
         boundedGpu: Boolean,
         private val processCount: AtomicInteger,
+        private val sessionOrdinal: Int,
+        private val trace: StreamingSeekTrace,
     ) : StreamingInferenceSession {
         private val setupStart = SystemClock.elapsedRealtimeNanos()
         private val setupCpuStart = Process.getElapsedCpuTime()
@@ -422,9 +439,11 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             require(inputs.size == 1 && outputs.size == 1)
             inputBuffer = inputs.single()
             outputBuffer = outputs.single()
-            setupWallMs = (SystemClock.elapsedRealtimeNanos() - setupStart) / 1_000_000.0
+            val setupEnd = SystemClock.elapsedRealtimeNanos()
+            setupWallMs = (setupEnd - setupStart) / 1_000_000.0
             setupCpuMs = Process.getElapsedCpuTime() - setupCpuStart
             setupThreadCpuMs = threadCpuElapsedMs(setupThreadCpuStart)
+            trace.recordSessionSetup(sessionOrdinal, setupStart, setupEnd)
         }
 
         override fun process(inputPcm: FloatArray, actualSamples: Int): FloatArray {
@@ -434,7 +453,8 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             val threadCpuStart = Debug.threadCpuTimeNanos()
             val stftStart = SystemClock.elapsedRealtimeNanos()
             val tensor = dsp.stftNhwc(inputPcm)
-            stftNanos.addAndGet(SystemClock.elapsedRealtimeNanos() - stftStart)
+            val stftElapsed = SystemClock.elapsedRealtimeNanos() - stftStart
+            stftNanos.addAndGet(stftElapsed)
             inputBuffer.writeFloat(tensor)
             val inferenceStart = SystemClock.elapsedRealtimeNanos()
             gpuRuntime?.beginInference()
@@ -443,22 +463,35 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             } finally {
                 gpuRuntime?.endInference()
             }
-            inferenceNanos.addAndGet(SystemClock.elapsedRealtimeNanos() - inferenceStart)
+            val inferenceElapsed = SystemClock.elapsedRealtimeNanos() - inferenceStart
+            inferenceNanos.addAndGet(inferenceElapsed)
             val outputTensor = outputBuffer.readFloat()
             val istftStart = SystemClock.elapsedRealtimeNanos()
             val reconstructed = dsp.istftInterleaved(outputTensor)
-            istftNanos.addAndGet(SystemClock.elapsedRealtimeNanos() - istftStart)
+            val istftElapsed = SystemClock.elapsedRealtimeNanos() - istftStart
+            istftNanos.addAndGet(istftElapsed)
             val valid = FloatArray(actualSamples * TfcTdfStreamingDsp.CHANNELS)
             val sourceOffset = model.trimSamples * TfcTdfStreamingDsp.CHANNELS
             for (index in valid.indices) {
                 valid[index] = inputPcm[sourceOffset + index] -
                     reconstructed[sourceOffset + index]
             }
-            totalNanos.addAndGet(SystemClock.elapsedRealtimeNanos() - totalStart)
+            val totalElapsed = SystemClock.elapsedRealtimeNanos() - totalStart
+            totalNanos.addAndGet(totalElapsed)
             workerCpuMillis.addAndGet(Process.getElapsedCpuTime() - cpuStart)
             workerThreadCpuNanos.addAndGet(threadCpuElapsedNanos(threadCpuStart))
-            windows.incrementAndGet()
+            val windowIndex = windows.getAndIncrement()
             processCount.incrementAndGet()
+            trace.recordWindow(
+                sessionOrdinal = sessionOrdinal,
+                windowIndex = windowIndex,
+                startNanos = totalStart,
+                endNanos = totalStart + totalElapsed,
+                stftNanos = stftElapsed,
+                inferenceNanos = inferenceElapsed,
+                istftNanos = istftElapsed,
+                totalNanos = totalElapsed,
+            )
             return valid
         }
 
@@ -495,6 +528,191 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             fun threadCpuElapsedMs(start: Long): Double =
                 threadCpuElapsedNanos(start) / 1_000_000.0
         }
+    }
+
+    private class TracingAudioReader(
+        private val delegate: StreamingAudioReader,
+        private val trace: StreamingSeekTrace,
+    ) : StreamingAudioReader {
+        override val sampleRate: Int get() = delegate.sampleRate
+        override val channelCount: Int get() = delegate.channelCount
+        override val frameCount: Long get() = delegate.frameCount
+
+        override fun read(startSample: Long, frameCount: Int): FloatArray {
+            val started = SystemClock.elapsedRealtimeNanos()
+            return try {
+                delegate.read(startSample, frameCount)
+            } finally {
+                trace.recordReaderRead(
+                    startSample = startSample,
+                    frameCount = frameCount,
+                    startNanos = started,
+                    endNanos = SystemClock.elapsedRealtimeNanos(),
+                )
+            }
+        }
+
+        override fun close() = delegate.close()
+    }
+
+    private class StreamingSeekTrace(
+        private val originNanos: Long,
+    ) {
+        private data class ReaderRead(
+            val startSample: Long,
+            val frameCount: Int,
+            val startNanos: Long,
+            val endNanos: Long,
+        )
+
+        private data class SessionSetup(
+            val ordinal: Int,
+            val startNanos: Long,
+            val endNanos: Long,
+        )
+
+        private data class WindowProcess(
+            val sessionOrdinal: Int,
+            val windowIndex: Int,
+            val startNanos: Long,
+            val endNanos: Long,
+            val stftNanos: Long,
+            val inferenceNanos: Long,
+            val istftNanos: Long,
+            val totalNanos: Long,
+        )
+
+        private val readerReads = ArrayList<ReaderRead>()
+        private val sessionSetups = ArrayList<SessionSetup>()
+        private val windowProcesses = ArrayList<WindowProcess>()
+        private var seekStartedNanos: Long? = null
+        private var seekReturnedNanos: Long? = null
+        private var firstWetSelectionNanos: Long? = null
+
+        var seekCallWallMs: Double? = null
+
+        @Synchronized
+        fun markSeekStarted(nanos: Long) {
+            seekStartedNanos = nanos
+        }
+
+        @Synchronized
+        fun markSeekReturned(nanos: Long) {
+            seekReturnedNanos = nanos
+        }
+
+        @Synchronized
+        fun markFirstWetSelection(nanos: Long) {
+            if (firstWetSelectionNanos == null) firstWetSelectionNanos = nanos
+        }
+
+        @Synchronized
+        fun recordReaderRead(
+            startSample: Long,
+            frameCount: Int,
+            startNanos: Long,
+            endNanos: Long,
+        ) {
+            readerReads += ReaderRead(startSample, frameCount, startNanos, endNanos)
+        }
+
+        @Synchronized
+        fun recordSessionSetup(ordinal: Int, startNanos: Long, endNanos: Long) {
+            sessionSetups += SessionSetup(ordinal, startNanos, endNanos)
+        }
+
+        @Synchronized
+        fun recordWindow(
+            sessionOrdinal: Int,
+            windowIndex: Int,
+            startNanos: Long,
+            endNanos: Long,
+            stftNanos: Long,
+            inferenceNanos: Long,
+            istftNanos: Long,
+            totalNanos: Long,
+        ) {
+            windowProcesses += WindowProcess(
+                sessionOrdinal,
+                windowIndex,
+                startNanos,
+                endNanos,
+                stftNanos,
+                inferenceNanos,
+                istftNanos,
+                totalNanos,
+            )
+        }
+
+        @Synchronized
+        fun report(seekWetWallMs: Double?): JSONObject {
+            val seekStart = seekStartedNanos
+            val seekEnd = seekReturnedNanos
+            val wetSelection = firstWetSelectionNanos
+            val secondSetup = sessionSetups.firstOrNull { it.ordinal == 1 }
+            val firstPostSeekWindow = windowProcesses.firstOrNull {
+                it.sessionOrdinal == 1 && it.windowIndex == 0
+            }
+            val readsBeforeWindow = if (secondSetup != null && firstPostSeekWindow != null) {
+                readerReads.filter {
+                    it.startNanos >= secondSetup.endNanos &&
+                        it.endNanos <= firstPostSeekWindow.startNanos
+                }
+            } else {
+                emptyList()
+            }
+            val readWallNanos = readsBeforeWindow.sumOf { it.endNanos - it.startNanos }
+            val readFrameCount = readsBeforeWindow.sumOf { it.frameCount.toLong() }
+            val analysisSpanNanos = if (secondSetup != null && firstPostSeekWindow != null) {
+                firstPostSeekWindow.startNanos - secondSetup.endNanos
+            } else {
+                null
+            }
+
+            return JSONObject()
+                .put("seekCallWallMs", seekCallWallMs ?: JSONObject.NULL)
+                .put("seekRequestWallMs", seekStart?.let(::relativeMs) ?: JSONObject.NULL)
+                .put("seekReturnWallMs", seekEnd?.let(::relativeMs) ?: JSONObject.NULL)
+                .put("seekWetSelectionWallMs", seekWetWallMs ?: JSONObject.NULL)
+                .put("seekReturnToWetSelectionMs", if (seekEnd != null && wetSelection != null) {
+                    (wetSelection - seekEnd) / 1_000_000.0
+                } else JSONObject.NULL)
+                .put("secondSessionSetupStartAfterSeekReturnMs", if (seekEnd != null && secondSetup != null) {
+                    (secondSetup.startNanos - seekEnd) / 1_000_000.0
+                } else JSONObject.NULL)
+                .put("secondSessionSetupWallMs", secondSetup?.let {
+                    (it.endNanos - it.startNanos) / 1_000_000.0
+                } ?: JSONObject.NULL)
+                .put("secondSessionSetupEndAfterSeekReturnMs", if (seekEnd != null && secondSetup != null) {
+                    (secondSetup.endNanos - seekEnd) / 1_000_000.0
+                } else JSONObject.NULL)
+                .put("readerReadCountBeforeFirstWindow", readsBeforeWindow.size)
+                .put("readerReadFramesBeforeFirstWindow", readFrameCount)
+                .put("readerReadWallMsBeforeFirstWindow", readWallNanos / 1_000_000.0)
+                .put("setupEndToFirstWindowStartMs", analysisSpanNanos?.let { it / 1_000_000.0 }
+                    ?: JSONObject.NULL)
+                .put("firstPostSeekWindowStartWallMs", firstPostSeekWindow?.let {
+                    relativeMs(it.startNanos)
+                } ?: JSONObject.NULL)
+                .put("firstPostSeekWindowProcessWallMs", firstPostSeekWindow?.let {
+                    it.totalNanos / 1_000_000.0
+                } ?: JSONObject.NULL)
+                .put("firstPostSeekWindowStftWallMs", firstPostSeekWindow?.let {
+                    it.stftNanos / 1_000_000.0
+                } ?: JSONObject.NULL)
+                .put("firstPostSeekWindowInferenceWallMs", firstPostSeekWindow?.let {
+                    it.inferenceNanos / 1_000_000.0
+                } ?: JSONObject.NULL)
+                .put("firstPostSeekWindowIstftWallMs", firstPostSeekWindow?.let {
+                    it.istftNanos / 1_000_000.0
+                } ?: JSONObject.NULL)
+                .put("firstWindowEndToWetSelectionMs", if (firstPostSeekWindow != null && wetSelection != null) {
+                    (wetSelection - firstPostSeekWindow.endNanos) / 1_000_000.0
+                } else JSONObject.NULL)
+        }
+
+        private fun relativeMs(nanos: Long): Double =
+            (nanos - originNanos) / 1_000_000.0
     }
 
     private class BoundedGpuRuntime private constructor(

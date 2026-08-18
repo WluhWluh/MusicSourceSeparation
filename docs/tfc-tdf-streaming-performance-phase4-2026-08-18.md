@@ -19,7 +19,7 @@ integration test for the product Media3 renderer or AudioTrack.
 | Playback window | 30 s at real-time pace, block size 1,024 frames |
 | Seek | at 12 s, target 45 s |
 | CPU | LiteRT CPU, XNNPACK, 4 threads |
-| GPU | LiteRT bounded OpenCL FP32; one session per epoch, reused across windows |
+| GPU | LiteRT bounded OpenCL FP32; one session reused across seek generations |
 
 The source revision was `fb155e4` with a dirty working tree containing the
 Phase 4 changes. The reproducible entry point is
@@ -134,12 +134,13 @@ The following are ordered by expected impact for this data path:
 2. Keep the analysis decoder alive and use a safe decoder flush/seek path, or
    feed the analysis ring from PCM already decoded by the Media3 side. This
    targets the 39-44 ms first-fill cost and avoids repeated extractor/codec
-   setup. WAV/FLAC random access may be cheaper than MP3, but must be measured
-   separately.
+   setup. The flush/seek path is implemented and measured below; unsupported
+   codecs retain a recreate fallback. WAV/FLAC random access may be cheaper
+   than MP3, but must be measured separately.
 3. Replace cancellation plus executor resubmission with a persistent analysis
-   worker receiving an epoch/seek command. The current handoff costs about
-   34-38 ms. Old results can still be rejected by epoch without stopping the
-   worker thread.
+   worker receiving an epoch/seek command. The worker command path is
+   implemented and measured below; old results are still rejected by epoch
+   without stopping the worker thread.
 4. Start decoder refill and any unavoidable session initialization in parallel
    on bounded workers. This can overlap part of the roughly 50 ms input-fill
    span, but it is secondary to GPU session reuse.
@@ -181,6 +182,37 @@ The measured 225.69 ms result is better than the prior 250-300 ms projection.
 Further reduction now depends mainly on the roughly 60 ms input-fill span,
 144 ms first-window processing, and one 21 ms playback block boundary.
 
+## Persistent worker and decoder reuse result
+
+The next S25 runs retained the same analysis worker and the same
+`MediaExtractor`/`MediaCodec` across the seek. The worker receives two commands
+(initial start and seek), takes both on one worker instance, and the reader
+records one codec creation, one successful flush/seek, and one final release.
+
+| Metric | CPU | bounded GPU |
+| --- | ---: | ---: |
+| Worker start count | 1 | 1 |
+| Analysis commands / taken | 2 / 2 | 2 / 2 |
+| Codec create / flush / release | 1 / 1 / 1 | 1 / 1 / 1 |
+| Decoder flush wall time | 1.17 ms | 4.41 ms |
+| Seek return to first reader read | 1.76 ms | 1.28 ms |
+| Read wall time before first window | 53.57 ms | 71.18 ms |
+| Seek return to wet selection | 557.72 ms | 232.61 ms |
+| Late / discarded outputs | 0 / 0 | 0 / 0 |
+
+Compared with the immediately preceding session-reuse runs, CPU seek latency
+fell from 580.82 ms to 557.72 ms. The GPU result was effectively unchanged at
+232.61 ms versus 232.57 ms; decoder reuse removes recreation and worker
+handoff, but the remaining GPU path is dominated by input fill and the first
+138-142 ms model window. The benefit is therefore lower lifecycle overhead and
+stable resource ownership, rather than a guaranteed large end-to-end latency
+drop on this particular S25 run.
+
+The bounded GPU run still reported `1,802` dispatches and event waits, with
+thermal status `0 -> 0`. The reader has a device-dependent fallback: if
+`MediaCodec.flush()` or extractor seek fails, it recreates the codec and the
+report exposes that through `codecCreateCount > 1` and `codecFlushCount == 0`.
+
 ## Resource observations
 
 The instrumented report records start/end PSS and GC counters; the external
@@ -212,10 +244,10 @@ reduces process CPU use substantially, at the cost of roughly 1.1 s of total
 session setup across the two epochs.
 
 The measured first-wet latency is dominated by session setup, the first
-MediaCodec read-ahead, and one complete model window. Seek re-wet latency is
-about 0.72 s in this run because seek starts a new generation and session. The
-large positive lead values reflect the prototype's four-window wet retention,
-not an additional audible delay.
+MediaCodec read-ahead, and one complete model window. After session, decoder,
+and worker reuse, seek re-wet latency is about 0.56 s on CPU and 0.23 s on the
+bounded GPU run. The large positive lead values reflect the prototype's
+four-window wet retention, not an additional audible delay.
 
 The CPU peak native/PSS footprint is too high to treat this implementation as
 a product-ready memory profile. The benchmark currently allocates full
@@ -234,6 +266,8 @@ outputs/tfc-tdf-streaming-s25/s25-cpu-seek-trace-20260818-r2/report.json
 outputs/tfc-tdf-streaming-s25/s25-gpu-seek-trace-20260818/report.json
 outputs/tfc-tdf-streaming-s25/s25-cpu-session-reuse-20260818/report.json
 outputs/tfc-tdf-streaming-s25/s25-gpu-session-reuse-20260818/report.json
+outputs/tfc-tdf-streaming-s25/s25-cpu-persistent-worker-flush-fixed-20260818/report.json
+outputs/tfc-tdf-streaming-s25/s25-gpu-persistent-worker-flush-fixed-20260818/report.json
 ```
 
 These directories are ignored local evidence. The report's output SHA-256 is
@@ -245,6 +279,8 @@ digests are not a numerical backend-parity gate.
 
 - The source was one local MP3 and one S25 codec implementation; this does not
   qualify AAC, FLAC, Media3 source formats, or other device codec behavior.
+- Decoder flush/seek success was verified on the S25 MP3 path; other codec
+  implementations may use the documented recreate fallback.
 - The normal reader in this test is a second MediaCodec reader, not the actual
   Media3 renderer and audio sink used by Booming SS.
 - No speaker output, audio focus, service lifecycle, screen-off behavior, or

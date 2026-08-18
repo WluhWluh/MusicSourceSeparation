@@ -48,11 +48,13 @@ to wet. Snapshot reads can span adjacent wet windows.
 ## Epoch and lifecycle contract
 
 Every start, seek, and model/accelerator switch increments an epoch, clears
-the wet snapshot, cancels the old worker future, and starts a fresh analysis
-generation. A result is published only if its epoch is still current. A
-single-thread executor serializes old and new reader access, while epoch
-checks provide logical cancellation even when a model invocation does not
-honor interruption immediately.
+the wet snapshot, and publishes the newest analysis request to one resident
+worker. The worker discards the old generation at its next safe boundary and
+then consumes the newest request; it is not cancelled and resubmitted for
+each seek. A result is published only if its epoch is still current. The
+single worker serializes old and new reader access, while epoch checks provide
+logical cancellation even when a model invocation does not honor interruption
+immediately.
 
 The engine retains one inference session across start and seek generations
 when the model and accelerator identity are unchanged. It closes and replaces
@@ -67,11 +69,13 @@ audited LiteRT CPU/GPU profiles.
 ## Android read-ahead decoder
 
 `MediaCodecStreamingAudioReader` owns a separate `MediaExtractor` and
-`MediaCodec`. It supports sequential absolute-frame reads and recreates the
-decoder for a non-sequential request, discarding codec seek preroll until the
-requested frame. PCM16, PCM float, and PCM 8-bit output are converted to
-stereo float PCM. The prototype requires 44.1 kHz output and mono or stereo
-input; duration metadata supplies the bounded frame count.
+`MediaCodec`. It supports sequential absolute-frame reads and uses
+`MediaExtractor.seekTo()` plus `MediaCodec.flush()` for a non-sequential
+request, discarding codec seek preroll until the requested frame. If a device
+codec rejects that reuse operation, the reader falls back to recreating the
+decoder. PCM16, PCM float, and PCM 8-bit output are converted to stereo float
+PCM. The prototype requires 44.1 kHz output and mono or stereo input; duration
+metadata supplies the bounded frame count.
 
 This reader is analysis-only. It is not used by the normal Media3 player and
 has not yet been validated across the device codec matrix. Codec timestamp
@@ -80,14 +84,15 @@ conversion remain device-test work.
 
 ## Validation
 
-The five new JVM tests cover:
+The six new JVM tests cover:
 
 - immediate dry output while a background session is blocked;
 - wet transition after a window completes;
 - rejection of late backfill for an emitted dry block;
 - seek epoch invalidation and old-result rejection;
 - CPU/GPU session selection, session reuse, bounded input memory, and
-  cross-window wet reads.
+  cross-window wet reads;
+- resident-worker command reuse and model/accelerator replacement.
 
 The full standard unit-test task passed:
 

@@ -213,6 +213,52 @@ thermal status `0 -> 0`. The reader has a device-dependent fallback: if
 `MediaCodec.flush()` or extractor seek fails, it recreates the codec and the
 report exposes that through `codecCreateCount > 1` and `codecFlushCount == 0`.
 
+## DSP and tensor workspace reuse result
+
+The TFC-TDF session now keeps the STFT tensor and iSTFT reconstruction buffer
+for its whole LiteRT session. `TfcTdfStreamingDsp` exposes destination-based
+`stftNhwcInto()` and `istftInterleavedInto()` methods; the allocating methods
+remain as compatibility wrappers. The engine also keeps one model input array
+per analysis generation and lets `InputRing` write directly into it. The
+LiteRT `TensorBuffer` input/output handles were already session-scoped and
+remain reused.
+
+The fixed DSP workspace is `3,139,584` bytes per session: `2,099,200` bytes
+for the STFT tensor and `1,040,384` bytes for the reconstructed PCM. The
+previous per-window STFT tensor, reconstruction, input, and ring-read arrays
+were therefore removed from the hot path. The 2.2.0 `TensorBuffer` API still
+exposes only `readFloat(): FloatArray`; the output tensor read and the wet
+window returned to the playback snapshot consequently remain allocated. A
+future in-place TensorBuffer/native copy API is needed to remove those last
+large allocations without changing ownership semantics.
+
+The S25 numerical instrumented test compared allocating and destination-based
+STFT/iSTFT paths element-for-element and passed. The full CPU and bounded GPU
+runs completed with zero late windows and zero discarded epoch outputs. Single
+run PSS and GC values varied with codec/runtime scheduling, so they are not
+treated as a statistically significant reduction yet; the structural
+allocation reduction and workspace reuse are recorded in each session report
+as `dspWorkspaceReuse=true`, `tensorBufferReuse=true`, and
+`outputTensorReadAllocates=true`.
+
+The final confirmation runs reported:
+
+| Metric | CPU | bounded GPU |
+| --- | ---: | ---: |
+| Reusable workspace | 3,139,584 bytes | 3,139,584 bytes |
+| First wet block | 1,071.7 ms | 1,045.5 ms |
+| Seek to wet | 673.8 ms | 232.9 ms |
+| DSP + LiteRT compute RTF | 0.3150 | 0.1240 |
+| Peak PSS | 363,283 KiB | 313,991 KiB |
+| GC count delta | 28 | 27 |
+
+The latency and resource rows are execution observations, not a controlled
+before/after claim; the earlier same-device runs vary by tens of milliseconds
+without thermal throttling. The reliable result of this phase is removal of
+the fixed-shape DSP/input allocations from the per-window path, while the
+remaining `readFloat()` and wet-window ownership allocations are explicit
+follow-up work.
+
 ## Resource observations
 
 The instrumented report records start/end PSS and GC counters; the external
@@ -268,6 +314,13 @@ outputs/tfc-tdf-streaming-s25/s25-cpu-session-reuse-20260818/report.json
 outputs/tfc-tdf-streaming-s25/s25-gpu-session-reuse-20260818/report.json
 outputs/tfc-tdf-streaming-s25/s25-cpu-persistent-worker-flush-fixed-20260818/report.json
 outputs/tfc-tdf-streaming-s25/s25-gpu-persistent-worker-flush-fixed-20260818/report.json
+outputs/tfc-tdf-streaming-s25/s25-cpu-dsp-workspace-reuse-20260818/report.json
+outputs/tfc-tdf-streaming-s25/s25-gpu-dsp-workspace-reuse-20260818/report.json
+outputs/tfc-tdf-streaming-s25/s25-gpu-dsp-workspace-reuse-r2-20260818/report.json
+outputs/tfc-tdf-streaming-s25/s25-cpu-dsp-workspace-reuse-final-20260818/report.json
+outputs/tfc-tdf-streaming-s25/s25-gpu-dsp-workspace-reuse-final-20260818/report.json
+outputs/tfc-tdf-streaming-s25/s25-cpu-dsp-workspace-reuse-final2-20260818/report.json
+outputs/tfc-tdf-streaming-s25/s25-gpu-dsp-workspace-reuse-final2-20260818/report.json
 ```
 
 These directories are ignored local evidence. The report's output SHA-256 is

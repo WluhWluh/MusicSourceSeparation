@@ -66,6 +66,12 @@ repository does not yet provide a product TFC-TDF playback integration; the
 session boundary remains injected so the scheduler can be connected to the
 audited LiteRT CPU/GPU profiles.
 
+The benchmark session also keeps the fixed-shape STFT tensor and iSTFT output
+workspace across windows. The engine reuses its padded model input and writes
+the input ring directly into that buffer. The wet result remains an owned
+window allocation because published snapshots may outlive the current model
+call.
+
 ## Android read-ahead decoder
 
 `MediaCodecStreamingAudioReader` owns a separate `MediaExtractor` and
@@ -93,6 +99,9 @@ The six new JVM tests cover:
 - CPU/GPU session selection, session reuse, bounded input memory, and
   cross-window wet reads;
 - resident-worker command reuse and model/accelerator replacement.
+
+The Android DSP workspace test additionally verifies that destination-based
+STFT/iSTFT produces the same values as the allocating compatibility methods.
 
 The full standard unit-test task passed:
 

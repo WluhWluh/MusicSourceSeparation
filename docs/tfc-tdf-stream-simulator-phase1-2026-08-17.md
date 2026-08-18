@@ -108,10 +108,9 @@ STFT/iSTFT, decode a real song, measure CPU/GPU throughput, or integrate with
 `PlaybackService`. It also does not claim that a real device can sustain the
 configured producer rate.
 
-## Next phase
+## Follow-up
 
-Phase 2 should replace the synthetic wet transform with the actual host
-TFC-TDF window pipeline and real fixture audio, while preserving this dry/wet
-timeline contract. It should measure window preparation, inference, DSP,
-result publication, and sustained realtime margin before any Android playback
-integration.
+Phase 2 adds the independent bounded local-audio read-ahead described in
+`tfc-tdf-stream-readahead-phase2-2026-08-17.md`. The next phase can replace the
+synthetic wet transform with the actual host TFC-TDF window pipeline while
+preserving both the dry/wet timeline and read-ahead contracts.

@@ -53,7 +53,7 @@ class TfcTdfStreamSimulatorTest(unittest.TestCase):
         np.testing.assert_array_equal(rendered, self.source)
 
     def test_late_window_is_not_allowed_to_replace_emitted_dry(self) -> None:
-        result = self.run_simulator(read_ahead_rate=1.0, inference_latency_ms=0.0)
+        result = self.run_simulator(read_ahead_rate=0.5, inference_latency_ms=0.0)
 
         self.assertGreater(result.stats["lateWindowCount"], 0)
         self.assertEqual(result.stats["wetBlockCount"], 0)
@@ -62,7 +62,7 @@ class TfcTdfStreamSimulatorTest(unittest.TestCase):
 
     def test_seek_discards_old_epoch_and_rebuilds_from_new_position(self) -> None:
         target = self.contract.useful_samples * 2 + 2048
-        commands = [SimulationCommand(at_wall_ms=100.0, kind="seek", value=target)]
+        commands = [SimulationCommand(at_wall_ms=1_300.0, kind="seek", value=target)]
         result = self.run_simulator(
             read_ahead_rate=20.0,
             inference_latency_ms=1_000.0,
@@ -78,7 +78,7 @@ class TfcTdfStreamSimulatorTest(unittest.TestCase):
         self.assertEqual(seek_events[0].position_sample, target)
 
     def test_model_switch_drops_old_results_and_uses_new_model(self) -> None:
-        commands = [SimulationCommand(at_wall_ms=100.0, kind="model", value="tfc-tdf-next")]
+        commands = [SimulationCommand(at_wall_ms=1_300.0, kind="model", value="tfc-tdf-next")]
         result = self.run_simulator(
             read_ahead_rate=20.0,
             inference_latency_ms=1_000.0,
@@ -134,7 +134,7 @@ class TfcTdfStreamSimulatorTest(unittest.TestCase):
 
     def test_disable_and_enable_rebuilds_the_stream_epoch(self) -> None:
         commands = [
-            SimulationCommand(at_wall_ms=500.0, kind="disable"),
+            SimulationCommand(at_wall_ms=150.0, kind="disable"),
             SimulationCommand(at_wall_ms=1500.0, kind="enable"),
         ]
         result = self.run_simulator(

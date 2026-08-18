@@ -20,6 +20,12 @@ from typing import Any, Iterable
 
 import numpy as np
 
+from tfc_tdf_read_ahead import (
+    ArrayAudioFrameSource,
+    LocalAudioReadAhead,
+    ReadAheadWindow,
+)
+
 
 @dataclass(frozen=True)
 class TfcTdfWindowContract:
@@ -315,10 +321,10 @@ class TfcTdfStreamSimulator:
         if initial_model_id not in self.model_scales:
             raise ValueError(f"missing scale for model {initial_model_id}")
 
-    def _make_wet_samples(self, plan: WindowPlan, model_id: str) -> np.ndarray:
+    def _make_wet_samples(self, window: ReadAheadWindow, model_id: str) -> np.ndarray:
         scale = self.model_scales[model_id]
         return np.ascontiguousarray(
-            self.source[plan.start_sample : plan.end_sample] * scale,
+            window.valid_samples * scale,
             dtype=np.float32,
         )
 
@@ -350,29 +356,28 @@ class TfcTdfStreamSimulator:
         late_windows = 0
         ready_windows = 0
         max_pending_tasks = 0
-        next_window_index = 0
-        window_count = self.contract.window_count_for(self.source.shape[0])
         worker_available: list[float] = []
-        session_start_wall_ms = 0.0
-        session_analysis_start = 0
+        read_ahead = LocalAudioReadAhead(
+            ArrayAudioFrameSource(self.source, self.contract.sample_rate),
+            input_samples=self.contract.input_samples,
+            trim_samples=self.contract.trim_samples,
+            useful_samples=self.contract.useful_samples,
+            capacity_windows=self.ring_capacity_samples
+            // self.contract.useful_samples,
+        )
 
         def schedule_session(start_sample: int, now_ms: float) -> None:
             nonlocal epoch, pending_tasks, playhead, model_id
             nonlocal dropped_epoch_tasks, max_pending_tasks
-            nonlocal next_window_index, worker_available
-            nonlocal session_start_wall_ms, session_analysis_start, last_mode
+            nonlocal worker_available, last_mode
             epoch += 1
             dropped_epoch_tasks += len(pending_tasks)
             pending_tasks = []
             wet_ring.clear()
             playhead = start_sample
-            first_index = start_sample // self.contract.useful_samples
-            session_start_wall_ms = now_ms
-            session_analysis_start = first_index * self.contract.useful_samples
-            next_window_index = first_index
             worker_available = [now_ms] * self.worker_count
             last_mode = None
-            enqueue_until_horizon(now_ms)
+            read_ahead.reset(start_sample, epoch)
             events.append(
                 TraceEvent(
                     wall_ms=now_ms,
@@ -384,28 +389,26 @@ class TfcTdfStreamSimulator:
                 )
             )
 
-        def enqueue_until_horizon(now_ms: float) -> None:
-            nonlocal next_window_index, max_pending_tasks
-            horizon_end = min(
-                self.source.shape[0], playhead + self.ring_capacity_samples
+        def pump_read_ahead(now_ms: float) -> None:
+            nonlocal max_pending_tasks
+            read_budget = max(
+                1,
+                math.ceil(
+                    self.contract.playback_block_samples * self.read_ahead_rate
+                ),
             )
-            while (
-                next_window_index < window_count
-                and next_window_index * self.contract.useful_samples < horizon_end
-            ):
-                plan = self.contract.plan(
-                    next_window_index, self.source.shape[0], epoch
-                )
-                input_ready = session_start_wall_ms + (
-                    (plan.end_sample - session_analysis_start)
-                    / self.contract.sample_rate
-                    / self.read_ahead_rate
-                    * 1000.0
+            read_ahead.pump(playhead, read_budget)
+            for window in read_ahead.pop_ready_windows(playhead):
+                plan = WindowPlan(
+                    window_index=window.window_index,
+                    epoch=window.epoch,
+                    start_sample=window.start_sample,
+                    actual_samples=window.actual_samples,
                 )
                 worker_index = min(
                     range(self.worker_count), key=lambda index: worker_available[index]
                 )
-                task_start = max(now_ms, input_ready, worker_available[worker_index])
+                task_start = max(now_ms, worker_available[worker_index])
                 ready_ms = task_start + self.inference_latency_ms
                 worker_available[worker_index] = ready_ms
                 pending_tasks.append(
@@ -413,10 +416,9 @@ class TfcTdfStreamSimulator:
                         plan=plan,
                         model_id=model_id,
                         ready_wall_ms=ready_ms,
-                        wet_samples=self._make_wet_samples(plan, model_id),
+                        wet_samples=self._make_wet_samples(window, model_id),
                     )
                 )
-                next_window_index += 1
             max_pending_tasks = max(max_pending_tasks, len(pending_tasks))
 
         def publish_ready(now_ms: float) -> None:
@@ -494,6 +496,7 @@ class TfcTdfStreamSimulator:
                 dropped_epoch_tasks += len(pending_tasks)
                 pending_tasks.clear()
                 wet_ring.clear()
+                read_ahead.cancel(epoch)
                 last_mode = None
                 event_name = "disable"
             elif kind == "model":
@@ -531,7 +534,7 @@ class TfcTdfStreamSimulator:
         while wall_ms <= limit and (playhead < self.source.shape[0] or command_index < len(ordered_commands)):
             while command_index < len(ordered_commands) and ordered_commands[command_index].at_wall_ms <= wall_ms + 1e-6:
                 apply_command(ordered_commands[command_index])
-            enqueue_until_horizon(wall_ms)
+            pump_read_ahead(wall_ms)
             publish_ready(wall_ms)
 
             if playing and playhead < self.source.shape[0]:
@@ -604,9 +607,11 @@ class TfcTdfStreamSimulator:
                 "wetBlockCount": sum(block.mode == "wet" for block in output_blocks),
                 "modeSwitchCount": sum(item.event == "mode_switch" for item in events),
                 "readyWindowCount": ready_windows,
-                "lateWindowCount": late_windows,
+                "lateWindowCount": late_windows
+                + int(read_ahead.stats()["lateWindowCount"]),
                 "droppedEpochTaskCount": dropped_epoch_tasks,
                 "maxPendingTaskCount": max_pending_tasks,
+                "readAhead": read_ahead.stats(),
                 "dryRing": {
                     "capacitySamples": dry_ring.capacity_samples,
                     "maxSampleCount": dry_ring.max_sample_count,

@@ -34,6 +34,8 @@ import java.nio.ByteOrder
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
@@ -86,6 +88,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
         val report = JSONObject()
             .put("schemaVersion", 1)
             .put("status", "running")
+            .put("test", "full-chain")
             .put("runId", runId)
             .put("backend", backend)
             .put("threads", threads)
@@ -332,6 +335,254 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             analysisReader?.close()
         }
         println(report)
+    }
+
+    @Test
+    fun runDoubleBufferBenchmark() {
+        val args = InstrumentationRegistry.getArguments()
+        val backend = args.getString("backend", "gpu-bounded")!!
+        require(backend == "cpu" || backend == "gpu-bounded")
+        val threads = args.getString("threads", "4")!!.toInt().coerceIn(1, 16)
+        val dspProfile = args.getString("dspProfile", "native-packed")!!
+        require(dspProfile == "native-packed" || dspProfile == "native-full")
+        val dspWorkers = args.getString("dspWorkers", "4")!!.toInt()
+            .coerceIn(1, com.example.musicsourceseparation.model.NativeTfcTdfDsp.MAX_WORKERS)
+        val postprocessMode = args.getString("postprocess", "fused")!!
+        require(postprocessMode == "separate" || postprocessMode == "fused")
+        val runs = args.getString("runs", "8")!!.toInt().coerceIn(2, 30)
+        val warmups = args.getString("warmups", "2")!!.toInt().coerceIn(0, 5)
+        val runId = safeName(args.getString("runId", "double-buffer")!!)
+        val modelName = safeName(requireNotNull(args.getString("modelFile")))
+        val modelSha = args.getString("modelSha256")?.let(::sha256Value)
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val benchmarkRoot = File(
+            requireNotNull(context.getExternalFilesDir(null)),
+            "benchmark/tfc-tdf-streaming",
+        ).canonicalFile
+        val modelFile = File(benchmarkRoot, modelName).canonicalFile
+        require(modelFile.parentFile == benchmarkRoot && modelFile.isFile)
+        modelSha?.let { require(sha256(modelFile) == it) }
+        val resultDir = File(benchmarkRoot, "results/$runId").apply {
+            deleteRecursively()
+            mkdirs()
+        }
+        val powerManager = context.getSystemService(PowerManager::class.java)
+        val report = JSONObject()
+            .put("schemaVersion", 1)
+            .put("status", "running")
+            .put("test", "double-buffer")
+            .put("runId", runId)
+            .put("backend", backend)
+            .put("threads", threads)
+            .put("runs", runs)
+            .put("warmups", warmups)
+            .put("dspProfile", dspProfile)
+            .put("dspWorkers", dspWorkers)
+            .put("postprocess", postprocessMode)
+            .put("model", fileIdentity(modelFile))
+            .put("runtime", JSONObject()
+                .put("id", BuildConfig.BENCHMARK_RUNTIME_ID)
+                .put("version", BuildConfig.BENCHMARK_RUNTIME_VERSION)
+                .put("artifactSha256", BuildConfig.BENCHMARK_RUNTIME_ARTIFACT_SHA256))
+            .put("device", deviceIdentity())
+            .put("thermalStatusStart", powerManager.currentThermalStatus)
+        var environment: Environment? = null
+        var compiledModel: CompiledModel? = null
+        val inputs = ArrayList<TensorBuffer>()
+        val outputs = ArrayList<TensorBuffer>()
+        val dsps = ArrayList<TfcTdfDspSession>()
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val options = if (backend == "gpu-bounded") {
+                CompiledModel.Options(Accelerator.GPU).apply {
+                    gpuOptions = CompiledModel.GpuOptions(
+                        precision = CompiledModel.GpuOptions.Precision.FP32,
+                        backend = CompiledModel.GpuOptions.Backend.OPENCL,
+                        numStepsOfCommandBufferPreparations = 1,
+                    )
+                }
+            } else {
+                CompiledModel.Options(Accelerator.CPU).apply {
+                    cpuOptions = CompiledModel.CpuOptions(
+                        numThreads = threads,
+                        xnnPackFlags = null,
+                        xnnPackWeightCachePath = null,
+                    )
+                }
+            }
+            environment = Environment.create()
+            val accelerators = environment.getAvailableAccelerators().map { it.name }
+            require(if (backend == "gpu-bounded") "GPU" in accelerators else "CPU" in accelerators)
+            val boundedGpu = if (backend == "gpu-bounded") BoundedGpuRuntime.loadAndValidate() else null
+            val setupStarted = SystemClock.elapsedRealtimeNanos()
+            compiledModel = CompiledModel.create(modelFile.absolutePath, options, environment)
+            repeat(2) {
+                inputs += compiledModel!!.createInputBuffers().single()
+                outputs += compiledModel!!.createOutputBuffers().single()
+                dsps += createTfcDsp(dspProfile, dspWorkers)
+            }
+            val setupMs = elapsedMs(setupStarted, SystemClock.elapsedRealtimeNanos())
+            val inputPcm = Array(2) { slot ->
+                FloatArray(
+                    TfcTdfStreamingDsp.INPUT_SAMPLES * TfcTdfStreamingDsp.CHANNELS,
+                ) { index ->
+                    val base = (((index * 17) % 2_001) - 1_000) / 1_000f
+                    base * (1f - slot * 0.1f) + slot * 0.03125f
+                }
+            }
+            val tensors = Array(2) { FloatArray(TfcTdfStreamingDsp.TENSOR_ELEMENTS) }
+            val valid = Array(2) {
+                FloatArray(TfcTdfStreamingDsp.USEFUL_SAMPLES * TfcTdfStreamingDsp.CHANNELS)
+            }
+            fun prepare(slot: Int) {
+                dsps[slot].stftNhwcInto(inputPcm[slot], tensors[slot])
+                inputs[slot].writeFloat(tensors[slot])
+            }
+            fun invoke(slot: Int) {
+                boundedGpu?.beginInference()
+                try {
+                    compiledModel!!.run(listOf(inputs[slot]), listOf(outputs[slot]))
+                } finally {
+                    boundedGpu?.endInference()
+                }
+            }
+            fun postprocess(slot: Int) {
+                val outputTensor = outputs[slot].readFloat()
+                if (postprocessMode == "fused") {
+                    dsps[slot].istftResidualInto(
+                        outputTensor,
+                        inputPcm[slot],
+                        TfcTdfStreamingDsp.TRIM_SAMPLES,
+                        TfcTdfStreamingDsp.USEFUL_SAMPLES,
+                        valid[slot],
+                    )
+                } else {
+                    val reconstructed = FloatArray(TfcTdfStreamingDsp.INPUT_SAMPLES * 2)
+                    dsps[slot].istftInterleavedInto(outputTensor, reconstructed)
+                    val sourceOffset = TfcTdfStreamingDsp.TRIM_SAMPLES * 2
+                    for (index in valid[slot].indices) {
+                        valid[slot][index] = inputPcm[slot][sourceOffset + index] -
+                            reconstructed[sourceOffset + index]
+                    }
+                }
+                require(valid[slot].all { it.isFinite() })
+            }
+            repeat(warmups) { index ->
+                val slot = index and 1
+                prepare(slot)
+                invoke(slot)
+                postprocess(slot)
+            }
+            boundedGpu?.resetInferenceCounters()
+            val sequentialSamples = JSONArray()
+            val sequentialOutputs = Array(runs) {
+                FloatArray(TfcTdfStreamingDsp.USEFUL_SAMPLES * TfcTdfStreamingDsp.CHANNELS)
+            }
+            repeat(runs) { index ->
+                val slot = index and 1
+                val started = SystemClock.elapsedRealtimeNanos()
+                val prepareStarted = SystemClock.elapsedRealtimeNanos()
+                prepare(slot)
+                val prepareMs = elapsedMs(prepareStarted, SystemClock.elapsedRealtimeNanos())
+                val invokeStarted = SystemClock.elapsedRealtimeNanos()
+                invoke(slot)
+                val invokeMs = elapsedMs(invokeStarted, SystemClock.elapsedRealtimeNanos())
+                val postStarted = SystemClock.elapsedRealtimeNanos()
+                postprocess(slot)
+                val postMs = elapsedMs(postStarted, SystemClock.elapsedRealtimeNanos())
+                valid[slot].copyInto(sequentialOutputs[index])
+                sequentialSamples.put(
+                    JSONObject()
+                        .put("prepareMs", prepareMs)
+                        .put("invokeMs", invokeMs)
+                        .put("postprocessMs", postMs)
+                        .put("totalMs", elapsedMs(started, SystemClock.elapsedRealtimeNanos())),
+                )
+            }
+            val doubleSamples = JSONArray()
+            prepare(0)
+            var previous: Future<*> = executor.submit { invoke(0) }
+            val doubleStarted = SystemClock.elapsedRealtimeNanos()
+            repeat(runs) { index ->
+                val completed = index and 1
+                val next = (index + 1) and 1
+                var current: Future<*>? = null
+                var prepareMs = 0.0
+                if (index + 1 < runs) {
+                    val prepareStarted = SystemClock.elapsedRealtimeNanos()
+                    prepare(next)
+                    prepareMs = elapsedMs(prepareStarted, SystemClock.elapsedRealtimeNanos())
+                    current = executor.submit { invoke(next) }
+                }
+                val waitStarted = SystemClock.elapsedRealtimeNanos()
+                previous.get()
+                val waitMs = elapsedMs(waitStarted, SystemClock.elapsedRealtimeNanos())
+                val postStarted = SystemClock.elapsedRealtimeNanos()
+                postprocess(completed)
+                val postMs = elapsedMs(postStarted, SystemClock.elapsedRealtimeNanos())
+                val maxError = maxAbsDifference(sequentialOutputs[index], valid[completed])
+                require(maxError <= 2e-3f) {
+                    "Double-buffer output order mismatch at run $index: max error $maxError"
+                }
+                doubleSamples.put(
+                    JSONObject()
+                        .put("nextPrepareMs", prepareMs)
+                        .put("inferenceWaitMs", waitMs)
+                        .put("postprocessMs", postMs)
+                        .put("maxAbsErrorVsSequential", maxError),
+                )
+                if (current != null) previous = current
+            }
+            val doubleTotalMs = elapsedMs(doubleStarted, SystemClock.elapsedRealtimeNanos())
+            report
+                .put("status", "complete")
+                .put("setupMs", setupMs)
+                .put("sequential", summarizeDoubleBuffer(sequentialSamples, "totalMs"))
+                .put("sequentialSamples", sequentialSamples)
+                .put("doubleBuffered", JSONObject()
+                    .put("totalMs", doubleTotalMs)
+                    .put("meanMs", doubleTotalMs / runs)
+                    .put("outputOrderVerified", true)
+                    .put("samples", doubleSamples))
+                .put("boundedGpuEvidence", boundedGpu?.evidence() ?: JSONObject.NULL)
+        } catch (error: Throwable) {
+            report
+                .put("status", "error")
+                .put("errorClass", error::class.java.name)
+                .put("message", error.message.orEmpty())
+                .put("stack", error.stackTraceToString())
+        } finally {
+            executor.shutdownNow()
+            dsps.forEach { it.close() }
+            outputs.forEach { it.close() }
+            inputs.forEach { it.close() }
+            compiledModel?.close()
+            environment?.close()
+            report
+                .put("thermalStatusEnd", powerManager.currentThermalStatus)
+                .put("memoryEnd", memoryEvidence())
+            File(resultDir, "report.json").writeText(report.toString(2))
+        }
+        check(report.getString("status") == "complete") { report.toString() }
+    }
+
+    private fun summarizeDoubleBuffer(samples: JSONArray, key: String): JSONObject {
+        val values = (0 until samples.length()).map { samples.getJSONObject(it).getDouble(key) }
+        val sorted = values.sorted()
+        return JSONObject()
+            .put("count", values.size)
+            .put("meanMs", values.average())
+            .put("medianMs", sorted[sorted.size / 2])
+            .put("p95Ms", sorted[(sorted.size * 0.95).toInt().coerceAtMost(sorted.lastIndex)])
+    }
+
+    private fun maxAbsDifference(expected: FloatArray, actual: FloatArray): Float {
+        require(expected.size == actual.size)
+        var maximum = 0f
+        for (index in expected.indices) {
+            maximum = max(maximum, kotlin.math.abs(expected[index] - actual[index]))
+        }
+        return maximum
     }
 
     private class MeasuredLiteRtSessionFactory(
@@ -789,6 +1040,8 @@ class TfcTdfStreamingFullChainInstrumentedTest {
         private val runtimeClass: Class<*>,
         private val capability: Any,
     ) {
+        fun resetInferenceCounters() = invoke("resetInferenceCounters")
+
         fun beginInference() = invoke("beginInference")
         fun endInference() = invoke("endInference")
 

@@ -73,10 +73,14 @@ variance. The stable conclusion is that DSP is no longer the dominant part of
 the S25 GPU first-window critical path; decoder fill and LiteRT invocation
 remain larger.
 
-## Remaining work
+## Phase 6 handoff
 
-The next experiment is a two-slot host/inference pipeline that can prepare the
-next input while the current GPU invocation is in flight. It must use separate
-TensorBuffer slots and preserve output ordering. The LiteRT `readFloat()` copy
-is still an explicit allocation; it will be investigated separately rather
-than hidden in the DSP timing.
+The two-slot host/inference benchmark has now been implemented and measured.
+It prepares the next input while the current invocation is in flight, uses
+separate TensorBuffer slots, and verifies output ordering. See
+`tfc-tdf-dsp-optimization-phase6-2026-08-18.md` for the device results and
+the lifecycle boundary before any product integration.
+
+The LiteRT `readFloat()` copy remains an explicit allocation. It is a separate
+runtime API task and is not hidden in the DSP timing or replaced with internal
+tensor-buffer handle access.

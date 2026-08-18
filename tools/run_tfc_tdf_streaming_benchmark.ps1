@@ -1,5 +1,7 @@
 param(
     [string]$Serial = "192.168.8.197:35131",
+    [ValidateSet("full-chain", "double-buffer")]
+    [string]$Test = "full-chain",
     [ValidateSet("cpu", "gpu-bounded")]
     [string]$Backend = "cpu",
     [ValidateRange(1, 16)]
@@ -20,6 +22,10 @@ param(
     [int]$BlockSamples = 1024,
     [ValidateRange(1, 30)]
     [int]$TimeoutMinutes = 15,
+    [ValidateRange(2, 30)]
+    [int]$Runs = 8,
+    [ValidateRange(0, 5)]
+    [int]$Warmups = 2,
     [string]$RunId = "",
     [string]$RuntimeAar = "",
     [string]$ModelFile = "",
@@ -34,7 +40,11 @@ $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $package = "com.example.musicsourceseparation"
 $runner = "$package.test/androidx.test.runner.AndroidJUnitRunner"
-$testClass = "$package.benchmark.TfcTdfStreamingFullChainInstrumentedTest#runFullChainBenchmark"
+$testClass = if ($Test -eq "double-buffer") {
+    "$package.benchmark.TfcTdfStreamingFullChainInstrumentedTest#runDoubleBufferBenchmark"
+} else {
+    "$package.benchmark.TfcTdfStreamingFullChainInstrumentedTest#runFullChainBenchmark"
+}
 $remoteRoot = "/sdcard/Android/data/$package/files/benchmark/tfc-tdf-streaming"
 
 if ([string]::IsNullOrWhiteSpace($RuntimeAar)) {
@@ -43,7 +53,7 @@ if ([string]::IsNullOrWhiteSpace($RuntimeAar)) {
 if ([string]::IsNullOrWhiteSpace($ModelFile)) {
     $ModelFile = Join-Path $repoRoot "models\tfc-tdf\default-compact\tfc_tdf_default_vocals_core_fp32.tflite"
 }
-if ([string]::IsNullOrWhiteSpace($SourceAudio)) {
+if ($Test -eq "full-chain" -and [string]::IsNullOrWhiteSpace($SourceAudio)) {
     $SourceAudio = Join-Path $repoRoot "data\samples\coast_town.mp3"
 }
 if ([string]::IsNullOrWhiteSpace($AppApk)) {
@@ -72,7 +82,9 @@ function Get-Sha256([string]$Path) {
 
 $RuntimeAar = Require-File $RuntimeAar "LiteRT AAR"
 $ModelFile = Require-File $ModelFile "TFC-TDF model"
-$SourceAudio = Require-File $SourceAudio "source audio"
+if ($Test -eq "full-chain") {
+    $SourceAudio = Require-File $SourceAudio "source audio"
+}
 
 if (-not $SkipBuild) {
     $gradlew = Join-Path $repoRoot "gradlew.bat"
@@ -140,9 +152,13 @@ if ($deviceState -ne "device") {
 }
 
 $modelName = Split-Path -Leaf $ModelFile
-$sourceName = Split-Path -Leaf $SourceAudio
 $modelSha = Get-Sha256 $ModelFile
-$sourceSha = Get-Sha256 $SourceAudio
+$sourceName = $null
+$sourceSha = $null
+if ($Test -eq "full-chain") {
+    $sourceName = Split-Path -Leaf $SourceAudio
+    $sourceSha = Get-Sha256 $SourceAudio
+}
 $runtimeSha = Get-Sha256 $RuntimeAar
 $appSha = Get-Sha256 $AppApk
 $testSha = Get-Sha256 $TestApk
@@ -152,10 +168,11 @@ if (Test-Path -LiteralPath $outputRoot) {
 }
 New-Item -ItemType Directory -Path $outputRoot | Out-Null
 
-[ordered]@{
+$hostIdentity = [ordered]@{
     schemaVersion = 1
     runId = $RunId
     serial = $Serial
+    test = $Test
     backend = $Backend
     threads = $Threads
     dspProfile = $DspProfile
@@ -163,10 +180,17 @@ New-Item -ItemType Directory -Path $outputRoot | Out-Null
     postprocess = $Postprocess
     runtimeAar = [ordered]@{ path = $RuntimeAar; bytes = (Get-Item $RuntimeAar).Length; sha256 = $runtimeSha }
     model = [ordered]@{ path = $ModelFile; bytes = (Get-Item $ModelFile).Length; sha256 = $modelSha }
-    source = [ordered]@{ path = $SourceAudio; bytes = (Get-Item $SourceAudio).Length; sha256 = $sourceSha }
     appApk = [ordered]@{ path = $AppApk; bytes = (Get-Item $AppApk).Length; sha256 = $appSha }
     testApk = [ordered]@{ path = $TestApk; bytes = (Get-Item $TestApk).Length; sha256 = $testSha }
-} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $outputRoot "host-identity.json") -Encoding utf8
+}
+if ($Test -eq "full-chain") {
+    $hostIdentity.Add("source", [ordered]@{
+        path = $SourceAudio
+        bytes = (Get-Item $SourceAudio).Length
+        sha256 = $sourceSha
+    })
+}
+$hostIdentity | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $outputRoot "host-identity.json") -Encoding utf8
 
 if (-not $SkipInstall) {
     Invoke-Adb -Arguments @("install", "-r", $AppApk)
@@ -175,12 +199,14 @@ if (-not $SkipInstall) {
 
 Invoke-Adb -Arguments @("shell", "mkdir", "-p", "$remoteRoot/results/$RunId")
 Invoke-Adb -Arguments @("push", $ModelFile, "$remoteRoot/$modelName")
-Invoke-Adb -Arguments @("push", $SourceAudio, "$remoteRoot/$sourceName")
 if ((Get-RemoteSha "$remoteRoot/$modelName") -cne $modelSha) {
     throw "Remote model SHA-256 mismatch."
 }
-if ((Get-RemoteSha "$remoteRoot/$sourceName") -cne $sourceSha) {
-    throw "Remote source SHA-256 mismatch."
+if ($Test -eq "full-chain") {
+    Invoke-Adb -Arguments @("push", $SourceAudio, "$remoteRoot/$sourceName")
+    if ((Get-RemoteSha "$remoteRoot/$sourceName") -cne $sourceSha) {
+        throw "Remote source SHA-256 mismatch."
+    }
 }
 
 $remoteReport = "$remoteRoot/results/$RunId/report.json"
@@ -197,16 +223,22 @@ $instrumentArguments = @(
     "-e", "dspWorkers", $DspWorkers.ToString(),
     "-e", "postprocess", $Postprocess,
     "-e", "runId", $RunId,
-    "-e", "sourceFile", $sourceName,
     "-e", "modelFile", $modelName,
-    "-e", "sourceSha256", $sourceSha,
     "-e", "modelSha256", $modelSha,
-    "-e", "playbackSeconds", $PlaybackSeconds.ToString([Globalization.CultureInfo]::InvariantCulture),
-    "-e", "seekAtSeconds", $SeekAtSeconds.ToString([Globalization.CultureInfo]::InvariantCulture),
-    "-e", "seekToSeconds", $SeekToSeconds.ToString([Globalization.CultureInfo]::InvariantCulture),
-    "-e", "blockSamples", $BlockSamples.ToString(),
-    $runner
+    "-e", "runs", $Runs.ToString(),
+    "-e", "warmups", $Warmups.ToString()
 )
+if ($Test -eq "full-chain") {
+    $instrumentArguments += @(
+        "-e", "sourceFile", $sourceName,
+        "-e", "sourceSha256", $sourceSha,
+        "-e", "playbackSeconds", $PlaybackSeconds.ToString([Globalization.CultureInfo]::InvariantCulture),
+        "-e", "seekAtSeconds", $SeekAtSeconds.ToString([Globalization.CultureInfo]::InvariantCulture),
+        "-e", "seekToSeconds", $SeekToSeconds.ToString([Globalization.CultureInfo]::InvariantCulture),
+        "-e", "blockSamples", $BlockSamples.ToString()
+    )
+}
+$instrumentArguments += $runner
 $instrumentProcess = Start-Process -FilePath $adb -ArgumentList $instrumentArguments -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile -PassThru -WindowStyle Hidden
 $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
 $reportText = ""
@@ -263,20 +295,43 @@ $report = $reportText | ConvertFrom-Json
 if ($report.status -cne "complete") {
     throw "Streaming benchmark failed: $($report.message)"
 }
-if ($report.runId -cne $RunId -or $report.backend -cne $Backend -or
-    $report.model.sha256 -cne $modelSha -or $report.source.sha256 -cne $sourceSha -or
+if ($report.test -cne $Test -or $report.runId -cne $RunId -or $report.backend -cne $Backend -or
+    $report.model.sha256 -cne $modelSha -or
     $report.runtime.artifactSha256 -cne $runtimeSha) {
     throw "Device report identity does not match the host inputs."
 }
+if ($Test -eq "full-chain" -and $report.source.sha256 -cne $sourceSha) {
+    throw "Device report source identity does not match the host input."
+}
 if ($Backend -eq "gpu-bounded") {
-    $dispatches = @($report.timing.engine.sessions | ForEach-Object { $_.gpuEvidence.dispatchCount }) |
-        Measure-Object -Sum
-    if ($dispatches.Sum -lt 1) {
+    $dispatchCount = if ($Test -eq "double-buffer") {
+        $report.boundedGpuEvidence.dispatchCount
+    } else {
+        @($report.timing.engine.sessions | ForEach-Object { $_.gpuEvidence.dispatchCount }) |
+            Measure-Object -Sum | Select-Object -ExpandProperty Sum
+    }
+    if ($dispatchCount -lt 1) {
         throw "GPU run completed without positive bounded-GPU dispatch evidence."
     }
 }
 
+if ($Test -eq "double-buffer") {
+    [pscustomobject]@{
+        RunId = $RunId
+        Test = $Test
+        Backend = $Backend
+        Device = $Serial
+        SequentialMeanMs = $report.sequential.meanMs
+        DoubleBufferedMeanMs = $report.doubleBuffered.meanMs
+        SpeedupPercent = (1.0 - $report.doubleBuffered.meanMs / $report.sequential.meanMs) * 100.0
+        OutputOrderVerified = $report.doubleBuffered.outputOrderVerified
+        Output = (Resolve-Path $outputRoot).Path
+    }
+    return
+}
+
 [pscustomobject]@{
+    Test = $Test
     RunId = $RunId
     Backend = $Backend
     Device = $Serial

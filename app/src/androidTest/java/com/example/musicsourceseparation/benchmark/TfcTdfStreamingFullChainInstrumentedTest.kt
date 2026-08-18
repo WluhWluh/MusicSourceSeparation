@@ -54,6 +54,8 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             .coerceIn(1, com.example.musicsourceseparation.model.NativeTfcTdfDsp.MAX_WORKERS)
         val postprocessMode = args.getString("postprocess", "separate")!!
         require(postprocessMode == "separate" || postprocessMode == "fused")
+        val outputReadMode = args.getString("outputRead", "allocating")!!
+        require(outputReadMode == "allocating" || outputReadMode == "reuse")
         val runId = safeName(args.getString("runId", backend)!!)
         val sourceName = safeName(requireNotNull(args.getString("sourceFile")))
         val modelName = safeName(requireNotNull(args.getString("modelFile")))
@@ -95,7 +97,8 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             .put("dsp", JSONObject()
                 .put("profile", dspProfile)
                 .put("workers", dspWorkers)
-                .put("postprocess", postprocessMode))
+                .put("postprocess", postprocessMode)
+                .put("outputRead", outputReadMode))
             .put("model", fileIdentity(modelFile))
             .put("source", fileIdentity(sourceFile))
             .put("runtime", JSONObject()
@@ -131,6 +134,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
                 dspProfile = dspProfile,
                 dspWorkers = dspWorkers,
                 postprocessMode = postprocessMode,
+                outputReadMode = outputReadMode,
                 trace = trace,
             )
             engine = NonCausalStreamingSeparatedPlaybackEngine(
@@ -349,6 +353,8 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             .coerceIn(1, com.example.musicsourceseparation.model.NativeTfcTdfDsp.MAX_WORKERS)
         val postprocessMode = args.getString("postprocess", "fused")!!
         require(postprocessMode == "separate" || postprocessMode == "fused")
+        val outputReadMode = args.getString("outputRead", "allocating")!!
+        require(outputReadMode == "allocating" || outputReadMode == "reuse")
         val runs = args.getString("runs", "8")!!.toInt().coerceIn(2, 30)
         val warmups = args.getString("warmups", "2")!!.toInt().coerceIn(0, 5)
         val runId = safeName(args.getString("runId", "double-buffer")!!)
@@ -379,6 +385,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             .put("dspProfile", dspProfile)
             .put("dspWorkers", dspWorkers)
             .put("postprocess", postprocessMode)
+            .put("outputRead", outputReadMode)
             .put("model", fileIdentity(modelFile))
             .put("runtime", JSONObject()
                 .put("id", BuildConfig.BENCHMARK_RUNTIME_ID)
@@ -431,6 +438,12 @@ class TfcTdfStreamingFullChainInstrumentedTest {
                 }
             }
             val tensors = Array(2) { FloatArray(TfcTdfStreamingDsp.TENSOR_ELEMENTS) }
+            val outputTensors = if (outputReadMode == "reuse") {
+                Array(2) { FloatArray(TfcTdfStreamingDsp.TENSOR_ELEMENTS) }
+            } else {
+                null
+            }
+            val outputReadNanos = LongArray(2)
             val valid = Array(2) {
                 FloatArray(TfcTdfStreamingDsp.USEFUL_SAMPLES * TfcTdfStreamingDsp.CHANNELS)
             }
@@ -447,7 +460,15 @@ class TfcTdfStreamingFullChainInstrumentedTest {
                 }
             }
             fun postprocess(slot: Int) {
-                val outputTensor = outputs[slot].readFloat()
+                val outputReadStarted = SystemClock.elapsedRealtimeNanos()
+                val outputTensor = if (outputReadMode == "reuse") {
+                    val destination = requireNotNull(outputTensors)[slot]
+                    outputs[slot].readFloatInto(destination)
+                    destination
+                } else {
+                    outputs[slot].readFloat()
+                }
+                outputReadNanos[slot] = SystemClock.elapsedRealtimeNanos() - outputReadStarted
                 if (postprocessMode == "fused") {
                     dsps[slot].istftResidualInto(
                         outputTensor,
@@ -495,6 +516,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
                     JSONObject()
                         .put("prepareMs", prepareMs)
                         .put("invokeMs", invokeMs)
+                        .put("outputReadMs", outputReadNanos[slot] / 1_000_000.0)
                         .put("postprocessMs", postMs)
                         .put("totalMs", elapsedMs(started, SystemClock.elapsedRealtimeNanos())),
                 )
@@ -528,6 +550,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
                     JSONObject()
                         .put("nextPrepareMs", prepareMs)
                         .put("inferenceWaitMs", waitMs)
+                        .put("outputReadMs", outputReadNanos[completed] / 1_000_000.0)
                         .put("postprocessMs", postMs)
                         .put("maxAbsErrorVsSequential", maxError),
                 )
@@ -537,6 +560,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             report
                 .put("status", "complete")
                 .put("setupMs", setupMs)
+                .put("outputTensorReadAllocates", outputReadMode == "allocating")
                 .put("sequential", summarizeDoubleBuffer(sequentialSamples, "totalMs"))
                 .put("sequentialSamples", sequentialSamples)
                 .put("doubleBuffered", JSONObject()
@@ -592,6 +616,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
         private val dspProfile: String,
         private val dspWorkers: Int,
         private val postprocessMode: String,
+        private val outputReadMode: String,
         private val trace: StreamingSeekTrace,
     ) : StreamingInferenceSessionFactory {
         private val lock = Any()
@@ -613,6 +638,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
                 dspProfile = dspProfile,
                 dspWorkers = dspWorkers,
                 postprocessMode = postprocessMode,
+                outputReadMode = outputReadMode,
                 processCount = processCount,
                 sessionOrdinal = sessionOrdinal,
                 trace = trace,
@@ -671,6 +697,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
         dspProfile: String,
         dspWorkers: Int,
         private val postprocessMode: String,
+        private val outputReadMode: String,
         private val processCount: AtomicInteger,
         private val sessionOrdinal: Int,
         private val trace: StreamingSeekTrace,
@@ -687,6 +714,11 @@ class TfcTdfStreamingFullChainInstrumentedTest {
         private val reusableReconstructed = FloatArray(
             TfcTdfStreamingDsp.INPUT_SAMPLES * TfcTdfStreamingDsp.CHANNELS,
         )
+        private val reusableOutputTensor = if (outputReadMode == "reuse") {
+            FloatArray(TfcTdfStreamingDsp.TENSOR_ELEMENTS)
+        } else {
+            null
+        }
         private val gpuRuntime = if (boundedGpu && accelerator == StreamingAccelerator.GPU) {
             BoundedGpuRuntime.loadAndValidate()
         } else null
@@ -694,6 +726,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
         private val stftNanos = AtomicLong(0)
         private val inferenceNanos = AtomicLong(0)
         private val istftNanos = AtomicLong(0)
+        private val outputReadNanos = AtomicLong(0)
         private val totalNanos = AtomicLong(0)
         private val workerCpuMillis = AtomicLong(0)
         private val workerThreadCpuNanos = AtomicLong(0)
@@ -755,7 +788,15 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             }
             val inferenceElapsed = SystemClock.elapsedRealtimeNanos() - inferenceStart
             inferenceNanos.addAndGet(inferenceElapsed)
-            val outputTensor = outputBuffer.readFloat()
+            val outputReadStart = SystemClock.elapsedRealtimeNanos()
+            val outputTensor = if (outputReadMode == "reuse") {
+                val destination = requireNotNull(reusableOutputTensor)
+                outputBuffer.readFloatInto(destination)
+                destination
+            } else {
+                outputBuffer.readFloat()
+            }
+            outputReadNanos.addAndGet(SystemClock.elapsedRealtimeNanos() - outputReadStart)
             val valid = FloatArray(actualSamples * TfcTdfStreamingDsp.CHANNELS)
             val istftStart = SystemClock.elapsedRealtimeNanos()
             if (postprocessMode == "fused") {
@@ -803,6 +844,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             .put("stftWallMs", stftNanos.get() / 1_000_000.0)
             .put("inferenceWallMs", inferenceNanos.get() / 1_000_000.0)
             .put("istftWallMs", istftNanos.get() / 1_000_000.0)
+            .put("outputReadWallMs", outputReadNanos.get() / 1_000_000.0)
             .put("totalWallMs", totalNanos.get() / 1_000_000.0)
             .put("workerCpuMs", workerCpuMillis.get().toDouble())
             .put("workerThreadCpuMs", workerThreadCpuNanos.get() / 1_000_000.0)
@@ -811,7 +853,8 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             .put("dspWorkerCount", dsp.workerCount)
             .put("postprocessMode", postprocessMode)
             .put("tensorBufferReuse", true)
-            .put("outputTensorReadAllocates", true)
+            .put("outputTensorReadAllocates", outputReadMode == "allocating")
+            .put("outputReadMode", outputReadMode)
             .put(
                 "reusableWorkspaceBytes",
                 (reusableStftTensor.size + reusableReconstructed.size) * Float.SIZE_BYTES,

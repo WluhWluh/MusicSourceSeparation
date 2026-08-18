@@ -83,9 +83,13 @@ a new seek or model generation.
 The next implementation step, if this optimization is selected, is a small
 `PipelinedStreamingInferenceSession` abstraction with explicit epoch checks,
 slot state transitions, cancellation, and output-order tests. It should be
-enabled only for measured GPU profiles. The LiteRT `readFloat()` allocation is
-a separate issue and still requires a supported runtime API; this phase does
-not attempt to access internal tensor-buffer handles.
+enabled only for measured GPU profiles. A local `TensorBuffer.readFloatInto`
+experiment now provides a supported destination-based alternative to the
+`readFloat()` allocation; it does not access internal tensor-buffer handles.
+The A/B results and arm64-only AAR identity are recorded in
+`tfc-tdf-read-float-into-experiment-2026-08-18.md`. The default benchmark mode
+remains `allocating` until a runtime artifact with the API is formally
+qualified for the intended ABI matrix.
 
 ## Evidence
 

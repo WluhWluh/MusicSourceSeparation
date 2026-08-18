@@ -12,6 +12,8 @@ param(
     [int]$DspWorkers = 1,
     [ValidateSet("separate", "fused")]
     [string]$Postprocess = "separate",
+    [ValidateSet("allocating", "reuse")]
+    [string]$OutputRead = "allocating",
     [ValidateRange(5, 120)]
     [double]$PlaybackSeconds = 30,
     [ValidateRange(0, 119)]
@@ -178,6 +180,7 @@ $hostIdentity = [ordered]@{
     dspProfile = $DspProfile
     dspWorkers = $DspWorkers
     postprocess = $Postprocess
+    outputRead = $OutputRead
     runtimeAar = [ordered]@{ path = $RuntimeAar; bytes = (Get-Item $RuntimeAar).Length; sha256 = $runtimeSha }
     model = [ordered]@{ path = $ModelFile; bytes = (Get-Item $ModelFile).Length; sha256 = $modelSha }
     appApk = [ordered]@{ path = $AppApk; bytes = (Get-Item $AppApk).Length; sha256 = $appSha }
@@ -222,6 +225,7 @@ $instrumentArguments = @(
     "-e", "dspProfile", $DspProfile,
     "-e", "dspWorkers", $DspWorkers.ToString(),
     "-e", "postprocess", $Postprocess,
+    "-e", "outputRead", $OutputRead,
     "-e", "runId", $RunId,
     "-e", "modelFile", $modelName,
     "-e", "modelSha256", $modelSha,
@@ -323,6 +327,9 @@ if ($Test -eq "double-buffer") {
         Device = $Serial
         SequentialMeanMs = $report.sequential.meanMs
         DoubleBufferedMeanMs = $report.doubleBuffered.meanMs
+        OutputReadMode = $report.outputReadMode
+        SequentialOutputReadMeanMs = (($report.sequentialSamples | ForEach-Object { $_.outputReadMs } | Measure-Object -Average).Average)
+        DoubleBufferedOutputReadMeanMs = (($report.doubleBuffered.samples | ForEach-Object { $_.outputReadMs } | Measure-Object -Average).Average)
         SpeedupPercent = (1.0 - $report.doubleBuffered.meanMs / $report.sequential.meanMs) * 100.0
         OutputOrderVerified = $report.doubleBuffered.outputOrderVerified
         Output = (Resolve-Path $outputRoot).Path

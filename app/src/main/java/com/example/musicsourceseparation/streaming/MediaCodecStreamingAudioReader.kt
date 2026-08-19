@@ -6,16 +6,49 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
+import android.os.SystemClock
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.roundToLong
 
+data class MediaCodecReadTiming(
+    val startSample: Long,
+    val frameCount: Int,
+    val startNanos: Long,
+    val endNanos: Long,
+    val outputAllocationNanos: Long,
+    val pendingCopyNanos: Long,
+    val decodeOneCount: Int,
+    val inputDequeueNanos: Long,
+    val inputQueueNanos: Long,
+    val extractorReadNanos: Long,
+    val extractorAdvanceNanos: Long,
+    val outputDequeueNanos: Long,
+    val pcmConversionNanos: Long,
+    val pendingAppendNanos: Long,
+)
+
 data class MediaCodecStreamingAudioReaderStats(
+    val codecTimeoutUs: Long,
     val codecCreateCount: Int,
     val codecFlushCount: Int,
     val codecReleaseCount: Int,
     val decoderSeekCount: Int,
     val flushWallNanos: Long,
+    val readCallCount: Int,
+    val readFrameCount: Long,
+    val readWallNanos: Long,
+    val outputAllocationNanos: Long,
+    val pendingCopyNanos: Long,
+    val decodeOneCount: Long,
+    val inputDequeueNanos: Long,
+    val inputQueueNanos: Long,
+    val extractorReadNanos: Long,
+    val extractorAdvanceNanos: Long,
+    val outputDequeueNanos: Long,
+    val pcmConversionNanos: Long,
+    val pendingAppendNanos: Long,
+    val readTimings: List<MediaCodecReadTiming>,
 )
 
 /**
@@ -30,6 +63,7 @@ data class MediaCodecStreamingAudioReaderStats(
 class MediaCodecStreamingAudioReader(
     context: Context,
     private val uri: Uri,
+    private val codecTimeoutUs: Long = DEFAULT_TIMEOUT_US,
 ) : StreamingAudioReader {
     private val appContext = context.applicationContext
     private val stateLock = Any()
@@ -55,8 +89,23 @@ class MediaCodecStreamingAudioReader(
     private var codecReleaseCount = 0
     private var decoderSeekCount = 0
     private var flushWallNanos = 0L
+    private var readCallCount = 0
+    private var readFrameCount = 0L
+    private var readWallNanos = 0L
+    private var outputAllocationNanos = 0L
+    private var pendingCopyNanos = 0L
+    private var decodeOneCount = 0L
+    private var inputDequeueNanos = 0L
+    private var inputQueueNanos = 0L
+    private var extractorReadNanos = 0L
+    private var extractorAdvanceNanos = 0L
+    private var outputDequeueNanos = 0L
+    private var pcmConversionNanos = 0L
+    private var pendingAppendNanos = 0L
+    private val readTimings = ArrayList<MediaCodecReadTiming>()
 
     init {
+        require(codecTimeoutUs > 0L) { "codecTimeoutUs must be positive" }
         require(sampleRate == SAMPLE_RATE) {
             "Analysis reader requires 44,100 Hz output, got $sampleRate"
         }
@@ -74,34 +123,47 @@ class MediaCodecStreamingAudioReader(
 
         synchronized(stateLock) {
             check(!closed) { "Reader is closed" }
-            if (startSample != nextFrame || codec == null) {
-                resetDecoder(startSample)
-            }
-            val output = FloatArray(frameCount * CHANNEL_COUNT)
-            var copiedFrames = 0
-            while (copiedFrames < frameCount) {
-                val available = pendingFrameCount()
-                if (available > 0) {
-                    val copied = minOf(frameCount - copiedFrames, available)
-                    pending.copyInto(
-                        output,
-                        copiedFrames * CHANNEL_COUNT,
-                        pendingOffsetFrames * CHANNEL_COUNT,
-                        (pendingOffsetFrames + copied) * CHANNEL_COUNT,
-                    )
-                    pendingOffsetFrames += copied
-                    copiedFrames += copied
-                    nextFrame += copied
-                    if (pendingFrameCount() == 0) {
-                        pending = FloatArray(0)
-                        pendingOffsetFrames = 0
-                    }
-                } else {
-                    check(!outputEnded) { "Decoder ended before requested frames" }
-                    decodeOne()
+            val timing = ReadTimingAccumulator(
+                startSample = startSample,
+                frameCount = frameCount,
+                startNanos = SystemClock.elapsedRealtimeNanos(),
+            )
+            try {
+                if (startSample != nextFrame || codec == null) {
+                    resetDecoder(startSample)
                 }
+                val outputStarted = SystemClock.elapsedRealtimeNanos()
+                val output = FloatArray(frameCount * CHANNEL_COUNT)
+                timing.outputAllocationNanos += SystemClock.elapsedRealtimeNanos() - outputStarted
+                var copiedFrames = 0
+                while (copiedFrames < frameCount) {
+                    val available = pendingFrameCount()
+                    if (available > 0) {
+                        val copied = minOf(frameCount - copiedFrames, available)
+                        val copyStarted = SystemClock.elapsedRealtimeNanos()
+                        pending.copyInto(
+                            output,
+                            copiedFrames * CHANNEL_COUNT,
+                            pendingOffsetFrames * CHANNEL_COUNT,
+                            (pendingOffsetFrames + copied) * CHANNEL_COUNT,
+                        )
+                        timing.pendingCopyNanos += SystemClock.elapsedRealtimeNanos() - copyStarted
+                        pendingOffsetFrames += copied
+                        copiedFrames += copied
+                        nextFrame += copied
+                        if (pendingFrameCount() == 0) {
+                            pending = FloatArray(0)
+                            pendingOffsetFrames = 0
+                        }
+                    } else {
+                        check(!outputEnded) { "Decoder ended before requested frames" }
+                        decodeOne(timing)
+                    }
+                }
+                return output
+            } finally {
+                recordReadTiming(timing.finish(SystemClock.elapsedRealtimeNanos()))
             }
-            return output
         }
     }
 
@@ -117,11 +179,26 @@ class MediaCodecStreamingAudioReader(
 
     fun stats(): MediaCodecStreamingAudioReaderStats = synchronized(stateLock) {
         MediaCodecStreamingAudioReaderStats(
+            codecTimeoutUs = codecTimeoutUs,
             codecCreateCount = codecCreateCount,
             codecFlushCount = codecFlushCount,
             codecReleaseCount = codecReleaseCount,
             decoderSeekCount = decoderSeekCount,
             flushWallNanos = flushWallNanos,
+            readCallCount = readCallCount,
+            readFrameCount = readFrameCount,
+            readWallNanos = readWallNanos,
+            outputAllocationNanos = outputAllocationNanos,
+            pendingCopyNanos = pendingCopyNanos,
+            decodeOneCount = decodeOneCount,
+            inputDequeueNanos = inputDequeueNanos,
+            inputQueueNanos = inputQueueNanos,
+            extractorReadNanos = extractorReadNanos,
+            extractorAdvanceNanos = extractorAdvanceNanos,
+            outputDequeueNanos = outputDequeueNanos,
+            pcmConversionNanos = pcmConversionNanos,
+            pendingAppendNanos = pendingAppendNanos,
+            readTimings = readTimings.toList(),
         )
     }
 
@@ -204,42 +281,41 @@ class MediaCodecStreamingAudioReader(
         }
     }
 
-    private fun decodeOne() {
+    private fun decodeOne(timing: ReadTimingAccumulator) {
         val activeCodec = checkNotNull(codec)
         val activeExtractor = checkNotNull(extractor)
         val info = MediaCodec.BufferInfo()
+        timing.decodeOneCount++
+        decodeOneCount++
+        if (!inputEnded) {
+            queueNextInput(
+                activeCodec = activeCodec,
+                activeExtractor = activeExtractor,
+                timing = timing,
+                timeoutUs = codecTimeoutUs,
+            )
+        }
         while (true) {
-            if (!inputEnded) {
-                val inputIndex = activeCodec.dequeueInputBuffer(TIMEOUT_US)
-                if (inputIndex >= 0) {
-                    val inputBuffer = activeCodec.getInputBuffer(inputIndex)
-                        ?: error("Decoder returned a null input buffer")
-                    val size = activeExtractor.readSampleData(inputBuffer, 0)
-                    if (size < 0) {
-                        activeCodec.queueInputBuffer(
-                            inputIndex,
-                            0,
-                            0,
-                            0L,
-                            MediaCodec.BUFFER_FLAG_END_OF_STREAM,
+            val outputWaitStarted = SystemClock.elapsedRealtimeNanos()
+            when (val outputIndex = activeCodec.dequeueOutputBuffer(info, codecTimeoutUs)) {
+                MediaCodec.INFO_TRY_AGAIN_LATER -> {
+                    val outputWaitElapsed = SystemClock.elapsedRealtimeNanos() - outputWaitStarted
+                    timing.outputDequeueNanos += outputWaitElapsed
+                    outputDequeueNanos += outputWaitElapsed
+                    if (!inputEnded) {
+                        queueNextInput(
+                            activeCodec = activeCodec,
+                            activeExtractor = activeExtractor,
+                            timing = timing,
+                            timeoutUs = 0L,
                         )
-                        inputEnded = true
-                    } else {
-                        activeCodec.queueInputBuffer(
-                            inputIndex,
-                            0,
-                            size,
-                            activeExtractor.sampleTime,
-                            0,
-                        )
-                        activeExtractor.advance()
                     }
+                    continue
                 }
-            }
-
-            when (val outputIndex = activeCodec.dequeueOutputBuffer(info, TIMEOUT_US)) {
-                MediaCodec.INFO_TRY_AGAIN_LATER -> continue
                 MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                    val outputWaitElapsed = SystemClock.elapsedRealtimeNanos() - outputWaitStarted
+                    timing.outputDequeueNanos += outputWaitElapsed
+                    outputDequeueNanos += outputWaitElapsed
                     val outputFormat = activeCodec.outputFormat
                     val outputRate = outputFormat.optionalInteger(MediaFormat.KEY_SAMPLE_RATE)
                     require(outputRate == null || outputRate == sampleRate) {
@@ -253,12 +329,19 @@ class MediaCodecStreamingAudioReader(
                         ?: outputEncoding
                 }
                 else -> {
+                    val outputWaitElapsed = SystemClock.elapsedRealtimeNanos() - outputWaitStarted
+                    timing.outputDequeueNanos += outputWaitElapsed
+                    outputDequeueNanos += outputWaitElapsed
                     if (outputIndex < 0) continue
                     try {
                         if (info.size > 0) {
                             val outputBuffer = activeCodec.getOutputBuffer(outputIndex)
                                 ?: error("Decoder returned a null output buffer")
+                            val conversionStarted = SystemClock.elapsedRealtimeNanos()
                             val values = decodePcm(outputBuffer, info, outputEncoding)
+                            val conversionElapsed = SystemClock.elapsedRealtimeNanos() - conversionStarted
+                            timing.pcmConversionNanos += conversionElapsed
+                            pcmConversionNanos += conversionElapsed
                             val frameCount = values.size / CHANNEL_COUNT
                             val timestampFrame = if (info.presentationTimeUs >= 0) {
                                 (info.presentationTimeUs * sampleRate / 1_000_000.0).roundToLong()
@@ -269,7 +352,11 @@ class MediaCodecStreamingAudioReader(
                                 decoderFrameCursor,
                                 timestampFrame + frameCount,
                             )
+                            val appendStarted = SystemClock.elapsedRealtimeNanos()
                             appendFromTarget(timestampFrame, values)
+                            val appendElapsed = SystemClock.elapsedRealtimeNanos() - appendStarted
+                            timing.pendingAppendNanos += appendElapsed
+                            pendingAppendNanos += appendElapsed
                         }
                         if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
                             outputEnded = true
@@ -281,6 +368,104 @@ class MediaCodecStreamingAudioReader(
                 }
             }
         }
+    }
+
+    private fun queueNextInput(
+        activeCodec: MediaCodec,
+        activeExtractor: MediaExtractor,
+        timing: ReadTimingAccumulator,
+        timeoutUs: Long,
+    ): Boolean {
+        val inputWaitStarted = SystemClock.elapsedRealtimeNanos()
+        val inputIndex = activeCodec.dequeueInputBuffer(timeoutUs)
+        val inputWaitElapsed = SystemClock.elapsedRealtimeNanos() - inputWaitStarted
+        timing.inputDequeueNanos += inputWaitElapsed
+        inputDequeueNanos += inputWaitElapsed
+        if (inputIndex < 0) return false
+
+        val inputBuffer = activeCodec.getInputBuffer(inputIndex)
+            ?: error("Decoder returned a null input buffer")
+        val extractorReadStarted = SystemClock.elapsedRealtimeNanos()
+        val size = activeExtractor.readSampleData(inputBuffer, 0)
+        val extractorReadElapsed = SystemClock.elapsedRealtimeNanos() - extractorReadStarted
+        timing.extractorReadNanos += extractorReadElapsed
+        extractorReadNanos += extractorReadElapsed
+        val queueStarted = SystemClock.elapsedRealtimeNanos()
+        if (size < 0) {
+            activeCodec.queueInputBuffer(
+                inputIndex,
+                0,
+                0,
+                0L,
+                MediaCodec.BUFFER_FLAG_END_OF_STREAM,
+            )
+            inputEnded = true
+        } else {
+            activeCodec.queueInputBuffer(
+                inputIndex,
+                0,
+                size,
+                activeExtractor.sampleTime,
+                0,
+            )
+        }
+        val queueElapsed = SystemClock.elapsedRealtimeNanos() - queueStarted
+        timing.inputQueueNanos += queueElapsed
+        inputQueueNanos += queueElapsed
+        if (size >= 0) {
+            val extractorAdvanceStarted = SystemClock.elapsedRealtimeNanos()
+            activeExtractor.advance()
+            val extractorAdvanceElapsed = SystemClock.elapsedRealtimeNanos() - extractorAdvanceStarted
+            timing.extractorAdvanceNanos += extractorAdvanceElapsed
+            extractorAdvanceNanos += extractorAdvanceElapsed
+        }
+        return true
+    }
+
+    private fun recordReadTiming(timing: MediaCodecReadTiming) {
+        readCallCount++
+        readFrameCount += timing.frameCount.toLong()
+        readWallNanos += timing.endNanos - timing.startNanos
+        outputAllocationNanos += timing.outputAllocationNanos
+        pendingCopyNanos += timing.pendingCopyNanos
+        if (readTimings.size >= MAX_READ_TIMING_RECORDS) {
+            readTimings.removeAt(0)
+        }
+        readTimings += timing
+    }
+
+    private class ReadTimingAccumulator(
+        private val startSample: Long,
+        private val frameCount: Int,
+        private val startNanos: Long,
+    ) {
+        var outputAllocationNanos = 0L
+        var pendingCopyNanos = 0L
+        var decodeOneCount = 0
+        var inputDequeueNanos = 0L
+        var inputQueueNanos = 0L
+        var extractorReadNanos = 0L
+        var extractorAdvanceNanos = 0L
+        var outputDequeueNanos = 0L
+        var pcmConversionNanos = 0L
+        var pendingAppendNanos = 0L
+
+        fun finish(endNanos: Long) = MediaCodecReadTiming(
+            startSample = startSample,
+            frameCount = frameCount,
+            startNanos = startNanos,
+            endNanos = endNanos,
+            outputAllocationNanos = outputAllocationNanos,
+            pendingCopyNanos = pendingCopyNanos,
+            decodeOneCount = decodeOneCount,
+            inputDequeueNanos = inputDequeueNanos,
+            inputQueueNanos = inputQueueNanos,
+            extractorReadNanos = extractorReadNanos,
+            extractorAdvanceNanos = extractorAdvanceNanos,
+            outputDequeueNanos = outputDequeueNanos,
+            pcmConversionNanos = pcmConversionNanos,
+            pendingAppendNanos = pendingAppendNanos,
+        )
     }
 
     private fun appendFromTarget(frameStart: Long, values: FloatArray) {
@@ -394,7 +579,8 @@ class MediaCodecStreamingAudioReader(
     private companion object {
         const val SAMPLE_RATE = 44_100
         const val CHANNEL_COUNT = 2
-        const val TIMEOUT_US = 10_000L
+        const val DEFAULT_TIMEOUT_US = 10_000L
+        const val MAX_READ_TIMING_RECORDS = 2_048
 
         fun readMetadata(context: Context, uri: Uri): Metadata {
             val extractor = MediaExtractor()

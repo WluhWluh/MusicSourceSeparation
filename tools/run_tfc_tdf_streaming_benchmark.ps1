@@ -14,6 +14,8 @@ param(
     [string]$Postprocess = "separate",
     [ValidateSet("allocating", "reuse")]
     [string]$OutputRead = "allocating",
+    [ValidateSet(10000, 2000, 1000)]
+    [long]$CodecTimeoutUs = 10000,
     [ValidateRange(5, 120)]
     [double]$PlaybackSeconds = 30,
     [ValidateRange(0, 119)]
@@ -181,6 +183,7 @@ $hostIdentity = [ordered]@{
     dspWorkers = $DspWorkers
     postprocess = $Postprocess
     outputRead = $OutputRead
+    codecTimeoutUs = $CodecTimeoutUs
     runtimeAar = [ordered]@{ path = $RuntimeAar; bytes = (Get-Item $RuntimeAar).Length; sha256 = $runtimeSha }
     model = [ordered]@{ path = $ModelFile; bytes = (Get-Item $ModelFile).Length; sha256 = $modelSha }
     appApk = [ordered]@{ path = $AppApk; bytes = (Get-Item $AppApk).Length; sha256 = $appSha }
@@ -226,6 +229,7 @@ $instrumentArguments = @(
     "-e", "dspWorkers", $DspWorkers.ToString(),
     "-e", "postprocess", $Postprocess,
     "-e", "outputRead", $OutputRead,
+    "-e", "codecTimeoutUs", $CodecTimeoutUs.ToString(),
     "-e", "runId", $RunId,
     "-e", "modelFile", $modelName,
     "-e", "modelSha256", $modelSha,

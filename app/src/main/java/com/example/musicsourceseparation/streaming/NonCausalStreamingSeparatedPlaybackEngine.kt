@@ -82,6 +82,7 @@ data class StreamingEngineSnapshot(
     val wetEndSample: Long?,
     val wetLeadSamples: Long,
     val readAheadDecodeWallNanos: Long,
+    val readAheadRingWriteWallNanos: Long,
     val analysisWorkerStartCount: Long,
     val analysisCommandCount: Long,
     val analysisCommandTakeCount: Long,
@@ -128,6 +129,7 @@ class NonCausalStreamingSeparatedPlaybackEngine(
     private val readCallCount = AtomicLong(0)
     private val readFrameCount = AtomicLong(0)
     private val readAheadDecodeWallNanos = AtomicLong(0)
+    private val readAheadRingWriteWallNanos = AtomicLong(0)
     private val maxInputRingSamples = AtomicLong(0)
     private val analysisWorkerStartCount = AtomicLong(0)
     private val analysisCommandCount = AtomicLong(0)
@@ -250,6 +252,7 @@ class NonCausalStreamingSeparatedPlaybackEngine(
             wetEndSample = wetEndSample,
             wetLeadSamples = maxOf(0L, (wetEndSample ?: currentPlaybackSample) - currentPlaybackSample),
             readAheadDecodeWallNanos = readAheadDecodeWallNanos.get(),
+            readAheadRingWriteWallNanos = readAheadRingWriteWallNanos.get(),
             analysisWorkerStartCount = analysisWorkerStartCount.get(),
             analysisCommandCount = analysisCommandCount.get(),
             analysisCommandTakeCount = analysisCommandTakeCount.get(),
@@ -376,7 +379,9 @@ class NonCausalStreamingSeparatedPlaybackEngine(
                     require(chunk.size == count * CHANNEL_COUNT) {
                         "Reader returned ${chunk.size} values for $count frames"
                     }
+                    val ringWriteStarted = System.nanoTime()
                     inputRing.write(readCursor, chunk)
+                    readAheadRingWriteWallNanos.addAndGet(System.nanoTime() - ringWriteStarted)
                     readCursor += count
                     readCallCount.incrementAndGet()
                     readFrameCount.addAndGet(count.toLong())

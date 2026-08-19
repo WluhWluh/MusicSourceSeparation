@@ -13,6 +13,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.example.musicsourceseparation.BuildConfig
 import com.example.musicsourceseparation.streaming.MediaCodecStreamingAudioReader
+import com.example.musicsourceseparation.streaming.MediaCodecReadTiming
+import com.example.musicsourceseparation.streaming.MediaCodecStreamingAudioReaderStats
 import com.example.musicsourceseparation.streaming.NonCausalStreamingSeparatedPlaybackEngine
 import com.example.musicsourceseparation.streaming.StreamingAccelerator
 import com.example.musicsourceseparation.streaming.StreamingAudioReader
@@ -55,7 +57,9 @@ class TfcTdfStreamingFullChainInstrumentedTest {
         val postprocessMode = args.getString("postprocess", "separate")!!
         require(postprocessMode == "separate" || postprocessMode == "fused")
         val outputReadMode = args.getString("outputRead", "allocating")!!
-        require(outputReadMode == "allocating" || outputReadMode == "reuse")
+        require(outputReadMode == "allocating")
+        val codecTimeoutUs = args.getString("codecTimeoutUs", "10000")!!.toLong()
+        require(codecTimeoutUs in setOf(10_000L, 2_000L, 1_000L))
         val runId = safeName(args.getString("runId", backend)!!)
         val sourceName = safeName(requireNotNull(args.getString("sourceFile")))
         val modelName = safeName(requireNotNull(args.getString("modelFile")))
@@ -94,6 +98,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             .put("runId", runId)
             .put("backend", backend)
             .put("threads", threads)
+            .put("codecTimeoutUs", codecTimeoutUs)
             .put("dsp", JSONObject()
                 .put("profile", dspProfile)
                 .put("workers", dspWorkers)
@@ -121,7 +126,11 @@ class TfcTdfStreamingFullChainInstrumentedTest {
         val trace = StreamingSeekTrace(wallStart)
         try {
             playbackReader = MediaCodecStreamingAudioReader(context, android.net.Uri.fromFile(sourceFile))
-            analysisMediaReader = MediaCodecStreamingAudioReader(context, android.net.Uri.fromFile(sourceFile))
+            analysisMediaReader = MediaCodecStreamingAudioReader(
+                context = context,
+                uri = android.net.Uri.fromFile(sourceFile),
+                codecTimeoutUs = codecTimeoutUs,
+            )
             analysisReader = TracingAudioReader(
                 delegate = requireNotNull(analysisMediaReader),
                 trace = trace,
@@ -208,6 +217,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
                     wetBlocks.incrementAndGet()
                     if (firstWetWallMs == null) {
                         firstWetWallMs = elapsedMs(wallStart, SystemClock.elapsedRealtimeNanos())
+                        trace.markInitialWetSelection(SystemClock.elapsedRealtimeNanos())
                     }
                     if (seekDone && seekWetWallMs == null) {
                         seekWetWallMs = elapsedMs(wallStart, SystemClock.elapsedRealtimeNanos())
@@ -256,6 +266,8 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             val elapsedWallMs = elapsedMs(wallStart, SystemClock.elapsedRealtimeNanos())
             val audioSeconds = logicalFrames.toDouble() / TfcTdfStreamingDsp.SAMPLE_RATE
             val fullChainWallMs = factoryReport.getDouble("fullChainWallMs")
+            val seekBreakdown = trace.report(seekWetWallMs)
+            val initialBreakdown = trace.initialReport()
             val positiveLeadSamples = leadSamples.filter { it > 0L }
             report
                 .put("status", "complete")
@@ -281,7 +293,8 @@ class TfcTdfStreamingFullChainInstrumentedTest {
                     .put("blockSelectionWallMs", selectionWallNanos.get() / 1_000_000.0)
                     .put("engine", factoryReport)
                     .put("fullChainRtf", fullChainWallMs / 1_000.0 / audioSeconds)
-                    .put("seekBreakdown", trace.report(seekWetWallMs)))
+                    .put("seekBreakdown", seekBreakdown)
+                    .put("initialBreakdown", initialBreakdown))
                 .put("wetLead", JSONObject()
                     .put("samples", JSONArray(leadSamples))
                     .put("minimumSamples", leadSamples.minOrNull() ?: 0L)
@@ -305,16 +318,21 @@ class TfcTdfStreamingFullChainInstrumentedTest {
                     .put("maxInputRingSamples", finalSnapshot.maxInputRingSamples)
                     .put("wetWindowCount", finalSnapshot.wetWindowCount)
                     .put("readAheadDecodeWallMs", finalSnapshot.readAheadDecodeWallNanos / 1_000_000.0)
+                    .put("readAheadRingWriteWallMs", finalSnapshot.readAheadRingWriteWallNanos / 1_000_000.0)
                     .put("analysisWorkerStartCount", finalSnapshot.analysisWorkerStartCount)
                     .put("analysisCommandCount", finalSnapshot.analysisCommandCount)
                     .put("analysisCommandTakeCount", finalSnapshot.analysisCommandTakeCount))
                 .put("analysisDecoder", JSONObject()
+                    .put("codecTimeoutUs", decoderReport?.codecTimeoutUs ?: JSONObject.NULL)
                     .put("codecCreateCount", decoderReport?.codecCreateCount ?: JSONObject.NULL)
                     .put("codecFlushCount", decoderReport?.codecFlushCount ?: JSONObject.NULL)
                     .put("codecReleaseCount", decoderReport?.codecReleaseCount ?: JSONObject.NULL)
                     .put("decoderSeekCount", decoderReport?.decoderSeekCount ?: JSONObject.NULL)
                     .put("flushWallMs", decoderReport?.flushWallNanos?.div(1_000_000.0)
-                        ?: JSONObject.NULL))
+                        ?: JSONObject.NULL)
+                    .put("readTiming", decoderReport?.let {
+                        readerTimingEvidence(it, wallStart)
+                    } ?: JSONObject.NULL))
                 .put("resources", resourceSamples)
                 .put("thermalStatusEnd", powerManager.currentThermalStatus)
                 .put("batteryTemperatureDeciCEnd", batteryTemperatureDeciC(context))
@@ -354,7 +372,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
         val postprocessMode = args.getString("postprocess", "fused")!!
         require(postprocessMode == "separate" || postprocessMode == "fused")
         val outputReadMode = args.getString("outputRead", "allocating")!!
-        require(outputReadMode == "allocating" || outputReadMode == "reuse")
+        require(outputReadMode == "allocating")
         val runs = args.getString("runs", "8")!!.toInt().coerceIn(2, 30)
         val warmups = args.getString("warmups", "2")!!.toInt().coerceIn(0, 5)
         val runId = safeName(args.getString("runId", "double-buffer")!!)
@@ -438,11 +456,6 @@ class TfcTdfStreamingFullChainInstrumentedTest {
                 }
             }
             val tensors = Array(2) { FloatArray(TfcTdfStreamingDsp.TENSOR_ELEMENTS) }
-            val outputTensors = if (outputReadMode == "reuse") {
-                Array(2) { FloatArray(TfcTdfStreamingDsp.TENSOR_ELEMENTS) }
-            } else {
-                null
-            }
             val outputReadNanos = LongArray(2)
             val valid = Array(2) {
                 FloatArray(TfcTdfStreamingDsp.USEFUL_SAMPLES * TfcTdfStreamingDsp.CHANNELS)
@@ -461,13 +474,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             }
             fun postprocess(slot: Int) {
                 val outputReadStarted = SystemClock.elapsedRealtimeNanos()
-                val outputTensor = if (outputReadMode == "reuse") {
-                    val destination = requireNotNull(outputTensors)[slot]
-                    outputs[slot].readFloatInto(destination)
-                    destination
-                } else {
-                    outputs[slot].readFloat()
-                }
+                val outputTensor = outputs[slot].readFloat()
                 outputReadNanos[slot] = SystemClock.elapsedRealtimeNanos() - outputReadStarted
                 if (postprocessMode == "fused") {
                     dsps[slot].istftResidualInto(
@@ -656,6 +663,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             var computeWallMs = 0.0
             var stftWallMs = 0.0
             var inferenceWallMs = 0.0
+            var outputReadWallMs = 0.0
             var istftWallMs = 0.0
             var workerCpuMs = 0.0
             var workerThreadCpuMs = 0.0
@@ -668,6 +676,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
                     computeWallMs += report.optDouble("totalWallMs", 0.0)
                     stftWallMs += report.optDouble("stftWallMs", 0.0)
                     inferenceWallMs += report.optDouble("inferenceWallMs", 0.0)
+                    outputReadWallMs += report.optDouble("outputReadWallMs", 0.0)
                     istftWallMs += report.optDouble("istftWallMs", 0.0)
                     workerCpuMs += report.optDouble("workerCpuMs", 0.0)
                     workerThreadCpuMs += report.optDouble("workerThreadCpuMs", 0.0)
@@ -681,6 +690,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
                 .put("fullChainWallMs", setupWallMs + computeWallMs)
                 .put("stftWallMs", stftWallMs)
                 .put("inferenceWallMs", inferenceWallMs)
+                .put("outputReadWallMs", outputReadWallMs)
                 .put("istftWallMs", istftWallMs)
                 .put("workerCpuMs", workerCpuMs)
                 .put("workerThreadCpuMs", workerThreadCpuMs)
@@ -714,11 +724,6 @@ class TfcTdfStreamingFullChainInstrumentedTest {
         private val reusableReconstructed = FloatArray(
             TfcTdfStreamingDsp.INPUT_SAMPLES * TfcTdfStreamingDsp.CHANNELS,
         )
-        private val reusableOutputTensor = if (outputReadMode == "reuse") {
-            FloatArray(TfcTdfStreamingDsp.TENSOR_ELEMENTS)
-        } else {
-            null
-        }
         private val gpuRuntime = if (boundedGpu && accelerator == StreamingAccelerator.GPU) {
             BoundedGpuRuntime.loadAndValidate()
         } else null
@@ -789,14 +794,9 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             val inferenceElapsed = SystemClock.elapsedRealtimeNanos() - inferenceStart
             inferenceNanos.addAndGet(inferenceElapsed)
             val outputReadStart = SystemClock.elapsedRealtimeNanos()
-            val outputTensor = if (outputReadMode == "reuse") {
-                val destination = requireNotNull(reusableOutputTensor)
-                outputBuffer.readFloatInto(destination)
-                destination
-            } else {
-                outputBuffer.readFloat()
-            }
-            outputReadNanos.addAndGet(SystemClock.elapsedRealtimeNanos() - outputReadStart)
+            val outputTensor = outputBuffer.readFloat()
+            val outputReadElapsed = SystemClock.elapsedRealtimeNanos() - outputReadStart
+            outputReadNanos.addAndGet(outputReadElapsed)
             val valid = FloatArray(actualSamples * TfcTdfStreamingDsp.CHANNELS)
             val istftStart = SystemClock.elapsedRealtimeNanos()
             if (postprocessMode == "fused") {
@@ -830,6 +830,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
                 endNanos = totalStart + totalElapsed,
                 stftNanos = stftElapsed,
                 inferenceNanos = inferenceElapsed,
+                outputReadNanos = outputReadElapsed,
                 istftNanos = istftElapsed,
                 totalNanos = totalElapsed,
             )
@@ -932,6 +933,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             val endNanos: Long,
             val stftNanos: Long,
             val inferenceNanos: Long,
+            val outputReadNanos: Long,
             val istftNanos: Long,
             val totalNanos: Long,
         )
@@ -942,6 +944,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
         private var seekStartedNanos: Long? = null
         private var seekReturnedNanos: Long? = null
         private var firstWetSelectionNanos: Long? = null
+        private var initialWetSelectionNanos: Long? = null
 
         var seekCallWallMs: Double? = null
 
@@ -958,6 +961,11 @@ class TfcTdfStreamingFullChainInstrumentedTest {
         @Synchronized
         fun markFirstWetSelection(nanos: Long) {
             if (firstWetSelectionNanos == null) firstWetSelectionNanos = nanos
+        }
+
+        @Synchronized
+        fun markInitialWetSelection(nanos: Long) {
+            if (initialWetSelectionNanos == null) initialWetSelectionNanos = nanos
         }
 
         @Synchronized
@@ -983,6 +991,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             endNanos: Long,
             stftNanos: Long,
             inferenceNanos: Long,
+            outputReadNanos: Long,
             istftNanos: Long,
             totalNanos: Long,
         ) {
@@ -993,6 +1002,7 @@ class TfcTdfStreamingFullChainInstrumentedTest {
                 endNanos,
                 stftNanos,
                 inferenceNanos,
+                outputReadNanos,
                 istftNanos,
                 totalNanos,
             )
@@ -1067,12 +1077,72 @@ class TfcTdfStreamingFullChainInstrumentedTest {
                 .put("firstPostSeekWindowInferenceWallMs", firstPostSeekWindow?.let {
                     it.inferenceNanos / 1_000_000.0
                 } ?: JSONObject.NULL)
+                .put("firstPostSeekWindowOutputReadWallMs", firstPostSeekWindow?.let {
+                    it.outputReadNanos / 1_000_000.0
+                } ?: JSONObject.NULL)
                 .put("firstPostSeekWindowIstftWallMs", firstPostSeekWindow?.let {
                     it.istftNanos / 1_000_000.0
                 } ?: JSONObject.NULL)
                 .put("firstWindowEndToWetSelectionMs", if (firstPostSeekWindow != null && wetSelection != null) {
                     (wetSelection - firstPostSeekWindow.endNanos) / 1_000_000.0
                 } else JSONObject.NULL)
+        }
+
+        @Synchronized
+        fun initialReport(): JSONObject {
+            val setup = sessionSetups.firstOrNull { it.ordinal == 0 }
+            val firstWindow = windowProcesses.firstOrNull { it.sessionOrdinal == 0 }
+            val analysisStart = setup?.endNanos
+            val readsBeforeWindow = if (analysisStart != null && firstWindow != null) {
+                readerReads.filter {
+                    it.startNanos >= analysisStart &&
+                        it.endNanos <= firstWindow.startNanos
+                }
+            } else {
+                emptyList()
+            }
+            val readWallNanos = readsBeforeWindow.sumOf { it.endNanos - it.startNanos }
+            val readFrameCount = readsBeforeWindow.sumOf { it.frameCount.toLong() }
+            val setupToWindowNanos = if (analysisStart != null && firstWindow != null) {
+                firstWindow.startNanos - analysisStart
+            } else {
+                null
+            }
+            return JSONObject()
+                .put("sessionSetupWallMs", setup?.let {
+                    (it.endNanos - it.startNanos) / 1_000_000.0
+                } ?: JSONObject.NULL)
+                .put("readerReadCountBeforeFirstWindow", readsBeforeWindow.size)
+                .put("readerReadFramesBeforeFirstWindow", readFrameCount)
+                .put("readerReadWallMsBeforeFirstWindow", readWallNanos / 1_000_000.0)
+                .put("analysisStartToFirstWindowStartMs", setupToWindowNanos?.let {
+                    it / 1_000_000.0
+                } ?: JSONObject.NULL)
+                .put("firstWindowStartWallMs", firstWindow?.let {
+                    relativeMs(it.startNanos)
+                } ?: JSONObject.NULL)
+                .put("firstWindowProcessWallMs", firstWindow?.let {
+                    it.totalNanos / 1_000_000.0
+                } ?: JSONObject.NULL)
+                .put("firstWindowStftWallMs", firstWindow?.let {
+                    it.stftNanos / 1_000_000.0
+                } ?: JSONObject.NULL)
+                .put("firstWindowInferenceWallMs", firstWindow?.let {
+                    it.inferenceNanos / 1_000_000.0
+                } ?: JSONObject.NULL)
+                .put("firstWindowOutputReadWallMs", firstWindow?.let {
+                    it.outputReadNanos / 1_000_000.0
+                } ?: JSONObject.NULL)
+                .put("firstWindowIstftWallMs", firstWindow?.let {
+                    it.istftNanos / 1_000_000.0
+                } ?: JSONObject.NULL)
+                .put("firstWindowEndToWetSelectionMs", if (firstWindow != null &&
+                    initialWetSelectionNanos != null
+                ) {
+                    (initialWetSelectionNanos!! - firstWindow.endNanos) / 1_000_000.0
+                } else JSONObject.NULL)
+                .put("initialWetSelectionWallMs", initialWetSelectionNanos?.let(::relativeMs)
+                    ?: JSONObject.NULL)
         }
 
         private fun relativeMs(nanos: Long): Double =
@@ -1113,6 +1183,50 @@ class TfcTdfStreamingFullChainInstrumentedTest {
         values.forEach(buffer::putFloat)
         digest.update(buffer.array())
     }
+
+    private fun readerTimingEvidence(
+        stats: MediaCodecStreamingAudioReaderStats,
+        originNanos: Long,
+    ): JSONObject {
+        val records = JSONArray()
+        stats.readTimings.forEach { record ->
+            records.put(readerTimingJson(record, originNanos))
+        }
+        return JSONObject()
+            .put("readCallCount", stats.readCallCount)
+            .put("readFrameCount", stats.readFrameCount)
+            .put("readWallMs", stats.readWallNanos / 1_000_000.0)
+            .put("outputAllocationMs", stats.outputAllocationNanos / 1_000_000.0)
+            .put("pendingCopyMs", stats.pendingCopyNanos / 1_000_000.0)
+            .put("decodeOneCount", stats.decodeOneCount)
+            .put("inputDequeueMs", stats.inputDequeueNanos / 1_000_000.0)
+            .put("inputQueueMs", stats.inputQueueNanos / 1_000_000.0)
+            .put("extractorReadMs", stats.extractorReadNanos / 1_000_000.0)
+            .put("extractorAdvanceMs", stats.extractorAdvanceNanos / 1_000_000.0)
+            .put("outputDequeueMs", stats.outputDequeueNanos / 1_000_000.0)
+            .put("pcmConversionMs", stats.pcmConversionNanos / 1_000_000.0)
+            .put("pendingAppendMs", stats.pendingAppendNanos / 1_000_000.0)
+            .put("retainedRecordCount", records.length())
+            .put("records", records)
+    }
+
+    private fun readerTimingJson(record: MediaCodecReadTiming, originNanos: Long): JSONObject =
+        JSONObject()
+            .put("startSample", record.startSample)
+            .put("frameCount", record.frameCount)
+            .put("startWallMs", elapsedMs(originNanos, record.startNanos))
+            .put("endWallMs", elapsedMs(originNanos, record.endNanos))
+            .put("wallMs", (record.endNanos - record.startNanos) / 1_000_000.0)
+            .put("outputAllocationMs", record.outputAllocationNanos / 1_000_000.0)
+            .put("pendingCopyMs", record.pendingCopyNanos / 1_000_000.0)
+            .put("decodeOneCount", record.decodeOneCount)
+            .put("inputDequeueMs", record.inputDequeueNanos / 1_000_000.0)
+            .put("inputQueueMs", record.inputQueueNanos / 1_000_000.0)
+            .put("extractorReadMs", record.extractorReadNanos / 1_000_000.0)
+            .put("extractorAdvanceMs", record.extractorAdvanceNanos / 1_000_000.0)
+            .put("outputDequeueMs", record.outputDequeueNanos / 1_000_000.0)
+            .put("pcmConversionMs", record.pcmConversionNanos / 1_000_000.0)
+            .put("pendingAppendMs", record.pendingAppendNanos / 1_000_000.0)
 
     private fun percentile(values: List<Long>, fraction: Double): Long {
         if (values.isEmpty()) return 0L

@@ -266,7 +266,10 @@ class TfcTdfStreamingFullChainInstrumentedTest {
             val elapsedWallMs = elapsedMs(wallStart, SystemClock.elapsedRealtimeNanos())
             val audioSeconds = logicalFrames.toDouble() / TfcTdfStreamingDsp.SAMPLE_RATE
             val fullChainWallMs = factoryReport.getDouble("fullChainWallMs")
-            val seekBreakdown = trace.report(seekWetWallMs)
+            val seekBreakdown = trace.report(
+                seekWetWallMs = seekWetWallMs,
+                decoderReadTimings = decoderReport?.readTimings ?: emptyList(),
+            )
             val initialBreakdown = trace.initialReport()
             val positiveLeadSamples = leadSamples.filter { it > 0L }
             report
@@ -1009,7 +1012,10 @@ class TfcTdfStreamingFullChainInstrumentedTest {
         }
 
         @Synchronized
-        fun report(seekWetWallMs: Double?): JSONObject {
+        fun report(
+            seekWetWallMs: Double?,
+            decoderReadTimings: List<MediaCodecReadTiming>,
+        ): JSONObject {
             val seekStart = seekStartedNanos
             val seekEnd = seekReturnedNanos
             val wetSelection = firstWetSelectionNanos
@@ -1036,6 +1042,14 @@ class TfcTdfStreamingFullChainInstrumentedTest {
                 null
             }
             val firstRead = readsBeforeWindow.firstOrNull()
+            val seekReaderTimings = if (seekEnd != null && firstPostSeekWindow != null) {
+                decoderReadTimings.filter {
+                    it.startNanos >= seekEnd &&
+                        it.endNanos <= firstPostSeekWindow.startNanos
+                }
+            } else {
+                emptyList()
+            }
 
             return JSONObject()
                 .put("seekCallWallMs", seekCallWallMs ?: JSONObject.NULL)
@@ -1083,9 +1097,48 @@ class TfcTdfStreamingFullChainInstrumentedTest {
                 .put("firstPostSeekWindowIstftWallMs", firstPostSeekWindow?.let {
                     it.istftNanos / 1_000_000.0
                 } ?: JSONObject.NULL)
+                .put("seekReaderOperationStats", readerOperationStats(seekReaderTimings))
                 .put("firstWindowEndToWetSelectionMs", if (firstPostSeekWindow != null && wetSelection != null) {
                     (wetSelection - firstPostSeekWindow.endNanos) / 1_000_000.0
                 } else JSONObject.NULL)
+        }
+
+        private fun readerOperationStats(timings: List<MediaCodecReadTiming>): JSONObject {
+            fun values(selector: (MediaCodecReadTiming) -> List<Long>): List<Long> =
+                timings.flatMap(selector)
+
+            return JSONObject()
+                .put("readCount", timings.size)
+                .put("readWallMs", percentileStats(timings.map { it.endNanos - it.startNanos }))
+                .put("inputDequeueMs", percentileStats(values { it.inputDequeueSamplesNanos }))
+                .put("inputDequeueReadyMs", percentileStats(values { it.inputDequeueReadySamplesNanos }))
+                .put("inputDequeueTryAgainMs", percentileStats(values { it.inputDequeueTryAgainSamplesNanos }))
+                .put("inputQueueMs", percentileStats(values { it.inputQueueSamplesNanos }))
+                .put("extractorReadMs", percentileStats(values { it.extractorReadSamplesNanos }))
+                .put("extractorAdvanceMs", percentileStats(values { it.extractorAdvanceSamplesNanos }))
+                .put("outputDequeueMs", percentileStats(values { it.outputDequeueSamplesNanos }))
+                .put("outputDequeueReadyMs", percentileStats(values { it.outputDequeueReadySamplesNanos }))
+                .put("outputDequeueTryAgainMs", percentileStats(values { it.outputDequeueTryAgainSamplesNanos }))
+                .put("pcmConversionMs", percentileStats(values { it.pcmConversionSamplesNanos }))
+                .put("pendingAppendMs", percentileStats(values { it.pendingAppendSamplesNanos }))
+                .put("pendingCopyMs", percentileStats(values { it.pendingCopySamplesNanos }))
+        }
+
+        private fun percentileStats(valuesNanos: List<Long>): JSONObject {
+            fun percentileNanos(fraction: Double): Long {
+                if (valuesNanos.isEmpty()) return 0L
+                val sorted = valuesNanos.sorted()
+                val index = (ceil(fraction * sorted.size).toInt() - 1)
+                    .coerceIn(sorted.indices)
+                return sorted[index]
+            }
+
+            return JSONObject()
+                .put("sampleCount", valuesNanos.size)
+                .put("sumMs", valuesNanos.sum() / 1_000_000.0)
+                .put("p50Ms", percentileNanos(0.5) / 1_000_000.0)
+                .put("p95Ms", percentileNanos(0.95) / 1_000_000.0)
+                .put("maxMs", valuesNanos.maxOrNull()?.div(1_000_000.0) ?: 0.0)
         }
 
         @Synchronized

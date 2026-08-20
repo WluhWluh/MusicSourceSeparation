@@ -39,6 +39,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--onnx", type=Path, default=DEFAULT_ONNX)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--num-frames", type=int, default=DEFAULT_CONFIG.num_frames)
+    parser.add_argument("--artifact-name")
     parser.add_argument("--seed", type=int, default=9662)
     parser.add_argument("--samples", type=int, default=3)
     parser.add_argument("--threads", type=int, default=8)
@@ -81,7 +83,7 @@ def metrics(reference: np.ndarray, candidate: np.ndarray) -> dict[str, float]:
     }
 
 
-def append_nhwc_output(source: Path, target: Path) -> None:
+def append_nhwc_output(source: Path, target: Path, num_frames: int) -> None:
     """Keep ONNX input NCHW but make its conversion output explicitly NHWC."""
     model = onnx.load(source, load_external_data=True)
     if len(model.graph.output) != 1:
@@ -92,7 +94,7 @@ def append_nhwc_output(source: Path, target: Path) -> None:
         int(dimension.dim_value)
         for dimension in original_output.type.tensor_type.shape.dim
     ]
-    if original_shape != [1, 4, 1025, 128]:
+    if original_shape != [1, 4, 1025, num_frames]:
         raise ValueError(f"Unexpected ONNX output shape: {original_shape}")
 
     internal_name = f"{original_name}_nchw_internal"
@@ -120,7 +122,7 @@ def append_nhwc_output(source: Path, target: Path) -> None:
         helper.make_tensor_value_info(
             original_name,
             TensorProto.FLOAT,
-            [1, 1025, 128, 4],
+            [1, 1025, num_frames, 4],
         )
     )
     onnx.checker.check_model(model, full_check=True)
@@ -231,6 +233,7 @@ def validate_flatbuffer(
     samples: int,
     seed: int,
     threads: int,
+    num_frames: int,
 ) -> dict[str, Any]:
     torch.set_num_threads(threads)
     model, _ = load_default_checkpoint(checkpoint)
@@ -252,7 +255,7 @@ def validate_flatbuffer(
         raise ValueError("Expected one TFLite input and output")
     input_detail = input_details[0]
     output_detail = output_details[0]
-    expected_nhwc = (1, 1025, 128, 4)
+    expected_nhwc = (1, 1025, num_frames, 4)
     if tuple(int(value) for value in input_detail["shape"]) != expected_nhwc:
         raise ValueError(f"Unexpected TFLite input shape: {input_detail['shape']}")
     if tuple(int(value) for value in output_detail["shape"]) != expected_nhwc:
@@ -262,7 +265,7 @@ def validate_flatbuffer(
 
     rng = np.random.default_rng(seed)
     results: list[dict[str, Any]] = []
-    shape_nchw = (1, 4, 1025, 128)
+    shape_nchw = (1, 4, 1025, num_frames)
     with torch.inference_mode():
         for index in range(samples):
             input_nchw = rng.normal(0.0, 0.1, size=shape_nchw).astype(np.float32)
@@ -330,6 +333,8 @@ def json_write(path: Path, value: Any) -> None:
 
 def main() -> int:
     args = parse_args()
+    if args.num_frames < 8 or args.num_frames % 8 != 0:
+        raise ValueError("num-frames must be at least 8 and divisible by 8")
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     work_dir = output_dir / "tflite-conversion-work"
@@ -338,12 +343,17 @@ def main() -> int:
     work_dir.mkdir(parents=True)
 
     conversion_source = work_dir / "tfc_tdf_default_vocals_core_fp32_nhwc.onnx"
-    append_nhwc_output(args.onnx.resolve(), conversion_source)
+    append_nhwc_output(args.onnx.resolve(), conversion_source, args.num_frames)
     command, generated_tflite, generated_reports = run_onnx2tf(
         conversion_source,
         work_dir,
     )
-    tflite_path = output_dir / TFLITE_FILE_NAME
+    artifact_name = args.artifact_name or (
+        TFLITE_FILE_NAME
+        if args.num_frames == DEFAULT_CONFIG.num_frames
+        else f"tfc_tdf_default_vocals_core_fp32_f{args.num_frames}.tflite"
+    )
+    tflite_path = output_dir / artifact_name
     shutil.copy2(generated_tflite, tflite_path)
 
     report_identities: list[dict[str, Any]] = []
@@ -361,7 +371,7 @@ def main() -> int:
     shutil.copy2(work_dir / "onnx2tf.log", log_target)
 
     flatbuffer = inspect_flatbuffer(tflite_path, args.threads)
-    expected_shape = [1, 1025, 128, 4]
+    expected_shape = [1, 1025, args.num_frames, 4]
     if flatbuffer["customOperatorCount"] != 0:
         raise ValueError("TFLite artifact contains custom operators")
     if flatbuffer["inputs"][0]["shape"] != expected_shape:
@@ -380,10 +390,15 @@ def main() -> int:
         args.samples,
         args.seed,
         args.threads,
+        args.num_frames,
     )
     report = {
         "schemaVersion": 1,
-        "candidateId": "tfc_tdf_default_vocals_core_fp32@tflite-1",
+        "candidateId": (
+            "tfc_tdf_default_vocals_core_fp32@tflite-1"
+            if args.num_frames == DEFAULT_CONFIG.num_frames
+            else f"tfc_tdf_default_vocals_core_fp32_f{args.num_frames}@tflite-1"
+        ),
         "status": "tflite-three-way-tensor-parity-passed",
         "sourceOnnx": {
             "file": args.onnx.name,
@@ -395,7 +410,7 @@ def main() -> int:
             "role": "onnx-with-explicit-nhwc-output-adapter",
             "bytes": conversion_source.stat().st_size,
             "sha256": sha256_file(conversion_source),
-            "inputShape": [1, 4, 1025, 128],
+            "inputShape": [1, 4, 1025, args.num_frames],
             "outputShape": expected_shape,
         },
         "artifact": {
@@ -411,6 +426,11 @@ def main() -> int:
                 "left.imag",
                 "right.imag",
             ],
+            "staticNumFrames": args.num_frames,
+            "sourceCheckpointNumFrames": DEFAULT_CONFIG.num_frames,
+            "checkpointCompatibleShapeOverride": (
+                args.num_frames != DEFAULT_CONFIG.num_frames
+            ),
         },
         "flatbufferInspection": flatbuffer,
         "validation": validation,

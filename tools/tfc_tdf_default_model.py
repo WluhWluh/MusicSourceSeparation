@@ -313,6 +313,11 @@ _LightningAttributeDict.__qualname__ = "AttributeDict"
 
 
 def _install_lightning_pickle_shim() -> None:
+    # The local compatibility modules intentionally have no import spec.  A
+    # second checkpoint load in the same process must therefore return before
+    # importlib.util.find_spec() inspects the synthetic module.
+    if "pytorch_lightning" in sys.modules:
+        return
     if importlib.util.find_spec("pytorch_lightning") is not None:
         return
     lightning = types.ModuleType("pytorch_lightning")

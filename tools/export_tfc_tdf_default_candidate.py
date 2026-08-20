@@ -34,6 +34,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--num-frames", type=int, default=DEFAULT_CONFIG.num_frames)
+    parser.add_argument("--artifact-name")
     parser.add_argument("--seed", type=int, default=9662)
     parser.add_argument("--threads", type=int, default=8)
     return parser.parse_args()
@@ -86,7 +88,7 @@ def onnx_shape(value: onnx.ValueInfoProto) -> list[int | str]:
     return shape
 
 
-def inspect_onnx(path: Path) -> dict[str, Any]:
+def inspect_onnx(path: Path, expected_shape: list[int]) -> dict[str, Any]:
     model = onnx.load(path, load_external_data=True)
     onnx.checker.check_model(model, full_check=True)
     initializer_names = {item.name for item in model.graph.initializer}
@@ -94,7 +96,6 @@ def inspect_onnx(path: Path) -> dict[str, Any]:
     outputs = list(model.graph.output)
     if len(inputs) != 1 or len(outputs) != 1:
         raise ValueError("Expected exactly one ONNX input and output")
-    expected_shape = [1, 4, 1025, 128]
     if onnx_shape(inputs[0]) != expected_shape:
         raise ValueError(f"Unexpected ONNX input shape: {onnx_shape(inputs[0])}")
     if onnx_shape(outputs[0]) != expected_shape:
@@ -143,6 +144,8 @@ def json_write(path: Path, value: Any) -> None:
 
 def main() -> int:
     args = parse_args()
+    if args.num_frames < 8 or args.num_frames % 8 != 0:
+        raise ValueError("num-frames must be at least 8 and divisible by 8")
     torch.set_num_threads(args.threads)
     torch.set_num_interop_threads(1)
     np.random.seed(args.seed)
@@ -157,14 +160,19 @@ def main() -> int:
         1,
         DEFAULT_CONFIG.input_channels,
         DEFAULT_CONFIG.frequency_bins,
-        DEFAULT_CONFIG.num_frames,
+        args.num_frames,
     )
     generator = torch.Generator(device="cpu").manual_seed(args.seed)
     input_tensor = torch.randn(input_shape, generator=generator) * 0.1
     with torch.inference_mode():
         torch_output = wrapper(input_tensor).numpy()
 
-    onnx_path = output_dir / ONNX_FILE_NAME
+    artifact_name = args.artifact_name or (
+        ONNX_FILE_NAME
+        if args.num_frames == DEFAULT_CONFIG.num_frames
+        else f"tfc_tdf_default_vocals_core_fp32_f{args.num_frames}.onnx"
+    )
+    onnx_path = output_dir / artifact_name
     torch.onnx.export(
         wrapper,
         (input_tensor,),
@@ -176,7 +184,7 @@ def main() -> int:
         dynamo=False,
         external_data=False,
     )
-    inspection = inspect_onnx(onnx_path)
+    inspection = inspect_onnx(onnx_path, list(input_shape))
 
     options = ort.SessionOptions()
     options.intra_op_num_threads = args.threads
@@ -220,7 +228,11 @@ def main() -> int:
     }
     report = {
         "schemaVersion": 1,
-        "candidateId": "tfc_tdf_default_vocals_core_fp32@onnx-1",
+        "candidateId": (
+            "tfc_tdf_default_vocals_core_fp32@onnx-1"
+            if args.num_frames == DEFAULT_CONFIG.num_frames
+            else f"tfc_tdf_default_vocals_core_fp32_f{args.num_frames}@onnx-1"
+        ),
         "status": "onnx-export-passed",
         "checkpoint": checkpoint_metadata["checkpoint"],
         "checkpointState": checkpoint_metadata["state"],
@@ -239,6 +251,11 @@ def main() -> int:
             "dtype": "float32",
             "targetStem": "vocals",
             "residualStem": "instrumental",
+            "staticNumFrames": args.num_frames,
+            "sourceCheckpointNumFrames": DEFAULT_CONFIG.num_frames,
+            "checkpointCompatibleShapeOverride": (
+                args.num_frames != DEFAULT_CONFIG.num_frames
+            ),
         },
         "artifact": artifact,
         "inspection": inspection,

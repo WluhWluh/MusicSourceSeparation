@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """Run a local, non-commercial UVR Inst 3 -> TFC-TDF distillation pilot.
 
-This is deliberately a small closed-loop experiment.  It decodes four selected
-MUSDB18 songs, renders the Inst 3 teacher with the frozen MDX contract, then
-compares two short warm-start training runs:
+This is deliberately a small closed-loop experiment. It reads four songs from
+the frozen MUSDB18 Stage 0.5 split, renders the Inst 3 teacher with the frozen
+MDX contract, then compares two 128-frame instrumental-output students:
 
-    S0: target = the MUSDB18 vocal stem
-    S1: target = mixture - (Inst 3 instrumental output * 1.028)
+    S0: ground-truth instrumental loss
+    S1: ground-truth instrumental loss + 0.10 * Inst 3 soft-target loss
 
-The script is local-only.  It does not publish audio, checkpoints, or derived
-weights.  All generated files default to the ignored ``.tmp`` tree.
+Both students expose ``mixture - vocal_estimator(mixture)`` as their direct
+instrumental output. This preserves the useful initialization of the existing
+vocals checkpoint while freezing a distinct instrumental student contract.
+
+The script is local-only. It does not publish audio, checkpoints, or derived
+weights. All generated files default to the ignored ``data`` tree.
 """
 
 from __future__ import annotations
@@ -25,7 +29,7 @@ import subprocess
 import sys
 import time
 import zipfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -40,7 +44,6 @@ from tfc_tdf_default_model import (
     DEFAULT_CONFIG,
     EXPECTED_CHECKPOINT_SHA256,
     TfcTdfNchwWrapper,
-    TfcTdfNeuralCore,
     load_default_checkpoint,
     sha256_file,
 )
@@ -51,8 +54,14 @@ from validate_tfc_tdf_default_audio import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PILOT_ROOT = ROOT / ".tmp" / "musdb18-inst3-pilot"
+DEFAULT_PILOT_ROOT = ROOT / "data" / "musdb18-inst3-student-pilot"
 DEFAULT_ARCHIVE = Path(r"C:\Users\User\Downloads\musdb18.zip")
+DEFAULT_MANIFEST = (
+    ROOT
+    / "data"
+    / "musdb18-inst3-oracle"
+    / "musdb18-inst3-oracle-manifest.json"
+)
 DEFAULT_CHECKPOINT = ROOT / "models" / "tfc-tdf" / "source" / "vocals_epoch=891.ckpt"
 DEFAULT_TEACHER = (
     ROOT
@@ -83,20 +92,23 @@ TEACHER_PARAMS = MdxParams(
 TEACHER_OUTPUT_SCALE = 1.028
 
 STREAM_NAMES = ("mixture", "drums", "bass", "other", "vocals")
-SONG_SPECS = (
-    ("train", "A Classic Education - NightOwl.stem.mp4"),
-    ("train", "Actions - Devil's Words.stem.mp4"),
-    ("calibration", "Aimee Norwich - Child.stem.mp4"),
-    ("test", "AM Contra - Heart Peripheral.stem.mp4"),
+PILOT_MEMBERS = (
+    "train/The So So Glos - Emergency.stem.mp4",
+    "train/Dark Ride - Burning Bridges.stem.mp4",
+    "train/Lushlife - Toynbee Suite.stem.mp4",
+    "train/Triviul - Dorothy.stem.mp4",
 )
 
 
 @dataclass
 class SongBundle:
     role: str
+    member: str
+    source_sha256: str
     source_path: Path
     slug: str
-    mixture: np.ndarray
+    mixture_encoded: np.ndarray
+    mixture_gt: np.ndarray
     vocals: np.ndarray
     instrumental: np.ndarray
     drums: np.ndarray
@@ -114,39 +126,42 @@ class WindowRecord:
     start: int
     length: int
     rms: float
+    vocal_rms: float
     input_spec: np.ndarray | None = None
-    true_spec: np.ndarray | None = None
-    teacher_spec: np.ndarray | None = None
+    true_instrumental_spec: np.ndarray | None = None
+    teacher_instrumental_spec: np.ndarray | None = None
 
     def materialize(self) -> None:
         if self.input_spec is not None:
             return
         self.input_spec = student_window_spec(
-            self.song.mixture, self.start, self.length
+            self.song.mixture_gt, self.start, self.length
         )
-        self.true_spec = student_window_spec(
-            self.song.vocals, self.start, self.length
+        self.true_instrumental_spec = student_window_spec(
+            self.song.instrumental, self.start, self.length
         )
-        if self.song.teacher_vocals is not None:
-            self.teacher_spec = student_window_spec(
-                self.song.teacher_vocals, self.start, self.length
+        if self.song.teacher_instrumental is not None:
+            self.teacher_instrumental_spec = student_window_spec(
+                self.song.teacher_instrumental, self.start, self.length
             )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--archive", type=Path, default=DEFAULT_ARCHIVE)
+    parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--pilot-root", type=Path, default=DEFAULT_PILOT_ROOT)
     parser.add_argument("--checkpoint", type=Path, default=DEFAULT_CHECKPOINT)
     parser.add_argument("--teacher", type=Path, default=DEFAULT_TEACHER)
     parser.add_argument("--contract", type=Path, default=DEFAULT_CONTRACT)
     parser.add_argument("--teacher-tflite", type=Path, default=DEFAULT_TEACHER_TFLITE)
     parser.add_argument("--start-seconds", type=float, default=15.0)
-    parser.add_argument("--duration-seconds", type=float, default=18.0)
-    parser.add_argument("--train-windows-per-song", type=int, default=2)
-    parser.add_argument("--eval-windows-per-song", type=int, default=3)
-    parser.add_argument("--steps", type=int, default=8)
+    parser.add_argument("--duration-seconds", type=float, default=30.0)
+    parser.add_argument("--train-windows-per-song", type=int, default=4)
+    parser.add_argument("--eval-windows-per-song", type=int, default=5)
+    parser.add_argument("--steps", type=int, default=64)
     parser.add_argument("--learning-rate", type=float, default=1.0e-5)
+    parser.add_argument("--teacher-weight", type=float, default=0.10)
     parser.add_argument("--threads", type=int, default=8)
     parser.add_argument("--seed", type=int, default=891)
     parser.add_argument("--force-decode", action="store_true")
@@ -193,6 +208,25 @@ def run_checked(command: list[str], *, cwd: Path | None = None) -> None:
         )
 
 
+def load_frozen_pilot_entries(manifest_path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if not manifest_path.is_file():
+        raise FileNotFoundError(manifest_path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("manifestId") != "musdb18-inst3-oracle-split@1":
+        raise ValueError(f"Unexpected frozen manifest: {manifest.get('manifestId')}")
+    by_member = {entry["member"]: entry for entry in manifest.get("entries", [])}
+    missing = [member for member in PILOT_MEMBERS if member not in by_member]
+    if missing:
+        raise ValueError(f"Pilot members are missing from the frozen manifest: {missing}")
+    selected = [by_member[member] for member in PILOT_MEMBERS]
+    roles = [entry["role"] for entry in selected]
+    if roles.count("train") != 2 or roles.count("calibration") != 1:
+        raise ValueError(f"Pilot must contain 2 train and 1 calibration songs, got {roles}")
+    if roles.count("internal-test") != 1 or "final-test" in roles:
+        raise ValueError(f"Pilot selection must contain one internal-test and no final-test: {roles}")
+    return manifest, selected
+
+
 def inspect_archive(archive: Path, expected_members: Iterable[str]) -> dict[str, Any]:
     if not archive.is_file():
         raise FileNotFoundError(archive)
@@ -214,26 +248,21 @@ def inspect_archive(archive: Path, expected_members: Iterable[str]) -> dict[str,
 def ensure_raw_song(
     archive: Path,
     raw_root: Path,
-    role: str,
-    filename: str,
+    entry: dict[str, Any],
 ) -> Path:
-    archive_role = "train" if role == "calibration" else role
-    existing_train_path = raw_root / "train" / filename
-    if role == "calibration" and existing_train_path.is_file():
-        return existing_train_path
+    member = entry["member"]
+    role = entry["role"]
+    filename = entry["fileName"]
     destination = raw_root / role / filename
-    if destination.is_file():
+    if destination.is_file() and sha256_file(destination).lower() == entry["sourceSha256"].lower():
         return destination
-    member = f"{archive_role}/{filename}"
     destination.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(archive) as handle:
         try:
             info = handle.getinfo(member)
         except KeyError as error:
             raise FileNotFoundError(f"No {member} in {archive}") from error
-        if Path(info.filename).name != filename or not info.filename.startswith(
-            f"{archive_role}/"
-        ):
+        if Path(info.filename).name != filename or info.filename != member:
             raise ValueError(f"Unsafe archive member: {info.filename}")
         with handle.open(info) as source, destination.open("wb") as target:
             while True:
@@ -241,6 +270,8 @@ def ensure_raw_song(
                 if not block:
                     break
                 target.write(block)
+    if sha256_file(destination).lower() != entry["sourceSha256"].lower():
+        raise ValueError(f"Extracted source hash mismatch for {member}")
     return destination
 
 
@@ -257,12 +288,13 @@ def load_audio(path: Path) -> tuple[np.ndarray, int]:
 
 def decode_song(
     source: Path,
-    role: str,
+    entry: dict[str, Any],
     decoded_root: Path,
     start_seconds: float,
     duration_seconds: float,
     force: bool,
 ) -> SongBundle:
+    role = entry["role"]
     slug = slugify(source.name)
     segment_key = f"start-{start_seconds:.3f}-duration-{duration_seconds:.3f}"
     output_dir = decoded_root / segment_key
@@ -309,11 +341,15 @@ def decode_song(
     instrumental = (
         decoded["drums"] + decoded["bass"] + decoded["other"]
     ).astype(np.float32)
+    mixture_gt = (
+        decoded["vocals"] + decoded["drums"] + decoded["bass"] + decoded["other"]
+    ).astype(np.float32)
     cache_path = output_dir / f"{slug}.npz"
     if force or not cache_path.is_file():
         np.savez_compressed(
             cache_path,
-            mixture=decoded["mixture"],
+            mixtureEncoded=decoded["mixture"],
+            mixtureGt=mixture_gt,
             drums=decoded["drums"],
             bass=decoded["bass"],
             other=decoded["other"],
@@ -322,9 +358,12 @@ def decode_song(
         )
     return SongBundle(
         role=role,
+        member=entry["member"],
+        source_sha256=entry["sourceSha256"],
         source_path=source,
         slug=slug,
-        mixture=decoded["mixture"],
+        mixture_encoded=decoded["mixture"],
+        mixture_gt=mixture_gt,
         vocals=decoded["vocals"],
         instrumental=instrumental,
         drums=decoded["drums"],
@@ -508,7 +547,7 @@ def render_teacher(
             "cached": True,
         }
 
-    windows, pad = build_windows(song.mixture.T, TEACHER_PARAMS)
+    windows, pad = build_windows(song.mixture_gt.T, TEACHER_PARAMS)
     input_name = session.get_inputs()[0].name
     output_name = session.get_outputs()[0].name
     pieces: list[np.ndarray] = []
@@ -542,15 +581,15 @@ def render_teacher(
     if pad:
         instrumental = instrumental[:-pad]
     instrumental = np.ascontiguousarray(
-        instrumental[: song.mixture.shape[0]] * np.float32(TEACHER_OUTPUT_SCALE),
+        instrumental[: song.mixture_gt.shape[0]] * np.float32(TEACHER_OUTPUT_SCALE),
         dtype=np.float32,
     )
-    if instrumental.shape != song.mixture.shape:
+    if instrumental.shape != song.mixture_gt.shape:
         raise ValueError(
-            f"Teacher output length mismatch: {instrumental.shape} vs {song.mixture.shape}"
+            f"Teacher output length mismatch: {instrumental.shape} vs {song.mixture_gt.shape}"
         )
-    vocals = np.ascontiguousarray(song.mixture - instrumental, dtype=np.float32)
-    reconstruction_error = float(np.max(np.abs(instrumental + vocals - song.mixture)))
+    vocals = np.ascontiguousarray(song.mixture_gt - instrumental, dtype=np.float32)
+    reconstruction_error = float(np.max(np.abs(instrumental + vocals - song.mixture_gt)))
     if reconstruction_error > 2e-6:
         raise ValueError(f"Teacher residual rule failed: {reconstruction_error}")
     song.teacher_instrumental = instrumental
@@ -572,8 +611,9 @@ def render_teacher(
         "song": song.slug,
         "source": str(song.source_path.resolve()),
         "sampleRate": song.sample_rate,
-        "samples": int(song.mixture.shape[0]),
-        "durationSeconds": song.mixture.shape[0] / song.sample_rate,
+        "samples": int(song.mixture_gt.shape[0]),
+        "durationSeconds": song.mixture_gt.shape[0] / song.sample_rate,
+        "inputVariant": "mixture-gt",
         "modelOutputStem": "instrumental",
         "residualStem": "vocals",
         "modelOutputScale": TEACHER_OUTPUT_SCALE,
@@ -606,13 +646,15 @@ def select_windows(song: SongBundle, count: int) -> list[WindowRecord]:
         raise ValueError("window count must be positive")
     candidates: list[WindowRecord] = []
     useful = DEFAULT_CONFIG.useful_samples
-    for start in range(0, song.mixture.shape[0], useful):
-        length = min(useful, song.mixture.shape[0] - start)
+    for start in range(0, song.mixture_gt.shape[0], useful):
+        length = min(useful, song.mixture_gt.shape[0] - start)
         if length < useful // 3:
             continue
-        segment = song.mixture[start : start + length]
+        segment = song.mixture_gt[start : start + length]
         rms = float(np.sqrt(np.mean(segment.astype(np.float64) ** 2)))
-        candidates.append(WindowRecord(song, start, length, rms))
+        vocal_segment = song.vocals[start : start + length]
+        vocal_rms = float(np.sqrt(np.mean(vocal_segment.astype(np.float64) ** 2)))
+        candidates.append(WindowRecord(song, start, length, rms, vocal_rms))
     candidates.sort(key=lambda item: (-item.rms, item.start))
     selected = candidates[: min(count, len(candidates))]
     selected.sort(key=lambda item: item.start)
@@ -635,29 +677,41 @@ def train_variant(
     name: str,
     checkpoint: Path,
     records: list[WindowRecord],
-    target_key: str,
+    loss_mode: str,
     device: torch.device,
     output_path: Path,
     steps: int,
     learning_rate: float,
-) -> dict[str, Any]:
+    teacher_weight: float,
+) -> tuple[dict[str, Any], TfcTdfNchwWrapper]:
     if not records:
         raise ValueError(f"No training records for {name}")
+    if loss_mode not in {"ground-truth", "ground-truth-plus-teacher"}:
+        raise ValueError(f"Unknown loss mode: {loss_mode}")
     model, _ = make_model(checkpoint, device)
+    model.train()
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.0)
     history: list[dict[str, float | int]] = []
     started = time.perf_counter()
     for step in range(steps):
         record = records[step % len(records)]
         record.materialize()
-        target = record.true_spec if target_key == "true" else record.teacher_spec
-        if target is None or record.input_spec is None:
+        if (
+            record.input_spec is None
+            or record.true_instrumental_spec is None
+            or record.teacher_instrumental_spec is None
+        ):
             raise ValueError(f"Missing target for {name} at {record.song.slug}:{record.start}")
         input_tensor = torch.from_numpy(record.input_spec[None]).to(device)
-        target_tensor = torch.from_numpy(target[None]).to(device)
+        true_tensor = torch.from_numpy(record.true_instrumental_spec[None]).to(device)
+        teacher_tensor = torch.from_numpy(record.teacher_instrumental_spec[None]).to(device)
         optimizer.zero_grad(set_to_none=True)
-        output = model(input_tensor)
-        loss = F.l1_loss(output, target_tensor)
+        predicted_instrumental = input_tensor - model(input_tensor)
+        ground_truth_loss = F.l1_loss(predicted_instrumental, true_tensor)
+        teacher_loss = F.l1_loss(predicted_instrumental, teacher_tensor)
+        loss = ground_truth_loss
+        if loss_mode == "ground-truth-plus-teacher":
+            loss = loss + teacher_weight * teacher_loss
         loss.backward()
         gradient_norm = float(torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0).item())
         optimizer.step()
@@ -667,6 +721,8 @@ def train_variant(
             {
                 "step": step + 1,
                 "loss": float(loss.detach().cpu().item()),
+                "groundTruthLoss": float(ground_truth_loss.detach().cpu().item()),
+                "teacherLoss": float(teacher_loss.detach().cpu().item()),
                 "gradientNormBeforeClip": gradient_norm,
             }
         )
@@ -675,7 +731,10 @@ def train_variant(
         {
             "format": "local-inst3-distill-pilot",
             "variant": name,
-            "target": target_key,
+            "outputSemantic": "instrumental",
+            "neuralCoreSemantic": "vocals-residual",
+            "lossMode": loss_mode,
+            "teacherWeight": teacher_weight,
             "state_dict": model.state_dict(),
             "steps": steps,
             "learningRate": learning_rate,
@@ -684,7 +743,10 @@ def train_variant(
     )
     return {
         "variant": name,
-        "target": target_key,
+        "outputSemantic": "instrumental",
+        "neuralCoreSemantic": "vocals-residual",
+        "lossMode": loss_mode,
+        "teacherWeight": teacher_weight,
         "steps": steps,
         "learningRate": learning_rate,
         "history": history,
@@ -726,6 +788,52 @@ def vocal_projection_db(error: np.ndarray, vocals: np.ndarray) -> float:
     )
 
 
+def low_vocal_mask(vocals: np.ndarray) -> np.ndarray:
+    frame_size = DEFAULT_CONFIG.hop_length
+    frame_count = vocals.shape[0] // frame_size
+    if frame_count == 0:
+        return np.ones(vocals.shape[0], dtype=bool)
+    usable = vocals[: frame_count * frame_size]
+    rms = np.sqrt(np.mean(usable.reshape(frame_count, frame_size, -1) ** 2, axis=(1, 2)))
+    threshold = float(np.percentile(rms, 20.0))
+    mask = np.repeat(rms <= threshold, frame_size)
+    result = np.zeros(vocals.shape[0], dtype=bool)
+    result[: mask.shape[0]] = mask
+    if not np.any(result):
+        result[:] = True
+    return result
+
+
+def separation_metrics(
+    mixture: np.ndarray,
+    true_vocals: np.ndarray,
+    true_instrumental: np.ndarray,
+    predicted_instrumental: np.ndarray,
+    teacher_instrumental: np.ndarray,
+) -> dict[str, float | int]:
+    predicted_vocals = mixture - predicted_instrumental
+    error = predicted_instrumental - true_instrumental
+    teacher_error = teacher_instrumental - true_instrumental
+    low_mask = low_vocal_mask(true_vocals)
+    low_error = error[low_mask]
+    low_true = true_instrumental[low_mask]
+    return {
+        "samples": int(mixture.shape[0]),
+        "instrumentalSdrDb": energy_snr_db(true_instrumental, predicted_instrumental),
+        "teacherInstrumentalSdrDb": energy_snr_db(true_instrumental, teacher_instrumental),
+        "vocalSdrDb": energy_snr_db(true_vocals, predicted_vocals),
+        "teacherVocalSdrDb": energy_snr_db(true_vocals, mixture - teacher_instrumental),
+        "accompanimentErrorRmsDbfs": rms_dbfs(error),
+        "accompanimentVocalProjectionDb": vocal_projection_db(error, true_vocals),
+        "lowVocalInstrumentalSdrDb": energy_snr_db(low_true, predicted_instrumental[low_mask]),
+        "lowVocalInstrumentalErrorRmsDbfs": rms_dbfs(low_error),
+        "teacherAccompanimentErrorRmsDbfs": rms_dbfs(teacher_error),
+        "reconstructionMaxAbsError": float(
+            np.max(np.abs(predicted_vocals + predicted_instrumental - mixture))
+        ),
+    }
+
+
 def evaluate_model(
     name: str,
     model: TfcTdfNchwWrapper,
@@ -734,95 +842,74 @@ def evaluate_model(
     device: torch.device,
 ) -> dict[str, Any]:
     per_song: dict[str, Any] = {}
-    aggregate: dict[str, list[np.ndarray]] = {
-        "mixture": [],
-        "trueVocals": [],
-        "trueInstrumental": [],
-        "teacherVocals": [],
-        "predictedVocals": [],
-    }
+    aggregate: list[dict[str, np.ndarray]] = []
     model.eval()
     started = time.perf_counter()
     with torch.inference_mode():
         for song in songs:
             predictions: list[np.ndarray] = []
-            truth_vocals: list[np.ndarray] = []
-            truth_instrumental: list[np.ndarray] = []
             mixtures: list[np.ndarray] = []
-            teacher_vocals: list[np.ndarray] = []
+            true_vocals: list[np.ndarray] = []
+            true_instrumentals: list[np.ndarray] = []
+            teacher_instrumentals: list[np.ndarray] = []
             for record in records_by_song[song.slug]:
                 record.materialize()
-                if record.input_spec is None or record.teacher_spec is None:
+                if (
+                    record.input_spec is None
+                    or record.teacher_instrumental_spec is None
+                ):
                     raise ValueError("Evaluation record is missing materialized data")
-                output = model(torch.from_numpy(record.input_spec[None]).to(device))
+                input_tensor = torch.from_numpy(record.input_spec[None]).to(device)
+                predicted_spec = input_tensor - model(input_tensor)
                 if device.type == "cuda":
                     torch.cuda.synchronize(device)
-                output_np = output.detach().cpu().numpy()
-                reconstructed = student_istft_centered(output_np)
+                reconstructed = student_istft_centered(
+                    predicted_spec.detach().cpu().numpy()
+                )
                 segment = reconstructed[
                     DEFAULT_CONFIG.trim_samples : DEFAULT_CONFIG.trim_samples + record.length
                 ]
                 predictions.append(np.ascontiguousarray(segment, dtype=np.float32))
-                mixtures.append(song.mixture[record.start : record.start + record.length])
-                truth_vocals.append(song.vocals[record.start : record.start + record.length])
-                truth_instrumental.append(
-                    song.instrumental[record.start : record.start + record.length]
-                )
-                teacher_vocals.append(
-                    song.teacher_vocals[record.start : record.start + record.length]
-                )
+                begin, end = record.start, record.start + record.length
+                mixtures.append(song.mixture_gt[begin:end])
+                true_vocals.append(song.vocals[begin:end])
+                true_instrumentals.append(song.instrumental[begin:end])
+                teacher_instrumentals.append(song.teacher_instrumental[begin:end])
             mix = np.concatenate(mixtures, axis=0)
-            true_vocal = np.concatenate(truth_vocals, axis=0)
-            true_instrumental = np.concatenate(truth_instrumental, axis=0)
-            teacher_vocal = np.concatenate(teacher_vocals, axis=0)
-            predicted_vocal = np.concatenate(predictions, axis=0)
-            predicted_instrumental = mix - predicted_vocal
-            error = predicted_instrumental - true_instrumental
-            metrics = {
-                "samples": int(mix.shape[0]),
-                "vocalSdrDb": energy_snr_db(true_vocal, predicted_vocal),
-                "teacherVocalSdrDb": energy_snr_db(teacher_vocal, predicted_vocal),
-                "accompanimentSdrDb": energy_snr_db(
-                    true_instrumental, predicted_instrumental
-                ),
-                "accompanimentErrorRmsDbfs": rms_dbfs(error),
-                "accompanimentVocalProjectionDb": vocal_projection_db(error, true_vocal),
-                "reconstructionMaxAbsError": float(
-                    np.max(np.abs(predicted_vocal + predicted_instrumental - mix))
-                ),
-            }
+            vocals = np.concatenate(true_vocals, axis=0)
+            instrumental = np.concatenate(true_instrumentals, axis=0)
+            teacher = np.concatenate(teacher_instrumentals, axis=0)
+            predicted = np.concatenate(predictions, axis=0)
             per_song[song.slug] = {
                 "role": song.role,
                 "windowStarts": [record.start for record in records_by_song[song.slug]],
                 "windowRms": [record.rms for record in records_by_song[song.slug]],
-                "metrics": metrics,
+                "windowVocalRms": [record.vocal_rms for record in records_by_song[song.slug]],
+                "metrics": separation_metrics(mix, vocals, instrumental, predicted, teacher),
             }
-            aggregate["mixture"].append(mix)
-            aggregate["trueVocals"].append(true_vocal)
-            aggregate["trueInstrumental"].append(true_instrumental)
-            aggregate["teacherVocals"].append(teacher_vocal)
-            aggregate["predictedVocals"].append(predicted_vocal)
-    mix = np.concatenate(aggregate["mixture"], axis=0)
-    true_vocal = np.concatenate(aggregate["trueVocals"], axis=0)
-    true_instrumental = np.concatenate(aggregate["trueInstrumental"], axis=0)
-    teacher_vocal = np.concatenate(aggregate["teacherVocals"], axis=0)
-    predicted_vocal = np.concatenate(aggregate["predictedVocals"], axis=0)
-    predicted_instrumental = mix - predicted_vocal
-    error = predicted_instrumental - true_instrumental
+            aggregate.append({
+                "mixture": mix,
+                "vocals": vocals,
+                "instrumental": instrumental,
+                "teacher": teacher,
+                "predicted": predicted,
+            })
+    merged = {
+        key: np.concatenate([item[key] for item in aggregate], axis=0)
+        for key in aggregate[0]
+    }
+    metrics = separation_metrics(
+        merged["mixture"],
+        merged["vocals"],
+        merged["instrumental"],
+        merged["predicted"],
+        merged["teacher"],
+    )
     return {
         "variant": name,
+        "outputSemantic": "instrumental",
         "perSong": per_song,
-        "aggregate": {
-            "samples": int(mix.shape[0]),
-            "vocalSdrDb": energy_snr_db(true_vocal, predicted_vocal),
-            "teacherVocalSdrDb": energy_snr_db(teacher_vocal, predicted_vocal),
-            "accompanimentSdrDb": energy_snr_db(true_instrumental, predicted_instrumental),
-            "accompanimentErrorRmsDbfs": rms_dbfs(error),
-            "accompanimentVocalProjectionDb": vocal_projection_db(error, true_vocal),
-            "reconstructionMaxAbsError": float(
-                np.max(np.abs(predicted_vocal + predicted_instrumental - mix))
-            ),
-        },
+        "aggregate": metrics,
         "elapsedSeconds": time.perf_counter() - started,
         "device": str(device),
     }
@@ -832,38 +919,48 @@ def evaluate_teacher(
     songs: list[SongBundle], records_by_song: dict[str, list[WindowRecord]]
 ) -> dict[str, Any]:
     per_song: dict[str, Any] = {}
+    aggregate: list[dict[str, np.ndarray]] = []
     for song in songs:
-        if song.teacher_vocals is None or song.teacher_instrumental is None:
+        if song.teacher_instrumental is None:
             raise ValueError("Teacher output missing")
-        mix_parts: list[np.ndarray] = []
-        true_vocal_parts: list[np.ndarray] = []
-        true_inst_parts: list[np.ndarray] = []
-        teacher_vocal_parts: list[np.ndarray] = []
+        mixtures: list[np.ndarray] = []
+        vocals: list[np.ndarray] = []
+        instrumentals: list[np.ndarray] = []
+        teachers: list[np.ndarray] = []
         for record in records_by_song[song.slug]:
             begin, end = record.start, record.start + record.length
-            mix_parts.append(song.mixture[begin:end])
-            true_vocal_parts.append(song.vocals[begin:end])
-            true_inst_parts.append(song.instrumental[begin:end])
-            teacher_vocal_parts.append(song.teacher_vocals[begin:end])
-        mix = np.concatenate(mix_parts, axis=0)
-        true_vocal = np.concatenate(true_vocal_parts, axis=0)
-        true_inst = np.concatenate(true_inst_parts, axis=0)
-        teacher_vocal = np.concatenate(teacher_vocal_parts, axis=0)
-        teacher_inst = mix - teacher_vocal
-        error = teacher_inst - true_inst
+            mixtures.append(song.mixture_gt[begin:end])
+            vocals.append(song.vocals[begin:end])
+            instrumentals.append(song.instrumental[begin:end])
+            teachers.append(song.teacher_instrumental[begin:end])
+        mix = np.concatenate(mixtures, axis=0)
+        true_vocal = np.concatenate(vocals, axis=0)
+        true_inst = np.concatenate(instrumentals, axis=0)
+        teacher_inst = np.concatenate(teachers, axis=0)
         per_song[song.slug] = {
             "role": song.role,
-            "metrics": {
-                "vocalSdrDb": energy_snr_db(true_vocal, teacher_vocal),
-                "accompanimentSdrDb": energy_snr_db(true_inst, teacher_inst),
-                "accompanimentErrorRmsDbfs": rms_dbfs(error),
-                "accompanimentVocalProjectionDb": vocal_projection_db(error, true_vocal),
-                "reconstructionMaxAbsError": float(
-                    np.max(np.abs(teacher_vocal + teacher_inst - mix))
-                ),
-            },
+            "metrics": separation_metrics(
+                mix, true_vocal, true_inst, teacher_inst, teacher_inst
+            ),
         }
-    return {"perSong": per_song}
+        aggregate.append({
+            "mixture": mix,
+            "vocals": true_vocal,
+            "instrumental": true_inst,
+            "teacher": teacher_inst,
+        })
+    merged = {key: np.concatenate([item[key] for item in aggregate], axis=0) for key in aggregate[0]}
+    return {
+        "outputSemantic": "instrumental",
+        "perSong": per_song,
+        "aggregate": separation_metrics(
+            merged["mixture"],
+            merged["vocals"],
+            merged["instrumental"],
+            merged["teacher"],
+            merged["teacher"],
+        ),
+    }
 
 
 def main() -> int:
@@ -874,6 +971,8 @@ def main() -> int:
         raise ValueError("window counts must be positive")
     if args.steps <= 0 or args.learning_rate <= 0 or args.threads <= 0:
         raise ValueError("steps, learning rate, and threads must be positive")
+    if args.teacher_weight < 0:
+        raise ValueError("teacher weight must be non-negative")
 
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -892,15 +991,15 @@ def main() -> int:
     for path in (raw_root, decoded_root, teacher_root, runs_root, reports_root):
         path.mkdir(parents=True, exist_ok=True)
 
-    expected_members = [
-        f"{'train' if role == 'calibration' else role}/{filename}"
-        for role, filename in SONG_SPECS
-    ]
-    archive_info = inspect_archive(args.archive.resolve(), expected_members)
-    source_paths: list[tuple[str, Path]] = []
-    for role, filename in SONG_SPECS:
+    manifest_path = args.manifest.resolve()
+    frozen_manifest, selected_entries = load_frozen_pilot_entries(manifest_path)
+    expected_members = [entry["member"] for entry in selected_entries]
+    archive_path = args.archive.resolve()
+    archive_info = inspect_archive(archive_path, expected_members)
+    source_paths: list[tuple[dict[str, Any], Path]] = []
+    for entry in selected_entries:
         source_paths.append(
-            (role, ensure_raw_song(args.archive.resolve(), raw_root, role, filename))
+            (entry, ensure_raw_song(archive_path, raw_root, entry))
         )
 
     contract_info = verify_teacher_contract(
@@ -910,18 +1009,17 @@ def main() -> int:
         args.teacher.resolve(), args.threads, args.require_teacher_cuda
     )
     bundles: list[SongBundle] = []
-    for role, source in source_paths:
+    for entry, source in source_paths:
         bundles.append(
             decode_song(
                 source,
-                role,
+                entry,
                 decoded_root,
                 args.start_seconds,
                 args.duration_seconds,
                 args.force_decode,
             )
         )
-    songs_by_slug = {song.slug: song for song in bundles}
 
     teacher_reports: dict[str, Any] = {}
     for song in bundles:
@@ -934,7 +1032,16 @@ def main() -> int:
         )
 
     train_songs = [song for song in bundles if song.role == "train"]
-    eval_songs = [song for song in bundles if song.role in {"calibration", "test"}]
+    eval_songs = [
+        song for song in bundles if song.role in {"calibration", "internal-test"}
+    ]
+    if len(train_songs) != 2 or len(eval_songs) != 2:
+        raise ValueError(
+            "Pilot must contain exactly two train songs and calibration/internal-test "
+            f"evaluation songs; got train={len(train_songs)}, eval={len(eval_songs)}"
+        )
+    if any(song.role == "final-test" for song in bundles):
+        raise ValueError("The final-test split must never be used by this pilot")
     train_records: list[WindowRecord] = []
     eval_records: dict[str, list[WindowRecord]] = {}
     for song in train_songs:
@@ -957,27 +1064,33 @@ def main() -> int:
         torch.cuda.empty_cache()
 
     s0_report, s0_model = train_variant(
-        "S0-supervised-vocals",
+        "S0-ground-truth",
         args.checkpoint.resolve(),
         train_records,
-        "true",
+        "ground-truth",
         device,
-        runs_root / "s0-supervised-vocals.pt",
+        runs_root / "s0-ground-truth.pt",
         args.steps,
         args.learning_rate,
+        0.0,
     )
     s1_report, s1_model = train_variant(
-        "S1-inst3-residual-distill",
+        "S1-ground-truth-plus-inst3",
         args.checkpoint.resolve(),
         train_records,
-        "teacher",
+        "ground-truth-plus-teacher",
         device,
-        runs_root / "s1-inst3-residual-distill.pt",
+        runs_root / "s1-ground-truth-plus-inst3.pt",
         args.steps,
         args.learning_rate,
+        args.teacher_weight,
     )
-    s0_eval = evaluate_model("S0-supervised-vocals", s0_model, eval_songs, eval_records, device)
-    s1_eval = evaluate_model("S1-inst3-residual-distill", s1_model, eval_songs, eval_records, device)
+    s0_eval = evaluate_model(
+        "S0-ground-truth", s0_model, eval_songs, eval_records, device
+    )
+    s1_eval = evaluate_model(
+        "S1-ground-truth-plus-inst3", s1_model, eval_songs, eval_records, device
+    )
     del s0_model, s1_model
     if device.type == "cuda":
         torch.cuda.empty_cache()
@@ -985,14 +1098,17 @@ def main() -> int:
     song_metadata = {
         song.slug: {
             "role": song.role,
+            "member": song.member,
+            "sourceSha256": song.source_sha256,
             "source": str(song.source_path.resolve()),
             "sampleRate": song.sample_rate,
-            "samples": int(song.mixture.shape[0]),
-            "durationSeconds": song.mixture.shape[0] / song.sample_rate,
+            "samples": int(song.mixture_gt.shape[0]),
+            "durationSeconds": song.mixture_gt.shape[0] / song.sample_rate,
             "decodedPcmFloat32Sha256": {
                 name: sha256_array(value)
                 for name, value in {
-                    "mixture": song.mixture,
+                    "mixtureEncoded": song.mixture_encoded,
+                    "mixtureGt": song.mixture_gt,
                     "drums": song.drums,
                     "bass": song.bass,
                     "other": song.other,
@@ -1000,8 +1116,11 @@ def main() -> int:
                     "instrumental": song.instrumental,
                 }.items()
             },
-            "mixtureMinusStemSumRmsDbfs": rms_dbfs(
-                song.mixture - (song.instrumental + song.vocals)
+            "mixtureEncodedMinusMixtureGtRmsDbfs": rms_dbfs(
+                song.mixture_encoded - song.mixture_gt
+            ),
+            "mixtureGtMinusStemSumRmsDbfs": rms_dbfs(
+                song.mixture_gt - (song.instrumental + song.vocals)
             ),
             "trainWindowStarts": [record.start for record in train_records if record.song.slug == song.slug],
             "evalWindowStarts": [record.start for record in eval_records.get(song.slug, [])],
@@ -1009,7 +1128,8 @@ def main() -> int:
         for song in bundles
     }
     report = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
+        "experimentId": "inst3-distill-pilot@1",
         "status": "pilot-completed",
         "licenseDisposition": {
             "scope": "local non-commercial research only",
@@ -1017,16 +1137,42 @@ def main() -> int:
             "inst3": "source weight redistribution permission not established; not redistributed",
             "derivedWeights": "local pilot artifacts only; do not publish",
         },
+        "manifest": {
+            "file": str(manifest_path),
+            "sha256": sha256_file(manifest_path),
+            "manifestId": frozen_manifest["manifestId"],
+            "selectedEntries": [
+                {
+                    "member": entry["member"],
+                    "fileName": entry["fileName"],
+                    "role": entry["role"],
+                    "sourceSha256": entry["sourceSha256"],
+                }
+                for entry in selected_entries
+            ],
+            "finalTestUsed": False,
+        },
         "split": {
             "train": [song.slug for song in train_songs],
             "calibration": [song.slug for song in bundles if song.role == "calibration"],
-            "test": [song.slug for song in bundles if song.role == "test"],
+            "internalTest": [
+                song.slug for song in bundles if song.role == "internal-test"
+            ],
             "startSeconds": args.start_seconds,
             "durationSeconds": args.duration_seconds,
+        },
+        "dataContract": {
+            "inputSemantic": "mixture-gt",
+            "studentOutputSemantic": "instrumental",
+            "neuralCoreSemantic": "vocals-residual",
+            "mixtureGtDefinition": "vocals + drums + bass + other",
+            "encodedMixtureRetainedForCodecComparison": True,
         },
         "archive": archive_info,
         "contract": contract_info,
         "teacher": {
+            "contractId": contract_info["contractId"],
+            "sourceIdentity": contract_info["teacherSource"],
             "providers": teacher_providers,
             "onnxruntimeVersion": ort.__version__,
             "ortAvailableProviders": ort.get_available_providers(),
@@ -1067,10 +1213,14 @@ def main() -> int:
         },
         "songs": song_metadata,
         "training": {
+            "inputSemantic": "mixture-gt",
+            "outputSemantic": "instrumental",
+            "neuralCoreSemantic": "vocals-residual",
             "trainWindowCount": len(train_records),
             "steps": args.steps,
             "learningRate": args.learning_rate,
-            "loss": "mean-absolute-error in complex packed spectrum",
+            "teacherWeight": args.teacher_weight,
+            "loss": "mean-absolute-error in complex packed instrumental spectrum",
             "S0": s0_report,
             "S1": s1_report,
         },
@@ -1097,6 +1247,7 @@ def main() -> int:
         "device": str(device),
         "teacherProviders": teacher_providers,
         "trainWindows": len(train_records),
+        "evalSongs": [song.slug for song in eval_songs],
         "teacher": teacher_eval,
         "initial": baseline_eval["aggregate"],
         "S0": s0_eval["aggregate"],

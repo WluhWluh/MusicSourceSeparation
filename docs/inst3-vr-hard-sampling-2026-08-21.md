@@ -127,3 +127,19 @@ useful step is a listening comparison of the corrected U/H25 pass-50 outputs,
 followed by a separately budgeted H50 or adaptive-refresh experiment only if
 the audible improvement agrees with these metrics.  No official final-test
 claim should be made from this run.
+
+## Private listening set
+
+The corrected pass-50 checkpoints were rendered on the same twelve full-song
+private sources used by the earlier scale-10 experiments:
+
+`data/musdb18-inst3-vr-hard-sampling/listening-12/`
+
+- `V-R-U/`: 12 PCM16 FLAC files.
+- `V-R-H25/`: 12 PCM16 FLAC files.
+- `render-report.json`: source identities, checkpoint identities, output
+  hashes, frame counts, and render timing.
+
+All 24 files are 44.1 kHz stereo and preserve the source frame count.  The
+corresponding U/H25 files have distinct hashes.  They are local listening
+artifacts only and must not be uploaded to a release.

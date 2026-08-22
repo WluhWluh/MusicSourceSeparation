@@ -94,6 +94,10 @@ some low-vocal instrumental safety margin. The raw miss maximum becoming
 larger is the main reason this should remain an experiment rather than replace
 V-R-H50 based on metrics alone.
 
+The objective improvement is not sufficient evidence of a useful listening
+improvement. In particular, the positive-projection p95 reductions do not
+guarantee that the few most salient abrupt syllable leaks have been reduced.
+
 There were no non-finite evaluation windows or clipped samples in the
 aggregate results. The first-difference mechanical-artifact proxy did not
 show a training failure, but it is only a diagnostic and cannot replace
@@ -111,6 +115,19 @@ They include `H50-pass-50`, `H50-control@pass-5`, and
 `H50-miss-driven@pass-5`. This directory is local generated data and remains
 outside Git. The report's listening section contains the file hashes and
 source-song identities.
+
+### User Listening Review
+
+The 12-song full-length comparison found no clearly audible overall
+improvement over H50. Medium-strength residual-vocal details traded wins and
+losses between the two models. The most abrupt and obvious residual-vocal
+hotspots were not improved, and some songs made those leaks more noticeable in
+the miss-driven result. No consistent perceptual benefit was established.
+
+This review outweighs the aggregate p95 improvement for model selection. It
+shows that the current miss score is better at describing the ordinary tail of
+the Inst 3-directed error than the salient worst-case leak that determines the
+listening preference.
 
 ## Reproduction
 
@@ -135,10 +152,30 @@ data/musdb18-inst3-vr-miss-driven/reports/inst3-vr-miss-driven-report.json
 
 ## Decision
 
-Keep V-R-H50 as the current listening baseline until the new 12-song output
-is manually compared. Miss-driven sampling is promising for reducing the
-general short-event tail, but its worst-event metric and low-vocal safety
-margin are not yet strong enough to justify a product-facing checkpoint.
-The next useful experiment should target the remaining worst miss directly,
-with a held-out event manifest and an explicit non-event H50 anchor, rather
-than simply increasing the miss-driven sampling fraction.
+Keep V-R-H50 as the current best listening baseline. Do not promote
+`H50-miss-driven@pass-5` or spend more runs increasing its sampling fraction.
+The experiment is useful as a negative result: it improved aggregate
+projection-tail metrics without producing a reliable perceptual improvement,
+and some private songs regressed audibly.
+
+The next direction should target salient worst-case events rather than the
+global miss tail. First freeze a small, independently selected hard-event
+evaluation set using the actual 12-song listening review and objective
+worst-hotspot ranking, then test an event-local objective that preserves the
+H50 output outside the event. The event target should include a short audio
+context around each hotspot and use a sample-aligned loss, not only a window
+selection score. Compare three arms from the same H50 checkpoint:
+
+1. H50 continuation control.
+2. H50 output anchor outside the event plus Inst 3 residual target inside the
+   event context.
+3. The same event-local target with an explicit short-block loss on the
+   center 50-100 ms.
+
+Use a very small budget first, such as 1-5 passes, and require both a
+held-out-hotspot improvement and a level-matched 12-song listening win. If
+the event-local model still cannot change the salient leaks, the limitation is
+likely the 128-frame TFC-TDF representation or its spectral/iSTFT contract,
+not the sampling schedule. At that point the next meaningful route is a
+separately trained shorter-context or higher-capacity model, rather than more
+fine-tuning of the current checkpoint.

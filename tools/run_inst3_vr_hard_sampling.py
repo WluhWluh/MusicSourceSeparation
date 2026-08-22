@@ -13,6 +13,9 @@ each of the 80 MUSDB18 train songs:
 * ``V-R-U``: eight uniform candidates per song.
 * ``V-R-H25``: six of the same uniform candidates plus two candidates from the
   song-local top 25 percent hard-event pool.
+* ``V-R-H50``: four uniform candidates plus four candidates from the same
+  song-local hard-event pool.  The hard fraction is selected by the CLI so the
+  original U/H25 run remains the default.
 
 The Stage 1 hard-event report supplies the candidate starts and scores.  The
 runner regenerates teacher output one song at a time, writes only selected
@@ -56,6 +59,7 @@ RUN_SCHEMA = "local-inst3-vr-hard-sampling@1"
 CACHE_SCHEMA = "local-inst3-vr-hard-sampling-cache@2"
 TARGET_ALIGNMENT = "segment-origin-0"
 VARIANTS = ("V-R-U", "V-R-H25")
+SUPPORTED_VARIANTS = ("V-R-U", "V-R-H25", "V-R-H50")
 DEFAULT_MILESTONES = (0, 25, 50)
 
 
@@ -75,8 +79,14 @@ class SongSelection:
     candidates: tuple[Candidate, ...]
     hard_pool_indices: tuple[int, ...]
     uniform_indices: tuple[int, ...]
-    h25_indices: tuple[int, ...]
+    hard_fraction: float
+    hard_indices: tuple[int, ...]
     union_indices: tuple[int, ...]
+
+    @property
+    def h25_indices(self) -> tuple[int, ...]:
+        """Backward-compatible name for the selected hard-fraction draws."""
+        return self.hard_indices
 
     @property
     def cache_index_by_candidate(self) -> dict[int, int]:
@@ -109,6 +119,12 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--teacher-tflite", type=Path, default=pilot.DEFAULT_TEACHER_TFLITE)
     parser.add_argument("--train-windows-per-song", type=int, default=8)
     parser.add_argument("--hard-fraction", type=float, default=0.25)
+    parser.add_argument(
+        "--hard-variant",
+        choices=("V-R-H25", "V-R-H50"),
+        default="V-R-H25",
+        help="Name of the hard-sampling arm; U is always trained as the control",
+    )
     parser.add_argument("--passes", type=int, default=50)
     parser.add_argument(
         "--milestones",
@@ -317,17 +333,20 @@ def build_song_selection(
         hard_count,
         replace_if_needed=True,
     )
-    h25_indices = list(uniform_indices[:uniform_count]) + hard_indices
-    if len(h25_indices) != count:
-        raise AssertionError(f"H25 selection has wrong draw count for {slug}: {h25_indices}")
-    union_indices = tuple(sorted(set(uniform_indices) | set(h25_indices)))
+    hard_indices = list(uniform_indices[:uniform_count]) + hard_indices
+    if len(hard_indices) != count:
+        raise AssertionError(
+            f"Hard selection has wrong draw count for {slug}: {hard_indices}"
+        )
+    union_indices = tuple(sorted(set(uniform_indices) | set(hard_indices)))
     return SongSelection(
         slug=slug,
         member=member,
         candidates=tuple(candidates),
         hard_pool_indices=hard_pool_indices,
         uniform_indices=tuple(uniform_indices),
-        h25_indices=tuple(h25_indices),
+        hard_fraction=hard_fraction,
+        hard_indices=tuple(hard_indices),
         union_indices=union_indices,
     )
 
@@ -340,6 +359,9 @@ def selection_json(selection: SongSelection) -> dict[str, Any]:
         "hardPoolCount": len(selection.hard_pool_indices),
         "hardPoolCandidateIndices": list(selection.hard_pool_indices),
         "uniformCandidateIndices": list(selection.uniform_indices),
+        "hardFraction": selection.hard_fraction,
+        "hardCandidateIndices": list(selection.hard_indices),
+        # Keep the original key for consumers of the H25 report format.
         "h25CandidateIndices": list(selection.h25_indices),
         "unionCandidateIndices": list(selection.union_indices),
         "candidates": [
@@ -638,6 +660,8 @@ def prepare_train_caches(
                 },
                 "selected": {
                     "uniformCandidateIndices": list(selection.uniform_indices),
+                    "hardFraction": selection.hard_fraction,
+                    "hardCandidateIndices": list(selection.hard_indices),
                     "h25CandidateIndices": list(selection.h25_indices),
                     "unionCandidateIndices": list(selection.union_indices),
                 },
@@ -773,21 +797,27 @@ def build_training_schedule(
     variant: str,
     passes: int,
     seed: int,
+    hard_variant: str = "V-R-H25",
 ) -> list[ScheduleItem]:
-    if variant not in VARIANTS:
+    if variant not in ("V-R-U", hard_variant) or hard_variant not in (
+        "V-R-H25",
+        "V-R-H50",
+    ):
         raise ValueError(f"Unknown variant: {variant}")
     schedule: list[ScheduleItem] = []
     slugs = sorted(selections)
     for pass_index in range(passes):
-        # Use the same permutation for both cells.  The only difference is
-        # the candidate occupying the last two slots of each song's eight
-        # draw block; batch/order effects must not become a second variable.
+        # Use the same permutation for both cells.  Only the selected
+        # candidate changes; batch/order effects must not become a second
+        # variable.
         rng = np.random.default_rng(seed + pass_index * 1_000_003)
         pass_items: list[ScheduleItem] = []
         for song_index, slug in enumerate(slugs):
             selection = selections[slug]
             candidate_indices = (
-                selection.uniform_indices if variant == "V-R-U" else selection.h25_indices
+                selection.uniform_indices
+                if variant == "V-R-U"
+                else selection.hard_indices
             )
             cache_map = selection.cache_index_by_candidate
             pass_items.extend(
@@ -1499,6 +1529,8 @@ def evaluate_checkpoints(
 def validate_args(args: argparse.Namespace, milestones: tuple[int, ...]) -> None:
     if args.train_windows_per_song <= 0 or args.batch_size <= 0:
         raise ValueError("window count and batch size must be positive")
+    if not (0.0 < args.hard_fraction < 1.0):
+        raise ValueError("hard-fraction must be between 0 and 1")
     if args.passes <= 0 or args.learning_rate <= 0 or args.threads <= 0 or args.state_interval <= 0:
         raise ValueError("passes, learning rate, and threads must be positive")
     if milestones[0] != 0 or milestones[-1] != args.passes:
@@ -1522,6 +1554,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     teacher = args.teacher.resolve()
     contract = args.contract.resolve()
     teacher_tflite = args.teacher_tflite.resolve()
+    variants = ("V-R-U", args.hard_variant)
     manifest = load_manifest(manifest_path)
     train_entries = load_train_entries(manifest, args.max_songs)
     eval_entries = sorted(
@@ -1583,8 +1616,14 @@ def main(argv: Iterable[str] | None = None) -> int:
             torch.cuda.empty_cache()
 
     schedules = {
-        variant: build_training_schedule(selections, variant, args.passes, args.seed)
-        for variant in VARIANTS
+        variant: build_training_schedule(
+            selections,
+            variant,
+            args.passes,
+            args.seed,
+            hard_variant=args.hard_variant,
+        )
+        for variant in variants
     }
     schedule_summary = summarize_schedule(selections, schedules, args.passes, args.batch_size)
     if any(value["recordsPerPass"] != len(train_entries) * args.train_windows_per_song for value in schedule_summary.values()):
@@ -1600,6 +1639,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         "trainSongCount": len(train_entries),
         "trainWindowsPerSong": args.train_windows_per_song,
         "hardFraction": args.hard_fraction,
+        "hardVariant": args.hard_variant,
         "passes": args.passes,
         "milestones": list(milestones),
         "batchSize": args.batch_size,
@@ -1613,7 +1653,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         "targetSemantic": "mixtureGt - Inst3Instrumental",
     }
     train_results: dict[str, Any] = {}
-    for variant in VARIANTS:
+    for variant in variants:
         variant_contract = dict(run_contract_base)
         variant_contract["variant"] = variant
         variant_contract["scheduleSha256"] = schedule_summary[variant]["scheduleSha256"]
@@ -1654,7 +1694,11 @@ def main(argv: Iterable[str] | None = None) -> int:
     report = {
         "schema": RUN_SCHEMA,
         "status": "completed",
-        "experimentId": "inst3-vr-hard-sampling@1",
+        "experimentId": (
+            "inst3-vr-hard-sampling@1"
+            if args.hard_variant == "V-R-H25"
+            else "inst3-vr-hard-sampling-h50@1"
+        ),
         "licenseDisposition": {
             "scope": "local non-commercial research only",
             "musdb18": "educational/non-commercial source audio; not redistributed",
@@ -1691,7 +1735,12 @@ def main(argv: Iterable[str] | None = None) -> int:
             },
         },
         "notes": {
-            "sampling": "Fixed deterministic per-song eight-window set repeated each pass; H25 shares six uniform draws with U and replaces two with song-local hard-pool draws.",
+            "sampling": (
+                "Fixed deterministic per-song eight-window set repeated each pass; "
+                f"{args.hard_variant} uses {args.hard_fraction:.2f} hard-event draws "
+                "from the song-local top-25-percent pool and the remainder from "
+                "the shared uniform draw."
+            ),
             "hardScore": "Stage 1 positive projection score; diagnostic ranking aid, not a vocal ground-truth label.",
             "evaluation": "Calibration/internal-test only; event metrics are computed on deterministic coverage windows.",
             "mechanicalArtifactProxy": "First-difference energy and clipping/nonfinite counts are diagnostic only; they are not perceptual judgments.",

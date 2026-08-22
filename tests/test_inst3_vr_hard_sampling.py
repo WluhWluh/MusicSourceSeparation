@@ -69,6 +69,29 @@ class Inst3VrHardSamplingTest(unittest.TestCase):
         self.assertEqual(len(selection.h25_indices), 8)
         self.assertLessEqual(len(selection.union_indices), 5)
 
+    def test_h50_preserves_eight_draws_and_uses_four_hard_draws(self) -> None:
+        selection = build_song_selection(
+            slug="song",
+            member="train/song.stem.mp4",
+            candidates=self.make_candidates(),
+            train_windows_per_song=8,
+            hard_fraction=0.50,
+            seed=891,
+            song_index=0,
+        )
+        self.assertEqual(len(selection.uniform_indices), 8)
+        self.assertEqual(len(selection.hard_indices), 8)
+        self.assertEqual(selection.hard_fraction, 0.50)
+        self.assertEqual(
+            set(selection.hard_indices[:4]),
+            set(selection.uniform_indices[:4]),
+        )
+        self.assertTrue(
+            set(selection.hard_indices[4:]).issubset(
+                set(selection.hard_pool_indices)
+            )
+        )
+
     def test_global_schedule_has_same_pass_shape_for_both_cells(self) -> None:
         candidates = self.make_candidates()
         selections = {
@@ -91,6 +114,25 @@ class Inst3VrHardSamplingTest(unittest.TestCase):
             summarize_schedule(selections, {"U": uniform, "H": hard}, 2, 4)["U"]["recordsPerPass"],
             24,
         )
+
+    def test_h50_schedule_is_supported(self) -> None:
+        candidates = self.make_candidates()
+        selections = {
+            f"song-{index}": build_song_selection(
+                slug=f"song-{index}",
+                member=f"train/song-{index}.stem.mp4",
+                candidates=candidates,
+                train_windows_per_song=8,
+                hard_fraction=0.50,
+                seed=891,
+                song_index=index,
+            )
+            for index in range(3)
+        }
+        hard = build_training_schedule(
+            selections, "V-R-H50", 2, 891, hard_variant="V-R-H50"
+        )
+        self.assertEqual(len(hard), 48)
 
     def test_segment_target_uses_local_origin(self) -> None:
         segment = np.zeros((pilot.DEFAULT_CONFIG.useful_samples, 2), dtype=np.float32)

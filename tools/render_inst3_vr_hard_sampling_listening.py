@@ -37,8 +37,10 @@ DEFAULT_STEP = 8000
 
 def parse_variants(raw: str) -> tuple[str, ...]:
     values = tuple(item.strip() for item in raw.split(",") if item.strip())
-    if not values or any(value not in hard_sampling.VARIANTS for value in values):
-        raise ValueError(f"Expected variants from {hard_sampling.VARIANTS}, got {raw!r}")
+    if not values or any(value not in hard_sampling.SUPPORTED_VARIANTS for value in values):
+        raise ValueError(
+            f"Expected variants from {hard_sampling.SUPPORTED_VARIANTS}, got {raw!r}"
+        )
     if len(set(values)) != len(values):
         raise ValueError("Variants must be unique")
     return values

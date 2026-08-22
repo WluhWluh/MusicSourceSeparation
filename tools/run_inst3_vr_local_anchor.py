@@ -6,7 +6,8 @@ V-R-H50 pass-50 checkpoint and use the frozen H50 schedule:
 
 * H50-continuation: the existing Inst 3 residual target on every frame;
 * H50-local-anchor: the Inst 3 target on selected event frames and the frozen
-  H50 output everywhere else.
+  H50 output everywhere else.  An optional soft guard can extend the selected
+  event region without changing the fixed training-window schedule.
 
 The runner reuses the H50 spectral cache and never regenerates teacher audio.
 It evaluates the resulting checkpoints on the song-disjoint holdout and can
@@ -59,7 +60,7 @@ DEFAULT_SAMPLES_ROOT = ROOT / "data" / "samples"
 CONTINUATION = "H50-continuation"
 LOCAL_ANCHOR = "H50-local-anchor"
 VARIANTS = (CONTINUATION, LOCAL_ANCHOR)
-SCHEMA = "local-inst3-vr-local-anchor@1"
+SCHEMA = "local-inst3-vr-local-anchor@2"
 
 
 def parse_int_list(raw: str) -> tuple[int, ...]:
@@ -85,6 +86,15 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--learning-rate", type=float, default=1.0e-6)
     parser.add_argument("--anchor-beta", type=float, default=1.0)
+    parser.add_argument(
+        "--guard-ms",
+        type=float,
+        default=0.0,
+        help=(
+            "Linear soft guard width on each side of the existing event-frame "
+            "region; zero preserves the original boolean mask"
+        ),
+    )
     parser.add_argument("--state-interval", type=int, default=100)
     parser.add_argument("--threads", type=int, default=8)
     parser.add_argument("--seed", type=int, default=891)
@@ -231,6 +241,8 @@ def masked_mean_l1(
         raise ValueError(f"Prediction/target mismatch: {prediction.shape} != {target.shape}")
     if mask.ndim != 2 or mask.shape[0] != prediction.shape[0] or mask.shape[1] != prediction.shape[-1]:
         raise ValueError(f"Unexpected mask shape: {mask.shape}")
+    if torch.any(mask < 0) or torch.any(mask > 1):
+        raise ValueError("Mask weights must be in the [0, 1] range")
     expanded = mask.to(dtype=prediction.dtype)[:, None, None, :]
     denominator = expanded.sum() * prediction.shape[1] * prediction.shape[2]
     return (prediction - target).abs().mul(expanded).sum() / denominator.clamp_min(1.0)
@@ -245,11 +257,139 @@ def local_anchor_loss(
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     if prediction.shape != anchor_target.shape:
         raise ValueError(f"Prediction/anchor mismatch: {prediction.shape} != {anchor_target.shape}")
-    event_loss = masked_mean_l1(prediction, teacher_target, event_mask)
+    event_weights = event_mask.to(dtype=prediction.dtype)
+    event_loss = masked_mean_l1(prediction, teacher_target, event_weights)
     non_event_loss = masked_mean_l1(
-        prediction, anchor_target, ~event_mask.to(dtype=torch.bool)
+        prediction, anchor_target, 1.0 - event_weights
     )
     return event_loss + float(beta) * non_event_loss, event_loss, non_event_loss
+
+
+def soft_event_frame_mask(
+    *,
+    candidate_start: int,
+    candidate_length: int,
+    event_starts: np.ndarray,
+    event_ends: np.ndarray,
+    guard_ms: float,
+    sample_rate: int = 44_100,
+) -> np.ndarray:
+    """Return the existing event mask with a linear temporal guard.
+
+    The FFT-support-overlap region used by ``weighted.event_frame_mask`` is
+    the full-weight core.  Frames outside that core receive a linearly
+    decaying weight over ``guard_ms`` on either side.  Using the same core
+    makes the zero-width case exactly equivalent to the previous boolean
+    mask and avoids weakening frames that were already selected.
+    """
+    if guard_ms < 0.0:
+        raise ValueError("guard_ms must be non-negative")
+    base = weighted.event_frame_mask(
+        candidate_start=candidate_start,
+        candidate_length=candidate_length,
+        event_starts=event_starts,
+        event_ends=event_ends,
+        sample_rate=sample_rate,
+    )
+    if guard_ms == 0.0:
+        return base
+
+    frame_centers = (
+        np.arange(pilot.DEFAULT_CONFIG.num_frames, dtype=np.float64)
+        * pilot.DEFAULT_CONFIG.hop_length
+    )
+    half_fft = pilot.DEFAULT_CONFIG.n_fft / 2.0
+    segment_start = int(candidate_start)
+    segment_end = segment_start + int(candidate_length)
+    guard_samples = float(guard_ms) * float(sample_rate) / 1000.0
+    if guard_samples <= 0.0:
+        return base
+
+    weights = np.zeros(pilot.DEFAULT_CONFIG.num_frames, dtype=np.float32)
+    for start, end in zip(event_starts, event_ends):
+        overlap_start = max(segment_start, int(start))
+        overlap_end = min(segment_end, int(end))
+        if overlap_end <= overlap_start:
+            continue
+        local_start = overlap_start - segment_start + pilot.DEFAULT_CONFIG.trim_samples
+        local_end = overlap_end - segment_start + pilot.DEFAULT_CONFIG.trim_samples
+        core_start = float(local_start) - half_fft
+        core_end = float(local_end) + half_fft
+        distance = np.where(
+            frame_centers < core_start,
+            core_start - frame_centers,
+            np.where(frame_centers > core_end, frame_centers - core_end, 0.0),
+        )
+        contribution = np.clip(1.0 - distance / guard_samples, 0.0, 1.0)
+        weights = np.maximum(weights, contribution.astype(np.float32))
+
+    # Preserve the exact selected region even at strict inequality boundaries.
+    weights[base] = 1.0
+    return np.ascontiguousarray(weights, dtype=np.float32)
+
+
+class GuardedCacheStore(weighted.WeightedCacheStore):
+    """H50 cache store that optionally exposes fractional event weights."""
+
+    def __init__(
+        self,
+        cache_paths: dict[str, Path],
+        event_root: Path,
+        selections: dict[str, hard.SongSelection],
+        guard_ms: float,
+    ) -> None:
+        super().__init__(cache_paths, event_root, selections)
+        if guard_ms < 0.0:
+            raise ValueError("guard_ms must be non-negative")
+        self.guard_ms = float(guard_ms)
+
+    def _load(self, slug: str) -> dict[str, np.ndarray]:
+        cached = self._open.get(slug)
+        if cached is not None:
+            self._open.move_to_end(slug)
+            return cached
+        cached = super()._load(slug)
+        if self.guard_ms == 0.0:
+            return cached
+
+        selection = self.selections[slug]
+        event_starts, event_ends, _event_scores, _threshold = (
+            weighted.load_event_mask_blocks(self.event_root, slug)
+        )
+        with np.load(self.paths[slug]) as values:
+            starts = np.ascontiguousarray(values["starts"], dtype=np.int64)
+            lengths = np.ascontiguousarray(values["lengths"], dtype=np.int64)
+        expected_indices = np.asarray(selection.union_indices, dtype=np.int64)
+        if starts.shape[0] != len(expected_indices) or lengths.shape[0] != len(expected_indices):
+            raise ValueError(f"Unexpected H50 cache metadata shape for {slug}")
+        masks = np.stack(
+            [
+                soft_event_frame_mask(
+                    candidate_start=int(start),
+                    candidate_length=int(length),
+                    event_starts=event_starts,
+                    event_ends=event_ends,
+                    guard_ms=self.guard_ms,
+                )
+                for start, length in zip(starts, lengths)
+            ],
+            axis=0,
+        )
+        cached = {
+            **cached,
+            "eventFrameMask": np.ascontiguousarray(masks, dtype=np.float32),
+        }
+        self._open[slug] = cached
+        self._open.move_to_end(slug)
+        self.mask_stats[slug].update(
+            {
+                "guardMs": self.guard_ms,
+                "maskDtype": "float32",
+                "weightedFrameSum": float(masks.sum()),
+                "weightedFrameFraction": float(masks.mean()),
+            }
+        )
+        return cached
 
 
 def latest_checkpoint(
@@ -284,6 +424,7 @@ def train_variant(
     batch_size: int,
     learning_rate: float,
     anchor_beta: float,
+    guard_ms: float,
     seed: int,
     device: torch.device,
     state_interval: int,
@@ -358,6 +499,7 @@ def train_variant(
             "batchSize": batch_size,
             "learningRate": learning_rate,
             "anchorBeta": anchor_beta,
+            "guardMs": guard_ms,
             "seed": seed,
             "stateDict": hard.cpu_tree(model.state_dict()),
             "optimizerStateDict": hard.cpu_tree(optimizer.state_dict()),
@@ -569,8 +711,8 @@ def anchor_preservation(
     anchor_power = 0.0
     event_error_power = 0.0
     event_anchor_power = 0.0
-    non_event_frames = 0
-    event_frames = 0
+    non_event_frames = 0.0
+    event_frames = 0.0
     with torch.inference_mode():
         for slug in sorted(store.paths):
             arrays = store._load(slug)
@@ -582,15 +724,25 @@ def anchor_preservation(
                 anchor = anchor_model(input_tensor)
                 difference = (prediction - anchor).detach().to(dtype=torch.float64)
                 anchor64 = anchor.detach().to(dtype=torch.float64)
-                mask = torch.from_numpy(masks[begin : begin + 4]).to(device)
-                expanded = mask[:, None, None, :].expand_as(difference)
-                non_event = ~expanded
-                error_power += float((difference[non_event] ** 2).sum().cpu())
-                anchor_power += float((anchor64[non_event] ** 2).sum().cpu())
-                event_error_power += float((difference[expanded] ** 2).sum().cpu())
-                event_anchor_power += float((anchor64[expanded] ** 2).sum().cpu())
-                non_event_frames += int(non_event.sum().cpu())
-                event_frames += int(expanded.sum().cpu())
+                mask = torch.from_numpy(masks[begin : begin + 4]).to(
+                    device=device, dtype=difference.dtype
+                )
+                event_weights = mask[:, None, None, :].expand_as(difference)
+                non_event_weights = 1.0 - event_weights
+                error_power += float(
+                    (difference.square() * non_event_weights).sum().cpu()
+                )
+                anchor_power += float(
+                    (anchor64.square() * non_event_weights).sum().cpu()
+                )
+                event_error_power += float(
+                    (difference.square() * event_weights).sum().cpu()
+                )
+                event_anchor_power += float(
+                    (anchor64.square() * event_weights).sum().cpu()
+                )
+                non_event_frames += float(non_event_weights.sum().cpu())
+                event_frames += float(event_weights.sum().cpu())
     del model
     if device.type == "cuda":
         torch.cuda.empty_cache()
@@ -733,7 +885,12 @@ def render_listening(
 def validate_args(args: argparse.Namespace, milestones: tuple[int, ...]) -> None:
     if args.passes <= 0 or args.batch_size <= 0 or args.threads <= 0:
         raise ValueError("passes, batch-size, and threads must be positive")
-    if args.learning_rate <= 0.0 or args.anchor_beta < 0.0 or args.state_interval <= 0:
+    if (
+        args.learning_rate <= 0.0
+        or args.anchor_beta < 0.0
+        or args.guard_ms < 0.0
+        or args.state_interval <= 0
+    ):
         raise ValueError("learning-rate, anchor-beta, and state-interval must be valid")
     if milestones[0] != 0 or milestones[-1] != args.passes:
         raise ValueError("milestones must start at 0 and end at passes")
@@ -798,7 +955,12 @@ def main(argv: Iterable[str] | None = None) -> int:
         if not path.is_file():
             raise FileNotFoundError(path)
     output_root.mkdir(parents=True, exist_ok=True)
-    store = weighted.WeightedCacheStore(cache_paths, event_root, selections)
+    store = GuardedCacheStore(
+        cache_paths,
+        event_root,
+        selections,
+        guard_ms=args.guard_ms,
+    )
     store.preload()
 
     anchor_model, anchor_metadata = load_state_model(
@@ -827,10 +989,22 @@ def main(argv: Iterable[str] | None = None) -> int:
         "batchSize": args.batch_size,
         "learningRate": args.learning_rate,
         "anchorBeta": args.anchor_beta,
+        "guardMs": args.guard_ms,
         "seed": args.seed,
         "studentSemantic": "residual-vocals",
         "targetSemantic": "mixtureGt - Inst3Instrumental",
-        "eventMask": "existing H50 selected 100 ms event frame mask",
+        "eventMask": (
+            "existing H50 selected 100 ms event-frame support region with "
+            "linear soft guard"
+            if args.guard_ms > 0.0
+            else "existing H50 selected 100 ms event frame mask"
+        ),
+        "eventMaskSemantics": (
+            "float32 weights: 1.0 on the existing FFT-support-overlap core, "
+            "linear decay to 0 over guardMs on either side"
+            if args.guard_ms > 0.0
+            else "boolean selected FFT-support-overlap frames"
+        ),
         "officialFinalTestUsed": False,
     }
     training_results: dict[str, dict[str, Any]] = {}
@@ -858,6 +1032,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             batch_size=args.batch_size,
             learning_rate=args.learning_rate,
             anchor_beta=args.anchor_beta,
+            guard_ms=args.guard_ms,
             seed=args.seed,
             device=device,
             state_interval=args.state_interval,
@@ -984,6 +1159,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             "architectureCheckpoint": checkpoint_metadata(checkpoint),
         },
         "schedule": frozen["schedule"],
+        "maskStats": store.mask_stats,
         "training": training_results,
         "evaluation": evaluation,
         "anchorPreservation": final_anchor,
@@ -1000,6 +1176,12 @@ def main(argv: Iterable[str] | None = None) -> int:
             "publication": "Local non-commercial research only; do not publish MUSDB18-derived checkpoints or audio.",
             "alignment": "No centered-window change; the preceding alignment diagnostic did not meet its improvement gate.",
             "anchor": "The H50 model is evaluated without gradients and supplies the non-event target.",
+            "guard": (
+                "The soft guard extends the existing event-frame support region "
+                "with linear weights; it does not change candidate selection."
+                if args.guard_ms > 0.0
+                else "No soft guard; the original boolean event mask is used."
+            ),
         },
     }
     json_write(output_root / "reports" / "inst3-vr-local-anchor-report.json", report)

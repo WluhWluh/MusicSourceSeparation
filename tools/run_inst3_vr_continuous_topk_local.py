@@ -776,6 +776,7 @@ def load_h50_model(
     supported_formats = {
         "local-inst3-vr-hard-sampling-checkpoint@1",
         "local-inst3-vr-continuous-topk-local-checkpoint@1",
+        "local-inst3-vr-continuation-checkpoint@1",
     }
     if payload.get("format") not in supported_formats:
         raise ValueError(f"Unexpected H50 checkpoint format: {h50_checkpoint}")

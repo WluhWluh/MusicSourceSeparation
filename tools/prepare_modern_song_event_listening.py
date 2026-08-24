@@ -214,6 +214,9 @@ def prepare_h50_and_events(
     args: argparse.Namespace,
     output_root: Path,
     device: torch.device,
+    candidates_per_song: int = CANDIDATES_PER_SONG,
+    coverage_bins: int = COVERAGE_BINS,
+    scan_hop_ms: int = SCAN_HOP_MS,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     checkpoint_hash = sha256_file(args.checkpoint.resolve())
     model, model_source = local.load_h50_model(
@@ -267,9 +270,9 @@ def prepare_h50_and_events(
                 teacher,
                 h50,
                 slug,
-                SCAN_HOP_MS,
-                CANDIDATES_PER_SONG,
-                COVERAGE_BINS,
+                scan_hop_ms,
+                candidates_per_song,
+                coverage_bins,
             )
             event_ids = []
             for event in selected:

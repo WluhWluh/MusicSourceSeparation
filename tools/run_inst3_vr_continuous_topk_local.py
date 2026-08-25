@@ -782,6 +782,7 @@ def load_h50_model(
         "local-inst3-modern-s-combined-pilot-checkpoint@1",
         "local-inst3-modern-s-combined-continuation-checkpoint@1",
         "local-inst3-s-only-stress-checkpoint@1",
+        "local-inst3-s-r-continuation-checkpoint@1",
     }
     if payload.get("format") not in supported_formats:
         raise ValueError(f"Unexpected H50 checkpoint format: {h50_checkpoint}")

@@ -30,7 +30,7 @@ should be augmentation data, not the sole training distribution.
 | --- | --- | --- | --- | --- |
 | [MTG-Jamendo](https://github.com/MTG/mtg-jamendo-dataset) | 55k+ full tracks, 195 tags, broad genres/instruments/moods | Audio has per-track Creative Commons licenses; metadata is CC BY-NC-SA 4.0; repository states non-commercial academic use only | Run Inst 3 on selected full tracks; use tags to balance genre/instrument/vocal content | **Best first real-mix source** |
 | [Free Music Archive / FMA](https://github.com/mdeff/fma) | 106,574 full tracks, 16k artists, 161 genres | Audio license is selected by each artist; repository explicitly says it does not hold audio copyright and data is for research | Filter per-track license metadata, then run Inst 3 | **Best second real-mix source** |
-| [SingStyle111](https://doi.org/10.5281/zenodo.10265401) | 111 songs, 8 professional singers, 12.8 h; English/Chinese/Italian; dry mono vocal phrases with phoneme alignment | Zenodo record: CC BY 4.0 | Mix vocal phrases with licensed instrumentals, then teacher-label; emphasize Chinese phonetic/onset events | **High-value augmentation** |
+| [SingStyle111](https://doi.org/10.5281/zenodo.10265401) | 111 songs, 8 professional singers, 12.8 h; English/Chinese/Italian; dry mono vocal phrases with phoneme alignment | CC BY 4.0 is attached to the Zenodo conference-paper record, which currently contains only `000091.pdf`; the dataset site requires a signed application for non-commercial/non-profit research | Use vocal phrases in synthetic mixtures only after author approval and receipt of the data package | **Blocked pending access approval** |
 | [VocalSet](https://doi.org/10.5281/zenodo.1492453) | 10.1 h, 20 singers, 17 vocal techniques, a cappella | Zenodo record: CC BY 4.0 | Mix technique clips with licensed accompaniment; target breath, consonant, vibrato, and vocal-effect cases | **High-value technique augmentation** |
 | [JVS-MuSiC](https://arxiv.org/abs/2001.07044) | 100 Japanese singers; common Japanese song plus a unique song per singer | Paper states audio/MPD may be used for academic research, non-commercial research including research in commercial organizations, and personal use; matrices have CC BY-SA 4.0 | Mix/teacher-label Japanese vocal material; hold out singers, not random clips | **Best Japanese candidate, verify project terms before ingestion** |
 | [M4Singer](https://github.com/M4Singer/M4Singer) | 20 professional singers, 700 Mandarin pop songs, SATB styles and detailed alignment | `dataset_license.md`: CC BY-NC-SA 4.0, with an explicit responsibility/indemnity agreement | Mix vocal-only material with licensed instrumentals; use Chinese syllable/onset events | **Very relevant, local-only pending license review** |
@@ -40,6 +40,40 @@ should be augmentation data, not the sole training distribution.
 | [ESMUC Choir Dataset](https://doi.org/10.5281/zenodo.5848990) | 12 individual singers, SATB sections, room mics, multitrack Western choral music; about 31 min | Zenodo record: CC BY 4.0 | Harmony/choral leakage and room/reverb controls | **Small supplement** |
 | [Choral Singing Dataset](https://doi.org/10.5281/zenodo.2649950) | 16 individual singers, three a cappella pieces, Latin/Spanish/Catalan | Zenodo record: CC BY 4.0 | Harmony and unison controls; synthetic mix with licensed accompaniment | **Small supplement** |
 | [Japanese Singing Voice Dataset](https://huggingface.co/datasets/tts-dataset/japanese-singing-voice) | Dataset card claims about 1,000 h of Japanese vocal audio | Card declares CC BY-NC 4.0, but provenance and underlying recording rights need independent audit | Potentially large Japanese augmentation source | **Do not ingest yet; provenance risk is high** |
+
+## SingStyle111 availability recheck (2026-08-26)
+
+The dataset was checked as an acquisition question, not just by reading the
+paper metadata.
+
+- The live project page at `https://shuqid.net/singstyle111` has a Wix page
+  bundle that redirects to `https://dsqvival.github.io/singstyle111/`. That
+  GitHub Pages URL currently returns `404`; the author's public GitHub account
+  has no matching public repository.
+- An Internet Archive snapshot from 2023-11-30 preserves the project page and
+  lists public example paths, but says that the full dataset is available only
+  through a formal application, signed `Data Usage Pledge and Agreement`, and
+  non-commercial/non-profit research use. The listed contact is
+  `shuqid@cs.cmu.edu`.
+- The live Zenodo record `10.5281/zenodo.10265401` is open and declares
+  `cc-by-4.0`, but its API file listing contains exactly one file,
+  `000091.pdf` (796,942 bytes, `application/pdf`). It is the ISMIR conference
+  paper record, not an audio package. The CC BY field must not be treated as
+  an audio redistribution or training authorization.
+- Six representative example audio URLs listed by the archived project page
+  were checked and were not reachable from the live GitHub Pages site. A
+  representative Chinese example also had no archived audio snapshot. No
+  SingStyle111 audio, feature archive, or metadata package was found locally.
+- The paper reports pure vocal-only 24-bit WAV recordings at 44.1 kHz,
+  111 songs / 224 versions, 12.8 hours, and 6,588 phrases. The archived page
+  describes a packaged `wav` field as a 24 kHz float waveform. This format
+  discrepancy cannot be resolved without the author-supplied package.
+
+Conclusion: SingStyle111 is a good content candidate for vocal-only synthetic
+augmentation, especially for Mandarin/English/Italian phonetic events, but it
+is **not currently an executable training input in this workspace**. Do not
+start a SingStyle111 experiment or claim an audio license until the application
+is approved and at least one supplied archive is checksum-recorded and decoded.
 
 ## Most useful findings
 
@@ -101,8 +135,8 @@ restrictive than the CC BY sources.
    song/artist-disjoint holdout.
 2. Add a smaller FMA slice, perhaps 100-300 tracks, using only explicit
    acceptable per-track licenses.
-3. Add SingStyle111 and VocalSet as vocal-technique augmentation, mixed only
-   with Tier 1 instrumentals.
+3. Add VocalSet as vocal-technique augmentation, mixed only with Tier 1
+   instrumentals.
 4. Add JVS-MuSiC after checking the current project download terms and storing
    the exact terms alongside the manifest.
 
@@ -111,12 +145,14 @@ restrictive than the CC BY sources.
 1. Request explicit research/training permission for MIR-1K. It is likely the
    most valuable Chinese control because it includes real accompaniment and
    vocal channels plus unvoiced labels.
-2. Confirm whether M4Singer's CC BY-NC-SA agreement permits training a
+2. Apply for SingStyle111 access and confirm that the signed terms permit
+   local synthetic-mixture training and retention of derived checkpoints.
+3. Confirm whether M4Singer's CC BY-NC-SA agreement permits training a
    teacher-distilled separation model and what attribution/share-alike notice
    is expected for weights.
-3. Obtain written clarification for Opencpop because the official page says
+4. Obtain written clarification for Opencpop because the official page says
    CC BY-NC-ND 4.0 and its metadata is inconsistent.
-4. Audit the source provenance and release-specific terms of the large
+5. Audit the source provenance and release-specific terms of the large
    Japanese Singing Voice Dataset before downloading any part of it.
 
 ### Tier 3: do not use as training input yet

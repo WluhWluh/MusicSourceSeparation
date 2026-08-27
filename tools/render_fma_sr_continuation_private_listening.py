@@ -51,6 +51,9 @@ DEFAULT_OUTPUT_ROOT = (
 DEFAULT_SAMPLES_ROOT = ROOT / "data" / "samples"
 CONTRACT = ShortWindowContract(num_frames=128, left_context_hops=5, right_context_hops=5)
 SAMPLE_RATE = 44_100
+UNIFORM_FULL_TARGET_CHECKPOINT_FORMAT = (
+    "local-inst3-fma-uniform-full-target-continuation-checkpoint@1"
+)
 
 
 def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
@@ -87,6 +90,7 @@ def load_model(
     supported_formats = {
         continuation.CHECKPOINT_FORMAT,
         "local-inst3-fma-s-leakage-survey-continuation-checkpoint@1",
+        UNIFORM_FULL_TARGET_CHECKPOINT_FORMAT,
     }
     if payload.get("format") not in supported_formats:
         raise ValueError(f"Unexpected checkpoint format: {checkpoint_path}")
@@ -179,6 +183,8 @@ def main(argv: Iterable[str] | None = None) -> int:
         "songs": {},
     }
     model, checkpoint_meta = load_model(checkpoint_path, args.architecture_checkpoint, device)
+    if checkpoint_meta["format"] == UNIFORM_FULL_TARGET_CHECKPOINT_FORMAT:
+        report["schema"] = "local-inst3-fma-uniform-full-target-continuation-private-listening@1"
     report["checkpoint"] = checkpoint_meta
     started = time.perf_counter()
     try:
